@@ -148,6 +148,6 @@ rsync -avz --delete dist/ root@你的服务器IP:/var/www/mars-advance-team/
 
 - 本地 `pnpm build` 必须通过。
 - `dist/index.html` 和 `dist/assets/` 必须存在。
-- 背景音乐已改为 Web Audio 电子循环，不再随 `dist/` 上传 10MB MP3。
+- 背景音乐使用原 MP3 的 64kbps 压缩版，部署包内音频约 2.5MB，不再上传 10MB 源 MP3。
 - 当前版本没有后端 API，不能把 DeepSeek、OpenAI 或其他 API Key 写进前端代码。
 - 如果部署在子路径，例如 `https://example.com/mars/`，需要额外配置 Vite `base`，当前默认更适合部署在独立域名或根路径。

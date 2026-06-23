@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { createMarsEngineer, updateMarsEngineer } from "./player";
 import {
@@ -80,7 +81,12 @@ const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
 const staminaReadout = document.querySelector<HTMLDivElement>("#stamina-readout");
 const powerReadout = document.querySelector<HTMLDivElement>("#power-readout");
-const backgroundMusic = createMarsMusicSynth();
+const backgroundMusic = new Audio(backgroundMusicUrl);
+const BACKGROUND_MUSIC_BASE_VOLUME = 0.14;
+const MUSIC_LOOP_FADE_SECONDS = 5;
+backgroundMusic.loop = true;
+backgroundMusic.preload = "auto";
+backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
 
 const scene = new THREE.Scene();
 const clearSkyColor = new THREE.Color(0x030713);
@@ -929,117 +935,20 @@ function animate() {
 
 function startBackgroundMusic() {
   if (!started) return;
-  backgroundMusic.start();
+  if (!backgroundMusic.paused) return;
+  backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
+  backgroundMusic.play().catch(() => {
+    // Browser audio policies can still block playback in unusual cases.
+  });
 }
 
 function updateBackgroundMusicFade() {
-  backgroundMusic.update();
-}
-
-function createMarsMusicSynth() {
-  const stepDuration = 0.42;
-  const rootFrequency = 146.83;
-  const melodyPattern = [12, null, 10, null, 7, null, 5, 7, 10, null, 12, 15, 14, null, 10, null] as const;
-  const bassPattern = [0, null, null, null, -5, null, null, null, 0, null, -2, null, -5, null, null, null] as const;
-  let audioContext: AudioContext | null = null;
-  let masterGain: GainNode | null = null;
-  let delayInput: GainNode | null = null;
-  let playing = false;
-  let stepIndex = 0;
-  let nextStepTime = 0;
-
-  function start() {
-    if (!audioContext) initialize();
-    if (!audioContext || !masterGain) return;
-    audioContext.resume().catch(() => undefined);
-    masterGain.gain.cancelScheduledValues(audioContext.currentTime);
-    masterGain.gain.setTargetAtTime(0.11, audioContext.currentTime, 0.8);
-    if (!playing) {
-      playing = true;
-      nextStepTime = audioContext.currentTime + 0.04;
-    }
+  if (backgroundMusic.paused || !Number.isFinite(backgroundMusic.duration) || backgroundMusic.duration <= MUSIC_LOOP_FADE_SECONDS) {
+    return;
   }
-
-  function update() {
-    if (!playing || !audioContext) return;
-    while (nextStepTime < audioContext.currentTime + 0.8) {
-      scheduleStep(nextStepTime, stepIndex);
-      nextStepTime += stepDuration;
-      stepIndex = (stepIndex + 1) % melodyPattern.length;
-    }
-  }
-
-  function initialize() {
-    const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
-    if (!AudioContextConstructor) return;
-    audioContext = new AudioContextConstructor();
-    const compressor = audioContext.createDynamicsCompressor();
-    compressor.threshold.value = -22;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 3;
-    compressor.attack.value = 0.02;
-    compressor.release.value = 0.35;
-
-    masterGain = audioContext.createGain();
-    masterGain.gain.value = 0.0001;
-    masterGain.connect(compressor);
-    compressor.connect(audioContext.destination);
-
-    const delay = audioContext.createDelay(1.2);
-    delay.delayTime.value = 0.32;
-    const feedback = audioContext.createGain();
-    feedback.gain.value = 0.24;
-    const wetGain = audioContext.createGain();
-    wetGain.gain.value = 0.26;
-    delay.connect(feedback);
-    feedback.connect(delay);
-    delay.connect(wetGain);
-    wetGain.connect(masterGain);
-    delayInput = audioContext.createGain();
-    delayInput.gain.value = 1;
-    delayInput.connect(delay);
-  }
-
-  function scheduleStep(time: number, index: number) {
-    const melodyNote = melodyPattern[index];
-    const bassNote = bassPattern[index];
-    if (bassNote !== null) {
-      scheduleTone(rootFrequency * semitoneRatio(bassNote - 12), time, stepDuration * 1.8, "sawtooth", 0.045, 900);
-    }
-    if (melodyNote !== null) {
-      scheduleTone(rootFrequency * semitoneRatio(melodyNote), time + 0.02, stepDuration * 0.72, "triangle", 0.032, 1800);
-    }
-    if (index % 8 === 0) {
-      scheduleTone(rootFrequency * semitoneRatio(24), time, stepDuration * 5.8, "sine", 0.018, 1200);
-    }
-  }
-
-  function scheduleTone(frequency: number, time: number, duration: number, type: OscillatorType, volume: number, filterFrequency: number) {
-    if (!audioContext || !masterGain) return;
-    const oscillator = audioContext.createOscillator();
-    const envelope = audioContext.createGain();
-    const filter = audioContext.createBiquadFilter();
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, time);
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(filterFrequency, time);
-    filter.Q.value = 0.7;
-    envelope.gain.setValueAtTime(0.0001, time);
-    envelope.gain.exponentialRampToValueAtTime(volume, time + 0.035);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
-    oscillator.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(masterGain);
-    if (delayInput) envelope.connect(delayInput);
-    oscillator.start(time);
-    oscillator.stop(time + duration + 0.08);
-  }
-
-  return { start, update };
-}
-
-function semitoneRatio(semitones: number) {
-  return Math.pow(2, semitones / 12);
+  const remaining = backgroundMusic.duration - backgroundMusic.currentTime;
+  const fade = remaining <= MUSIC_LOOP_FADE_SECONDS ? THREE.MathUtils.clamp(remaining / MUSIC_LOOP_FADE_SECONDS, 0, 1) : 1;
+  backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME * fade;
 }
 
 function updateWeather() {

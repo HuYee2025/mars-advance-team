@@ -47,17 +47,17 @@
 - `docs/deployment.md`
 - `docs/tech-plan.md`
 
-### 背景音乐改为 Web Audio 合成
+### 背景音乐改为原曲压缩版
 
 原因：
 
-原背景音乐 MP3 约 10MB，占当前部署包主要体积。1.0 只需要有简单氛围声音，不需要大文件音乐。
+原背景音乐 MP3 约 10MB，占当前部署包主要体积。Web Audio 合成器虽然体积小，但听感与原曲不一致。
 
 决策：
 
-- 移除前端对 MP3 文件的导入。
-- 使用浏览器 Web Audio 生成轻量电子循环。
-- 将原 MP3 加入 `.gitignore`，避免误提交到 GitHub。
+- 保留原曲听感，使用 64kbps MP3 压缩版。
+- 前端导入 `src/assets/audio/mars-background-light.mp3`。
+- 原 10MB MP3 保持在 `.gitignore` 中，避免误提交到 GitHub。
 
 ### 项目采用文件化共同记忆
 
