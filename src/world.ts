@@ -584,11 +584,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     briefing: string
   ) {
     const point = offsetPoint(x, z, yaw, localX, localZ);
+    const isHabitatBot = facilityLabel.includes("居住舱");
     maintenanceBots.push({
       centerX: point.x,
       centerZ: point.z,
-      patrolRadius: spread(4.2),
-      speed: 0.09 + maintenanceBots.length * 0.004,
+      patrolRadius: isHabitatBot ? 1.35 : spread(4.2),
+      speed: isHabitatBot ? 0.035 : 0.09 + maintenanceBots.length * 0.004,
       offset: maintenanceBots.length * 0.74,
       size: 0.76,
       kind: "bot",
@@ -1120,7 +1121,7 @@ function createHabitatModule() {
     interiorLight,
     open: false,
     occupied: false,
-    promptRadius: 7.2,
+    promptRadius: 10.5,
     label: "居住舱舱门",
   } satisfies HabitatDoorControl;
   return group;

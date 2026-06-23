@@ -62,7 +62,7 @@ export const characters: Record<CharacterId, { name: string; callsign: string; p
   },
   mother: {
     name: "Mother",
-    callsign: "ARES BASE ALPHA 中央 AI",
+    callsign: "基地中央 AI",
     portrait: motherPortraitUrl,
     side: "right",
   },
