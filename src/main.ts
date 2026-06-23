@@ -1490,11 +1490,8 @@ function updateInteractionPrompts() {
   if (interactionActions.length > 1) {
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
-    if (interactionChoiceOpen) renderInteractionChoice();
-    else {
-      interactionChoice.classList.remove("is-visible");
-      interactionChoice.setAttribute("aria-hidden", "true");
-    }
+    interactionChoiceOpen = true;
+    renderInteractionChoice();
     return;
   }
   interactionChoiceOpen = false;
@@ -1517,8 +1514,12 @@ function renderInteractionChoice() {
 
 function interact() {
   if (interactionActions.length > 1) {
-    interactionChoiceOpen = true;
-    renderInteractionChoice();
+    if (!interactionChoiceOpen) {
+      interactionChoiceOpen = true;
+      renderInteractionChoice();
+      return;
+    }
+    executeSelectedInteraction();
     return;
   }
   if (interactionActions.length === 1) {
@@ -1775,10 +1776,11 @@ function enterHabitatInterior(door: HabitatDoorControl) {
   setHabitatInteriorMode(true);
   habitatLocal.set(0, -0.76, -1.46);
   player.position.copy(door.root.localToWorld(habitatLocal.clone()));
+  resetSuitOxygen();
   cameraDistance = Math.min(cameraDistance, 0.72);
   pitch = 0.34;
   orbitYawOffset = 0;
-  showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，内部巡检模式切换为第一人称。", 4);
+  showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包已补满。", 4);
 }
 
 function setHabitatDoorExteriorOpen(door: HabitatDoorControl) {
@@ -1802,6 +1804,7 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   door.interiorScene.visible = false;
   door.interiorLight.visible = false;
   setHabitatInteriorMode(false);
+  resetSuitOxygen();
   const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -1.18, -3.15));
   playerNormal.copy(exitWorld.normalize());
   const faceAway = door.root.localToWorld(new THREE.Vector3(0, -1.18, -4.3)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
@@ -1809,7 +1812,7 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   cameraDistance = Math.max(cameraDistance, 10);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
-  showDialogue("居住舱", "外舱门已打开。", 2.8);
+  showDialogue("居住舱", "外舱门已打开。氧气背包 100%。", 2.8);
 }
 
 function enterGreenhouse(door: GreenhouseDoorControl) {
@@ -2321,7 +2324,7 @@ function renderDialogueNode() {
   dialogueRightSlot.classList.toggle("is-listening", leftIsSpeaking);
 
   dialogueSpeaker.textContent = `${speaker.name} / ${speaker.callsign}`;
-  dialogueStats.textContent = `TRUST ${dialogueState.motherTrust} · BASE ${dialogueState.baseIntegrity} · AUTO ${dialogueState.humanAutonomy}`;
+  dialogueStats.textContent = `信任 ${dialogueState.motherTrust} · 基地 ${dialogueState.baseIntegrity} · 自主 ${dialogueState.humanAutonomy}`;
   dialogueText.textContent = node.text;
   dialogueChoices.innerHTML = "";
 

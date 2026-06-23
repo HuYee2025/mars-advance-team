@@ -875,7 +875,7 @@ h1 {
 .dialogue-portrait {
   position: absolute;
   bottom: clamp(150px, 24vh, 238px);
-  width: min(34vw, 430px);
+  width: min(28vw, 360px);
   height: min(58vh, 660px);
   display: flex;
   align-items: flex-end;
@@ -906,11 +906,11 @@ h1 {
 }
 
 .dialogue-portrait-left {
-  left: clamp(8px, 5vw, 84px);
+  left: calc(50% - min(490px, calc((100vw - 36px) / 2)) + clamp(10px, 2vw, 34px));
 }
 
 .dialogue-portrait-right {
-  right: clamp(8px, 5vw, 84px);
+  right: calc(50% - min(490px, calc((100vw - 36px) / 2)) + clamp(10px, 2vw, 34px));
 }
 
 .dialogue-portrait img {
@@ -930,8 +930,8 @@ h1 {
   position: absolute;
   z-index: 5;
   bottom: clamp(220px, 25vh, 260px);
-  min-width: 148px;
-  padding: 8px 10px;
+  min-width: 118px;
+  padding: 6px 8px;
   border: 1px solid rgba(116, 218, 255, 0.3);
   background: rgba(4, 16, 22, 0.66);
   color: #dff8ff;
@@ -943,13 +943,13 @@ h1 {
 }
 
 .dialogue-character-tag-left {
-  left: clamp(92px, 16vw, 310px);
-  transform: translateX(-50%);
+  left: calc(50% - min(490px, calc((100vw - 36px) / 2)) + min(24vw, 310px));
+  transform: translateX(0);
 }
 
 .dialogue-character-tag-right {
-  right: clamp(92px, 16vw, 310px);
-  transform: translateX(50%);
+  right: calc(50% - min(490px, calc((100vw - 36px) / 2)) + min(24vw, 310px));
+  transform: translateX(0);
 }
 
 .dialogue-character-tag strong,
@@ -958,14 +958,14 @@ h1 {
 }
 
 .dialogue-character-tag strong {
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.1;
 }
 
 .dialogue-character-tag span {
   margin-top: 4px;
   color: rgba(207, 242, 255, 0.66);
-  font-size: 10px;
+  font-size: 8px;
   line-height: 1.2;
 }
 
@@ -1302,16 +1302,16 @@ h1 {
 
   .dialogue-portrait {
     bottom: clamp(206px, 36vh, 280px);
-    width: 42vw;
+    width: 36vw;
     height: 48vh;
   }
 
   .dialogue-portrait-left {
-    left: -3vw;
+    left: 2vw;
   }
 
   .dialogue-portrait-right {
-    right: -3vw;
+    right: 2vw;
   }
 
   .dialogue-portrait img,
@@ -1327,11 +1327,11 @@ h1 {
   }
 
   .dialogue-character-tag-left {
-    left: 23vw;
+    left: 28vw;
   }
 
   .dialogue-character-tag-right {
-    right: 23vw;
+    right: 28vw;
   }
 
   .dialogue-character-tag strong {
@@ -1402,15 +1402,15 @@ h1 {
 
   .dialogue-portrait {
     bottom: 252px;
-    width: 50vw;
+    width: 43vw;
   }
 
   .dialogue-portrait-left {
-    left: -10vw;
+    left: -4vw;
   }
 
   .dialogue-portrait-right {
-    right: -10vw;
+    right: -4vw;
   }
 
   .dialogue-character-tag {
@@ -1418,11 +1418,11 @@ h1 {
   }
 
   .dialogue-character-tag-left {
-    left: 24vw;
+    left: 28vw;
   }
 
   .dialogue-character-tag-right {
-    right: 24vw;
+    right: 28vw;
   }
 
   #dialogue-text {
