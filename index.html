@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="火星殖民浏览器 3D Demo：红色星球基地、ISRU 工厂、温室、机器人与登陆器。"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23b94b2b'/%3E%3Cpath d='M7 18c5-4 10 3 18-2' fill='none' stroke='%23f2a568' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <title>火星先遣队 第一位人类</title>
+  </head>
+  <body>
+    <main id="app" aria-label="火星先遣队 3D Demo">
+      <div id="scene-root"></div>
+      <section id="title-screen" aria-label="进入火星基地">
+        <div class="title-copy">
+          <p class="eyebrow">2050 年 / 第 30 火星日</p>
+          <h1>
+            <span>火星先遣队</span>
+            <span>第一位人类</span>
+          </h1>
+          <p class="title-text">终于，火星基地迎来了第一位人类居民。</p>
+          <button id="enter-base" type="button">进入基地</button>
+        </div>
+      </section>
+      <section class="hud" aria-label="基地状态">
+        <div class="hud-title">
+          <p class="eyebrow">MARS ADVANCE TEAM</p>
+          <h1>火星先遣队</h1>
+        </div>
+        <div class="status-grid">
+          <section class="status-group" aria-label="基地指标">
+            <h2>基地</h2>
+            <dl>
+              <div>
+                <dt>制氧量</dt>
+                <dd id="oxygen-readout">72%</dd>
+              </div>
+              <div>
+                <dt>能量</dt>
+                <dd id="power-readout">89%</dd>
+              </div>
+              <div>
+                <dt>机器人</dt>
+                <dd>08</dd>
+              </div>
+            </dl>
+          </section>
+          <section class="status-group" aria-label="人员指标">
+            <h2>人员</h2>
+            <dl>
+              <div>
+                <dt>Alex</dt>
+                <dd>在线</dd>
+              </div>
+              <div>
+                <dt>氧气</dt>
+                <dd id="suit-oxygen-readout">100%</dd>
+              </div>
+              <div>
+                <dt>体能</dt>
+                <dd id="stamina-readout">100%</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+      </section>
+      <div class="hud-buttons" aria-label="界面显示控制">
+        <button id="hud-toggle" type="button" aria-label="隐藏界面信息" aria-pressed="false">V</button>
+        <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false">M</button>
+      </div>
+      <div id="labels" aria-hidden="true"></div>
+      <section id="map-overlay" aria-label="基地地图" aria-live="polite" aria-hidden="true">
+        <div class="map-card">
+          <div class="map-head">
+            <span>LOCAL MAP</span>
+            <span>M</span>
+          </div>
+          <div class="map-radar" id="map-radar">
+            <div class="map-ring ring-a"></div>
+            <div class="map-ring ring-b"></div>
+            <div class="map-cross x"></div>
+            <div class="map-cross y"></div>
+            <div class="map-player" aria-hidden="true"></div>
+          </div>
+          <div class="map-coordinates" id="map-coordinates">X 000 / Z 000</div>
+          <div class="mission-panel" aria-label="当前任务">
+            <span>当前任务</span>
+            <p id="mission-text"></p>
+          </div>
+          <div class="map-list" id="map-list"></div>
+        </div>
+      </section>
+      <div id="interaction-prompt" aria-live="polite"></div>
+      <div id="interaction-choice" aria-live="polite" aria-hidden="true">
+        <button class="interaction-option is-selected" type="button" data-choice-index="0">
+          <strong id="interaction-choice-a"></strong>
+        </button>
+        <button class="interaction-option" type="button" data-choice-index="1">
+          <strong id="interaction-choice-b"></strong>
+        </button>
+      </div>
+      <div id="dialogue-box" aria-live="polite"></div>
+      <section id="dialogue-stage" aria-label="角色对话" aria-hidden="true">
+        <div class="dialogue-scrim" aria-hidden="true"></div>
+        <div class="dialogue-portrait dialogue-portrait-left" aria-hidden="true">
+          <img id="dialogue-left-portrait" alt="" />
+        </div>
+        <div class="dialogue-portrait dialogue-portrait-right" aria-hidden="true">
+          <img id="dialogue-right-portrait" alt="" />
+        </div>
+        <div class="dialogue-character-tag dialogue-character-tag-left">
+          <strong id="dialogue-left-name"></strong>
+          <span id="dialogue-left-callsign"></span>
+        </div>
+        <div class="dialogue-character-tag dialogue-character-tag-right">
+          <strong id="dialogue-right-name"></strong>
+          <span id="dialogue-right-callsign"></span>
+        </div>
+        <div class="dialogue-panel" role="dialog" aria-modal="true" aria-live="polite">
+          <div class="dialogue-panel-topline">
+            <span id="dialogue-speaker"></span>
+            <span id="dialogue-stats"></span>
+          </div>
+          <p id="dialogue-text"></p>
+          <div id="dialogue-choices" class="dialogue-choices"></div>
+          <button id="dialogue-continue" type="button">继续</button>
+        </div>
+      </section>
+      <div class="scanline" aria-hidden="true"></div>
+      <div id="joystick" aria-hidden="true">
+        <div id="joystick-knob"></div>
+      </div>
+      <div class="mobile-actions" aria-label="移动端操作">
+        <button id="mobile-map" class="mobile-small-action" type="button" aria-label="地图">地图</button>
+        <button id="mobile-lamp" class="mobile-small-action" type="button" aria-label="照明">照明</button>
+        <button id="mobile-interact" type="button" aria-label="跳">跳</button>
+        <button id="mobile-jump" type="button" aria-label="互动">互动</button>
+      </div>
+      <section id="controls-guide" aria-label="操作指南" aria-hidden="true">
+        <div class="guide-panel">
+          <div class="guide-head">
+            <span>操作指南</span>
+            <span>· / ~</span>
+          </div>
+          <div class="guide-keyboard" aria-hidden="true">
+            <div class="guide-row">
+              <div class="guide-key wide"><b>ESC</b><span>返回主页</span></div>
+              <div class="guide-key wide"><b>· / ~</b><span>按住指南</span></div>
+              <div class="guide-key wide"><b>V</b><span>隐藏界面</span></div>
+              <div class="guide-key wide"><b>I</b><span>头灯</span></div>
+              <div class="guide-key wide"><b>O</b><span>未知点</span></div>
+            </div>
+            <div class="guide-row">
+              <div class="guide-key"><b>W</b><span>前进</span></div>
+              <div class="guide-key"><b>A</b><span>左转</span></div>
+              <div class="guide-key"><b>S</b><span>后退</span></div>
+              <div class="guide-key"><b>D</b><span>右转</span></div>
+              <div class="guide-key wide"><b>Shift</b><span>加速</span></div>
+              <div class="guide-key wide"><b>Space</b><span>确认 / 跳跃</span></div>
+            </div>
+            <div class="guide-row">
+              <div class="guide-key wide"><b>E</b><span>互动</span></div>
+              <div class="guide-key wide"><b>M</b><span>地图</span></div>
+              <div class="guide-key wide"><b>长按 M</b><span>全屏地图</span></div>
+              <div class="guide-key wide"><b>+ / -</b><span>缩放</span></div>
+              <div class="guide-key wide"><b>Enter</b><span>主页开始游戏</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

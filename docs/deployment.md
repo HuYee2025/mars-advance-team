@@ -1,0 +1,153 @@
+# 部署说明
+
+## 当前部署形态
+
+当前版本是纯前端静态网页游戏：
+
+- 构建工具：Vite
+- 运行技术：TypeScript + Three.js
+- 构建产物：`dist/`
+- 当前不需要后端、不需要数据库、不需要常驻 Node 服务
+
+因此上线时只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。
+
+后续如果接入 DeepSeek 对话，不能在前端直接放 API Key，需要新增后端接口，例如 `/api/dialogue`。
+
+## 本地构建
+
+项目当前 shell 里不一定有全局 `pnpm`，可以使用 Codex 内置 pnpm：
+
+```bash
+/Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm build
+```
+
+构建成功后会生成：
+
+```txt
+dist/
+  index.html
+  assets/
+```
+
+上线只上传 `dist/` 里的内容，不上传 `src/`、`docs/`、`node_modules/`。
+
+## 推荐服务器部署：Nginx 静态站点
+
+假设服务器是 Ubuntu，域名是 `mars.example.com`，站点目录是：
+
+```txt
+/var/www/mars-advance-team
+```
+
+### 1. 服务器安装 Nginx
+
+```bash
+sudo apt update
+sudo apt install -y nginx
+```
+
+### 2. 创建站点目录
+
+```bash
+sudo mkdir -p /var/www/mars-advance-team
+sudo chown -R $USER:www-data /var/www/mars-advance-team
+```
+
+### 3. 从本机上传构建产物
+
+在本机项目目录执行：
+
+```bash
+rsync -avz --delete dist/ root@你的服务器IP:/var/www/mars-advance-team/
+```
+
+如果不用 root，把 `root` 改成服务器用户名，并确保该用户有写入站点目录的权限。
+
+### 4. 配置 Nginx
+
+创建配置：
+
+```bash
+sudo nano /etc/nginx/sites-available/mars-advance-team
+```
+
+写入：
+
+```nginx
+server {
+    listen 80;
+    server_name mars.example.com;
+
+    root /var/www/mars-advance-team;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /assets/ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+启用站点：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/mars-advance-team /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### 5. 配置 HTTPS
+
+域名解析到服务器后，使用 Certbot：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d mars.example.com
+```
+
+## GitHub + 服务器拉取部署
+
+如果希望之后更新更方便，建议先把项目推到 GitHub，再让服务器拉代码构建。
+
+当前本地仓库还没有 remote，首次需要：
+
+```bash
+git add .
+git commit -m "Initial mars advance team demo"
+git branch -M main
+git remote add origin git@github.com:HuYee2025/你的仓库名.git
+git push -u origin main
+```
+
+服务器上：
+
+```bash
+git clone git@github.com:HuYee2025/你的仓库名.git
+cd 你的仓库名
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+sudo rsync -av --delete dist/ /var/www/mars-advance-team/
+sudo systemctl reload nginx
+```
+
+## 每次更新上线
+
+最简单流程：
+
+```bash
+/Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm build
+rsync -avz --delete dist/ root@你的服务器IP:/var/www/mars-advance-team/
+```
+
+## 上线前检查
+
+- 本地 `pnpm build` 必须通过。
+- `dist/index.html` 和 `dist/assets/` 必须存在。
+- 背景音乐已改为 Web Audio 电子循环，不再随 `dist/` 上传 10MB MP3。
+- 当前版本没有后端 API，不能把 DeepSeek、OpenAI 或其他 API Key 写进前端代码。
+- 如果部署在子路径，例如 `https://example.com/mars/`，需要额外配置 Vite `base`，当前默认更适合部署在独立域名或根路径。

@@ -1,0 +1,2412 @@
+import * as THREE from "three";
+import { createFufuCat, updateFufuCat } from "./cat";
+import { createMarsEngineer, updateMarsEngineer } from "./player";
+import {
+  characters,
+  dialogueNodes,
+  sceneStartNodes,
+  type DialogueChoice,
+  type DialogueEffect,
+  type DialogueNode,
+  type DialogueNodeId,
+  type DialogueSceneId,
+} from "./dialogue/dialogues";
+import {
+  PLANET_RADIUS,
+  createMarsWorld,
+  placeObjectOnPlanetNormal,
+  planetNormal,
+  updateElevators,
+  updateMeteors,
+  updateRovers,
+  updateSolarArrays,
+  type ElevatorControl,
+  type GreenhouseDoorControl,
+  type HabitatDoorControl,
+  type Interactable,
+  type Landmark,
+} from "./world";
+import "./style.css";
+
+type LabelAnchor = {
+  object: THREE.Object3D;
+  element: HTMLDivElement;
+  distance: number;
+};
+
+type InteractionAction = {
+  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission";
+  label: string;
+};
+
+const sceneRoot = must<HTMLDivElement>("#scene-root");
+const labelsRoot = must<HTMLDivElement>("#labels");
+const joystick = must<HTMLDivElement>("#joystick");
+const joystickKnob = must<HTMLDivElement>("#joystick-knob");
+const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
+const mobileInteractButton = must<HTMLButtonElement>("#mobile-interact");
+const mobileMapButton = must<HTMLButtonElement>("#mobile-map");
+const mobileLampButton = must<HTMLButtonElement>("#mobile-lamp");
+const titleScreen = must<HTMLDivElement>("#title-screen");
+const enterButton = must<HTMLButtonElement>("#enter-base");
+const hudToggle = must<HTMLButtonElement>("#hud-toggle");
+const mapToggle = must<HTMLButtonElement>("#map-toggle");
+const missionText = must<HTMLDivElement>("#mission-text");
+const promptBox = must<HTMLDivElement>("#interaction-prompt");
+const interactionChoice = must<HTMLDivElement>("#interaction-choice");
+const interactionChoiceA = must<HTMLElement>("#interaction-choice-a");
+const interactionChoiceB = must<HTMLElement>("#interaction-choice-b");
+const dialogueBox = must<HTMLDivElement>("#dialogue-box");
+const dialogueStage = must<HTMLElement>("#dialogue-stage");
+const dialogueLeftSlot = must<HTMLDivElement>(".dialogue-portrait-left");
+const dialogueRightSlot = must<HTMLDivElement>(".dialogue-portrait-right");
+const dialogueLeftPortrait = must<HTMLImageElement>("#dialogue-left-portrait");
+const dialogueRightPortrait = must<HTMLImageElement>("#dialogue-right-portrait");
+const dialogueLeftName = must<HTMLElement>("#dialogue-left-name");
+const dialogueRightName = must<HTMLElement>("#dialogue-right-name");
+const dialogueLeftCallsign = must<HTMLElement>("#dialogue-left-callsign");
+const dialogueRightCallsign = must<HTMLElement>("#dialogue-right-callsign");
+const dialogueSpeaker = must<HTMLElement>("#dialogue-speaker");
+const dialogueStats = must<HTMLElement>("#dialogue-stats");
+const dialogueText = must<HTMLParagraphElement>("#dialogue-text");
+const dialogueChoices = must<HTMLDivElement>("#dialogue-choices");
+const dialogueContinue = must<HTMLButtonElement>("#dialogue-continue");
+const controlsGuide = must<HTMLElement>("#controls-guide");
+const mapOverlay = must<HTMLElement>("#map-overlay");
+const mapRadar = must<HTMLDivElement>("#map-radar");
+const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
+const mapList = must<HTMLDivElement>("#map-list");
+const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
+const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
+const staminaReadout = document.querySelector<HTMLDivElement>("#stamina-readout");
+const powerReadout = document.querySelector<HTMLDivElement>("#power-readout");
+const backgroundMusic = createMarsMusicSynth();
+
+const scene = new THREE.Scene();
+const clearSkyColor = new THREE.Color(0x030713);
+const stormSkyColor = new THREE.Color(0x5b2417);
+scene.background = clearSkyColor.clone();
+scene.fog = new THREE.FogExp2(0x120a0a, 0.0014);
+
+const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 900);
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  alpha: true,
+  powerPreference: "high-performance",
+});
+const EARTH_TOTAL_SOLAR_IRRADIANCE = 1361.6;
+const MARS_MEAN_DISTANCE_AU = 1.524;
+const MARS_SUNLIGHT_RATIO = 1 / (MARS_MEAN_DISTANCE_AU * MARS_MEAN_DISTANCE_AU);
+const EARTHLIKE_KEY_LIGHT = 7.2;
+const MARS_TIME_SCALE = 10;
+const MARS_SOL_SECONDS = 88775;
+const CLEAR_FOG_DENSITY = 0.0014;
+const STORM_FOG_DENSITY = 0.012;
+const STORM_PERIOD_SECONDS = 4 * 60 * 60;
+const STORM_DURATION_SECONDS = 1500;
+const STORM_FADE_SECONDS = 260;
+let sunLight: THREE.DirectionalLight | null = null;
+let sunSprite: THREE.Sprite | null = null;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+sceneRoot.appendChild(renderer.domElement);
+
+buildLighting();
+
+const playerRig = createMarsEngineer();
+const player = playerRig.group;
+player.name = "X";
+player.userData.trueName = "X";
+player.userData.callsign = "022号巡检员";
+scene.add(player);
+player.scale.setScalar(0.76);
+const playerContactShadow = createPlayerContactShadow();
+scene.add(playerContactShadow);
+const helmetLamp = new THREE.SpotLight(0xffd36c, 0, 10.5, Math.PI / 4.4, 0.8, 1.35);
+const helmetLampTarget = new THREE.Object3D();
+const helmetLampSpot = createHelmetLampSpot();
+helmetLamp.visible = false;
+helmetLampTarget.visible = false;
+helmetLampSpot.visible = false;
+helmetLamp.target = helmetLampTarget;
+scene.add(helmetLamp, helmetLampTarget, helmetLampSpot);
+
+const world = createMarsWorld(scene);
+const fufuRig = createFufuCat();
+const fufu = fufuRig.group;
+scene.add(fufu);
+const labels: LabelAnchor[] = world.landmarks.map(addLabel);
+labels.push(addLabel({ label: "福福", object: fufu, x: world.fufuRescueSite.x, z: world.fufuRescueSite.z, labelDistance: 18, mapRange: 80 }));
+
+const keyState = new Set<string>();
+const playerVelocity = new THREE.Vector3();
+const SPAWN_X = -18;
+const SPAWN_Z = -124;
+const SPAWN_TARGET_X = 18;
+const SPAWN_TARGET_Z = 18;
+const playerNormal = new THREE.Vector3();
+const playerForward = new THREE.Vector3();
+const PLAYER_ALTITUDE = 0.66;
+const SHADOW_SURFACE_ALTITUDE = 0.035;
+const MARS_GRAVITY = 3.71;
+const SUITED_JUMP_SPEED = 4.2;
+const JUMP_FORWARD_BOOST = 2.2;
+const SUIT_OXYGEN_MAX = 100;
+const SUIT_OXYGEN_DRAIN_PER_SECOND = 0.42;
+const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.35;
+const STAMINA_MAX = 100;
+const STAMINA_DRAIN_PER_SECOND = 8;
+const STAMINA_RECOVER_PER_SECOND = 7;
+const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
+
+let yaw = Math.PI * 0.15;
+let pitch = 0.34;
+let orbitYawOffset = 0;
+let cameraDistance = 10;
+const CAMERA_MIN_DISTANCE = 0.08;
+const CAMERA_MAX_DISTANCE = 280;
+let lastFrameTime = performance.now();
+let elapsedTime = 0;
+let started = false;
+let activeInteractable: Interactable | null = null;
+let activeElevator: ElevatorControl | null = null;
+let activeHabitatDoor: HabitatDoorControl | null = null;
+let ridingElevator: ElevatorControl | null = null;
+let missionStep: "intro" | "oxygen" | "solar" | "garage" | "complete" = "intro";
+let messageUntil = 0;
+let hudCollapsed = false;
+let mapOpen = false;
+let mapExpanded = false;
+let mapHoldTimer: ReturnType<typeof window.setTimeout> | null = null;
+let mapHoldTriggered = false;
+let mapZoom = 1;
+let playerAltitudeOffset = 0;
+let verticalVelocity = 0;
+let grounded = true;
+let rocketDoorOpen = false;
+let insideRocket = false;
+let stormStrength = 0;
+let activeGreenhouseDoor: GreenhouseDoorControl | null = null;
+let activeRobot: THREE.Group | null = null;
+let activeFufu = false;
+let activeOxygenSupply: string | null = null;
+let suitOxygen = SUIT_OXYGEN_MAX;
+let stamina = STAMINA_MAX;
+let oxygenWarningShown = false;
+let fufuRescued = false;
+let fufuSpeed = 0;
+let fufuAlert = 0;
+let fufuWanderAngle = -2.25;
+let fufuWanderDistance = 3.1;
+let fufuNextWanderAt = 0;
+let insideGreenhouse = false;
+let lastRobotGreetingAt = -Infinity;
+let helmetLampOn = false;
+let showUnnumberedOnMap = false;
+let controlsGuideOpen = false;
+let activeDialogueNode: DialogueNodeId | null = null;
+let dialogueOpen = false;
+let pendingMotherCall: DialogueSceneId | null = null;
+let gameStartElapsed = 0;
+let introCallQueued = false;
+let interactionActions: InteractionAction[] = [];
+let selectedInteractionIndex = 0;
+let interactionChoiceOpen = false;
+let selectedDialogueChoiceIndex = 0;
+const dialogueState = {
+  motherTrust: 0,
+  baseIntegrity: 0,
+  humanAutonomy: 0,
+};
+const ROCKET_HATCH_STOP_X = 2.56;
+const ROCKET_PLATFORM_SPLIT_X = 1.1;
+const habitatHiddenObjects = new Map<THREE.Object3D, boolean>();
+const rocketHiddenObjects = new Map<THREE.Object3D, boolean>();
+const elevatorRideLocal = new THREE.Vector3();
+const habitatLocal = new THREE.Vector3(0, -0.76, -1.55);
+const greenhouseLocal = new THREE.Vector3(0, 0.62, -2.65);
+const fufuNormal = new THREE.Vector3();
+const fufuForward = new THREE.Vector3();
+const fufuRestForward = new THREE.Vector3();
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+    __marsDebug?: {
+      teleportTo: (id: Interactable["id"]) => void;
+      mission: () => string;
+    };
+  }
+}
+
+if (import.meta.env.DEV) {
+  window.__marsDebug = {
+    teleportTo(id) {
+      const target = world.interactables.find((item) => item.id === id);
+      if (!target) return;
+      playerNormal.copy(planetNormal((target.object.userData.planetX ?? 0) + 2.4, (target.object.userData.planetZ ?? 0) + 1.2));
+      playerForward.projectOnPlane(playerNormal).normalize();
+      placePlayerOnPlanet();
+      playerVelocity.set(0, 0, 0);
+      updateMissionState();
+    },
+    mission: () => missionStep,
+  };
+}
+
+resetPlayerToSpawn();
+resetFufu();
+bindInput();
+onResize();
+setMission("点击 ENTER BASE 进入《火星先遣队》。");
+startBackgroundMusic();
+animate();
+
+function must<T extends Element>(selector: string): T {
+  const node = document.querySelector<T>(selector);
+  if (!node) throw new Error(`Missing DOM node: ${selector}`);
+  return node;
+}
+
+function buildLighting() {
+  const marsKeyLight = EARTHLIKE_KEY_LIGHT * MARS_SUNLIGHT_RATIO;
+  scene.add(new THREE.HemisphereLight(0xf7dcc2, 0x3f130b, 0.78));
+
+  const sun = new THREE.DirectionalLight(0xffd2a3, marsKeyLight);
+  sun.position.set(-36, 54, 28);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 140;
+  sun.shadow.camera.left = -80;
+  sun.shadow.camera.right = 80;
+  sun.shadow.camera.top = 80;
+  sun.shadow.camera.bottom = -80;
+  scene.add(sun);
+  sunLight = sun;
+  sunSprite = createVisibleSun(sun.position);
+  scene.add(sunSprite);
+
+  const rim = new THREE.DirectionalLight(0x8fc7ff, 0.48);
+  rim.position.set(28, 16, -44);
+  scene.add(rim);
+}
+
+function updateSolarLighting() {
+  if (!sunLight || !sunSprite) return;
+  const marsSolAngle = (elapsedTime * MARS_TIME_SCALE / MARS_SOL_SECONDS) * Math.PI * 2 + 2.26;
+  const elevation = 0.42 + Math.sin(marsSolAngle * 0.37) * 0.08;
+  const direction = new THREE.Vector3(
+    Math.cos(marsSolAngle) * Math.cos(elevation),
+    Math.sin(elevation),
+    Math.sin(marsSolAngle) * Math.cos(elevation)
+  ).normalize();
+  sunLight.position.copy(direction).multiplyScalar(72);
+  sunLight.intensity =
+    EARTHLIKE_KEY_LIGHT * MARS_SUNLIGHT_RATIO * THREE.MathUtils.lerp(0.74, 1.08, Math.max(0, direction.y)) * THREE.MathUtils.lerp(1, 0.42, stormStrength);
+  sunSprite.position.copy(direction).multiplyScalar(540);
+  const sunMaterial = sunSprite.material as THREE.SpriteMaterial;
+  const occluded = isSunOccludedByPlanet(sunSprite.position);
+  sunSprite.visible = !occluded;
+  sunMaterial.opacity = THREE.MathUtils.lerp(0.96, 0.2, stormStrength);
+}
+
+function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
+  const toSun = sunPosition.clone().sub(camera.position);
+  const distanceToSun = toSun.length();
+  if (distanceToSun <= 0.001) return false;
+  const direction = toSun.multiplyScalar(1 / distanceToSun);
+  const closestT = -camera.position.dot(direction);
+  if (closestT <= 0 || closestT >= distanceToSun) return false;
+  const closest = camera.position.clone().addScaledVector(direction, closestT);
+  return closest.lengthSq() < (PLANET_RADIUS + 1.2) * (PLANET_RADIUS + 1.2);
+}
+
+function createVisibleSun(direction: THREE.Vector3) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 2, 128, 128, 124);
+    gradient.addColorStop(0, "rgba(255, 255, 246, 1)");
+    gradient.addColorStop(0.08, "rgba(255, 252, 220, 1)");
+    gradient.addColorStop(0.2, "rgba(255, 224, 138, 0.9)");
+    gradient.addColorStop(0.46, "rgba(255, 172, 78, 0.44)");
+    gradient.addColorStop(1, "rgba(255, 164, 84, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.beginPath();
+    ctx.arc(128, 128, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 255, 248, 0.98)";
+    ctx.fill();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      color: 0xffffff,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  sprite.position.copy(direction.clone().normalize().multiplyScalar(540));
+  sprite.scale.set(46, 46, 1);
+  return sprite;
+}
+
+function createPlayerContactShadow() {
+  const shadowTexture = createRadialShadowTexture();
+  const material = new THREE.MeshBasicMaterial({
+    map: shadowTexture,
+    color: 0x120906,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.72, 32), material);
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
+function createHelmetLampSpot() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+    gradient.addColorStop(0, "rgba(255, 211, 108, 0.48)");
+    gradient.addColorStop(0.48, "rgba(255, 211, 108, 0.28)");
+    gradient.addColorStop(0.82, "rgba(255, 211, 108, 0.09)");
+    gradient.addColorStop(1, "rgba(255, 211, 108, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
+function createRadialShadowTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(64, 64, 8, 64, 64, 58);
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0.74)");
+    gradient.addColorStop(0.42, "rgba(0, 0, 0, 0.34)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function bindInput() {
+  enterButton.addEventListener("click", startGame);
+  enterButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    startGame();
+  });
+  titleScreen.addEventListener("pointerup", (event) => {
+    if (started) return;
+    const target = event.target;
+    if (target === enterButton || (target instanceof Element && target.closest("#enter-base"))) startGame();
+  });
+  hudToggle.addEventListener("click", toggleHud);
+  mapToggle.addEventListener("click", toggleMap);
+  window.addEventListener("keydown", (event) => {
+    if (event.code === "Backquote") {
+      event.preventDefault();
+      showControlsGuide(true);
+      return;
+    }
+    if (event.code === "Enter" && !started) {
+      startGame();
+      return;
+    }
+    if (!started) return;
+    if (dialogueOpen) {
+      handleDialogueKey(event);
+      return;
+    }
+    if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight")) {
+      event.preventDefault();
+      selectedInteractionIndex = event.code === "ArrowLeft" ? 0 : 1;
+      renderInteractionChoice();
+      return;
+    }
+    if (event.code === "Escape") {
+      returnToTitle();
+      return;
+    }
+    if (event.code === "KeyV") {
+      toggleHud();
+      return;
+    }
+    if (event.code === "KeyM") {
+      handleMapKeyDown(event);
+      return;
+    }
+    if (event.code === "KeyI") {
+      toggleHelmetLamp();
+      return;
+    }
+    if (event.code === "KeyO" && mapOpen) {
+      showUnnumberedOnMap = !showUnnumberedOnMap;
+      updateMap();
+      return;
+    }
+    if (event.code === "Space") {
+      event.preventDefault();
+      if (interactionChoiceOpen && interactionActions.length > 1) executeSelectedInteraction();
+      else jump();
+      return;
+    }
+    if (event.code === "Equal" || event.code === "NumpadAdd") {
+      if (mapOpen) {
+        adjustMapZoom(1);
+        return;
+      }
+      adjustCameraDistance(-1);
+      return;
+    }
+    if (event.code === "Minus" || event.code === "NumpadSubtract") {
+      if (mapOpen) {
+        adjustMapZoom(-1);
+        return;
+      }
+      adjustCameraDistance(1);
+      return;
+    }
+    keyState.add(event.code);
+    if (event.code === "KeyE") interact();
+  });
+  window.addEventListener("keyup", (event) => {
+    if (event.code === "Backquote") {
+      event.preventDefault();
+      showControlsGuide(false);
+      return;
+    }
+    if (event.code === "KeyM") {
+      handleMapKeyUp(event);
+      return;
+    }
+    keyState.delete(event.code);
+  });
+  window.addEventListener("blur", () => {
+    keyState.clear();
+    clearMapHoldTimer();
+    setMapExpanded(false);
+    resetStick();
+  });
+  window.addEventListener("resize", onResize);
+
+  renderer.domElement.addEventListener("pointerdown", () => {
+    if (started && !isTouchLike()) renderer.domElement.requestPointerLock();
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (document.pointerLockElement !== renderer.domElement) return;
+    orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - event.movementX * 0.0022, -0.85, 0.85);
+    pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.12, 0.92);
+  });
+  window.addEventListener("wheel", (event) => {
+    if (!started) return;
+    if (mapOpen) {
+      event.preventDefault();
+      adjustMapZoom(-Math.sign(event.deltaY));
+      return;
+    }
+    adjustCameraDistance(Math.sign(event.deltaY));
+  }, { passive: false });
+
+  joystick.addEventListener("pointerdown", (event) => {
+    if (!started) return;
+    mobileStick.active = true;
+    mobileStick.pointerId = event.pointerId;
+    joystick.setPointerCapture(event.pointerId);
+    updateStick(event);
+  });
+  joystick.addEventListener("pointermove", (event) => {
+    if (!mobileStick.active || mobileStick.pointerId !== event.pointerId) return;
+    updateStick(event);
+  });
+  joystick.addEventListener("pointerup", resetStick);
+  joystick.addEventListener("pointercancel", resetStick);
+
+  mobileJumpButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (!started) return;
+    if (dialogueOpen) advanceDialogue();
+    else interact();
+  });
+  mobileInteractButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (started && !dialogueOpen) jump();
+  });
+  mobileMapButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (started && !dialogueOpen) toggleMap();
+  });
+  mobileLampButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (started && !dialogueOpen) toggleHelmetLamp();
+  });
+  mapRadar.addEventListener("pointerdown", (event) => {
+    if (!started || !mapOpen || dialogueOpen || !isSmallScreenMapTouch()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setMapExpanded(true);
+  });
+
+  window.addEventListener("pointerdown", startBackgroundMusic, { once: true, passive: true });
+  window.addEventListener("keydown", startBackgroundMusic, { once: true });
+}
+
+function toggleHud() {
+  if (!started) return;
+  hudCollapsed = !hudCollapsed;
+  document.body.classList.toggle("hud-collapsed", hudCollapsed);
+  hudToggle.setAttribute("aria-pressed", String(hudCollapsed));
+  hudToggle.setAttribute("aria-label", hudCollapsed ? "显示界面信息" : "隐藏界面信息");
+}
+
+function showControlsGuide(visible: boolean) {
+  controlsGuideOpen = visible;
+  controlsGuide.classList.toggle("is-visible", controlsGuideOpen);
+  controlsGuide.setAttribute("aria-hidden", String(!controlsGuideOpen));
+}
+
+function toggleMap() {
+  if (!started) return;
+  mapOpen = !mapOpen;
+  if (!mapOpen) setMapExpanded(false);
+  document.body.classList.toggle("map-open", mapOpen);
+  mapOverlay.setAttribute("aria-hidden", String(!mapOpen));
+  updateMapButtonState();
+  if (mapOpen) updateMap();
+}
+
+function handleMapKeyDown(event: KeyboardEvent) {
+  event.preventDefault();
+  if (event.repeat || mapHoldTimer || mapHoldTriggered) return;
+  mapHoldTriggered = false;
+  mapHoldTimer = window.setTimeout(() => {
+    mapHoldTimer = null;
+    mapHoldTriggered = true;
+    openMap();
+    setMapExpanded(true);
+  }, 320);
+}
+
+function handleMapKeyUp(event: KeyboardEvent) {
+  event.preventDefault();
+  if (mapHoldTimer) {
+    clearMapHoldTimer();
+    if (!mapHoldTriggered) toggleMap();
+    return;
+  }
+  if (mapHoldTriggered) {
+    setMapExpanded(false);
+    mapHoldTriggered = false;
+  }
+}
+
+function openMap() {
+  if (!started || mapOpen) return;
+  mapOpen = true;
+  document.body.classList.add("map-open");
+  mapOverlay.setAttribute("aria-hidden", "false");
+  updateMapButtonState();
+}
+
+function updateMapButtonState() {
+  mapToggle.setAttribute("aria-pressed", String(mapOpen));
+  mapToggle.setAttribute("aria-label", mapOpen ? "关闭基地地图" : "打开基地地图");
+}
+
+function setMapExpanded(expanded: boolean) {
+  if (mapExpanded === expanded) return;
+  mapExpanded = expanded;
+  document.body.classList.toggle("map-expanded", mapExpanded);
+  if (mapOpen) updateMap();
+}
+
+function clearMapHoldTimer() {
+  if (!mapHoldTimer) return;
+  window.clearTimeout(mapHoldTimer);
+  mapHoldTimer = null;
+}
+
+function toggleHelmetLamp() {
+  if (!started) return;
+  helmetLampOn = !helmetLampOn;
+}
+
+function updateHelmetLamp() {
+  const visible = started && helmetLampOn && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket;
+  helmetLamp.visible = visible;
+  helmetLampTarget.visible = visible;
+  helmetLampSpot.visible = visible;
+  if (!visible) {
+    helmetLamp.intensity = 0;
+    return;
+  }
+
+  const forward = playerForward.clone().projectOnPlane(playerNormal).normalize();
+  const lampNormal = playerNormal.clone().addScaledVector(forward, 0.08).normalize();
+  const spotNormal = playerNormal.clone().addScaledVector(forward, 4 / PLANET_RADIUS).normalize();
+  const lampPosition = lampNormal.clone().multiplyScalar(PLANET_RADIUS + PLAYER_ALTITUDE + 0.78);
+  placeObjectOnPlanetNormal(helmetLampSpot, spotNormal, 0.052, 0);
+
+  helmetLamp.position.copy(lampPosition).addScaledVector(forward, 0.22);
+  helmetLampTarget.position.copy(helmetLampSpot.position).addScaledVector(spotNormal, 0.08);
+  helmetLamp.intensity = 4.4;
+
+  helmetLampSpot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), spotNormal);
+  helmetLampSpot.scale.setScalar(4.2);
+}
+
+function adjustCameraDistance(direction: number) {
+  const step = THREE.MathUtils.clamp(cameraDistance * 0.16, 0.18, 12);
+  cameraDistance = THREE.MathUtils.clamp(cameraDistance + direction * step, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+}
+
+function adjustMapZoom(direction: number) {
+  const factor = direction > 0 ? 1.18 : 1 / 1.18;
+  mapZoom = THREE.MathUtils.clamp(mapZoom * factor, 0.65, 3.2);
+  updateMap();
+}
+
+function jump() {
+  if (!grounded) return;
+  grounded = false;
+  verticalVelocity = SUITED_JUMP_SPEED;
+  playerVelocity.addScaledVector(playerForward, JUMP_FORWARD_BOOST);
+}
+
+function startGame() {
+  if (started) return;
+  started = true;
+  missionStep = "intro";
+  resetDialogueState();
+  gameStartElapsed = elapsedTime;
+  introCallQueued = false;
+  cameraDistance = 10;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  mapOpen = false;
+  showUnnumberedOnMap = false;
+  helmetLampOn = false;
+  activeHabitatDoor = null;
+  activeGreenhouseDoor = null;
+  world.habitatDoor.open = false;
+  world.habitatDoor.occupied = false;
+  world.habitatDoor.doorPanels.visible = true;
+  world.habitatDoor.exteriorMask.visible = true;
+  world.habitatDoor.interiorPortal.visible = false;
+  world.habitatDoor.interiorDoor.visible = false;
+  world.habitatDoor.interiorScene.visible = false;
+  world.habitatDoor.interiorLight.visible = false;
+  setHabitatInteriorMode(false);
+  insideGreenhouse = false;
+  world.greenhouseDoor.occupied = false;
+  world.greenhouseDoor.doorPanels.visible = true;
+  rocketDoorOpen = false;
+  insideRocket = false;
+  setRocketInteriorMode(false);
+  setRocketDoorVisual(false);
+  document.body.classList.remove("map-open");
+  mapOverlay.setAttribute("aria-hidden", "true");
+  updateMapButtonState();
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  resetSuitOxygen();
+  resetPlayerToSpawn();
+  resetFufu();
+  resetStick();
+  startBackgroundMusic();
+  titleScreen.classList.add("is-hidden");
+  document.body.classList.add("is-playing");
+  setMission("先熟悉移动和视角。可以观察基地、飞船、居住舱和机器人。");
+}
+
+function returnToTitle() {
+  if (!started) return;
+  started = false;
+  missionStep = "intro";
+  hudCollapsed = false;
+  mapOpen = false;
+  mapExpanded = false;
+  showUnnumberedOnMap = false;
+  helmetLampOn = false;
+  pendingMotherCall = null;
+  introCallQueued = false;
+  controlsGuideOpen = false;
+  messageUntil = 0;
+  resetSuitOxygen();
+  closeDialogue();
+  clearMapHoldTimer();
+  keyState.clear();
+  resetPlayerToSpawn();
+  resetFufu();
+  resetStick();
+  updateHelmetLamp();
+  document.body.classList.remove("is-playing", "hud-collapsed", "map-open", "map-expanded");
+  controlsGuide.classList.remove("is-visible");
+  controlsGuide.setAttribute("aria-hidden", "true");
+  hudToggle.setAttribute("aria-pressed", "false");
+  hudToggle.setAttribute("aria-label", "隐藏界面信息");
+  updateMapButtonState();
+  mapOverlay.setAttribute("aria-hidden", "true");
+  titleScreen.classList.remove("is-hidden");
+  dialogueBox.innerHTML = "";
+  promptBox.textContent = "";
+  setMission("点击 ENTER BASE 进入《火星先遣队》。");
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+}
+
+function updateStick(event: PointerEvent) {
+  const rect = joystick.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const dx = event.clientX - centerX;
+  const dy = event.clientY - centerY;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const max = rect.width * 0.32;
+  const clamped = Math.min(max, length);
+  mobileStick.x = (dx / length) * (clamped / max);
+  mobileStick.y = (dy / length) * (clamped / max);
+  joystickKnob.style.transform = `translate(${mobileStick.x * max}px, ${mobileStick.y * max}px)`;
+}
+
+function resetStick() {
+  mobileStick.active = false;
+  mobileStick.pointerId = null;
+  mobileStick.x = 0;
+  mobileStick.y = 0;
+  joystickKnob.style.transform = "translate(0, 0)";
+}
+
+function animate() {
+  const now = performance.now();
+  const delta = Math.min((now - lastFrameTime) / 1000, 0.033);
+  lastFrameTime = now;
+  elapsedTime += delta;
+
+  updateWeather();
+  updateScheduledCalls();
+  updateSolarLighting();
+  if (sunLight) updateSolarArrays(world.solarArrays, sunLight.position);
+  updateElevators(world.elevators, delta);
+  const speed = started ? updatePlayer(delta) : 0;
+  updateSuitOxygen(delta);
+  updateCamera(delta);
+  updateRovers(world.rovers, elapsedTime, world.colliders);
+  updateFufu(delta);
+  updateMeteors(world.meteors, elapsedTime);
+  updateHabitatOccupancy();
+  updateLabels();
+  updateMap();
+  updateMissionState();
+  updateReadouts();
+  updateMarsEngineer(playerRig, speed, elapsedTime);
+  updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
+  updatePlayerContactShadow();
+  updateHelmetLamp();
+  updateBackgroundMusicFade();
+
+  world.flickerLights.forEach((light, index) => {
+    const base = light === world.oxygenLight && missionStep === "oxygen" ? 2.3 : 1.25;
+    light.intensity *= 0.96;
+    light.intensity += (base + Math.sin(elapsedTime * 2.7 + index) * 0.26) * 0.04;
+  });
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+function startBackgroundMusic() {
+  if (!started) return;
+  backgroundMusic.start();
+}
+
+function updateBackgroundMusicFade() {
+  backgroundMusic.update();
+}
+
+function createMarsMusicSynth() {
+  const stepDuration = 0.42;
+  const rootFrequency = 146.83;
+  const melodyPattern = [12, null, 10, null, 7, null, 5, 7, 10, null, 12, 15, 14, null, 10, null] as const;
+  const bassPattern = [0, null, null, null, -5, null, null, null, 0, null, -2, null, -5, null, null, null] as const;
+  let audioContext: AudioContext | null = null;
+  let masterGain: GainNode | null = null;
+  let delayInput: GainNode | null = null;
+  let playing = false;
+  let stepIndex = 0;
+  let nextStepTime = 0;
+
+  function start() {
+    if (!audioContext) initialize();
+    if (!audioContext || !masterGain) return;
+    audioContext.resume().catch(() => undefined);
+    masterGain.gain.cancelScheduledValues(audioContext.currentTime);
+    masterGain.gain.setTargetAtTime(0.11, audioContext.currentTime, 0.8);
+    if (!playing) {
+      playing = true;
+      nextStepTime = audioContext.currentTime + 0.04;
+    }
+  }
+
+  function update() {
+    if (!playing || !audioContext) return;
+    while (nextStepTime < audioContext.currentTime + 0.8) {
+      scheduleStep(nextStepTime, stepIndex);
+      nextStepTime += stepDuration;
+      stepIndex = (stepIndex + 1) % melodyPattern.length;
+    }
+  }
+
+  function initialize() {
+    const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextConstructor) return;
+    audioContext = new AudioContextConstructor();
+    const compressor = audioContext.createDynamicsCompressor();
+    compressor.threshold.value = -22;
+    compressor.knee.value = 18;
+    compressor.ratio.value = 3;
+    compressor.attack.value = 0.02;
+    compressor.release.value = 0.35;
+
+    masterGain = audioContext.createGain();
+    masterGain.gain.value = 0.0001;
+    masterGain.connect(compressor);
+    compressor.connect(audioContext.destination);
+
+    const delay = audioContext.createDelay(1.2);
+    delay.delayTime.value = 0.32;
+    const feedback = audioContext.createGain();
+    feedback.gain.value = 0.24;
+    const wetGain = audioContext.createGain();
+    wetGain.gain.value = 0.26;
+    delay.connect(feedback);
+    feedback.connect(delay);
+    delay.connect(wetGain);
+    wetGain.connect(masterGain);
+    delayInput = audioContext.createGain();
+    delayInput.gain.value = 1;
+    delayInput.connect(delay);
+  }
+
+  function scheduleStep(time: number, index: number) {
+    const melodyNote = melodyPattern[index];
+    const bassNote = bassPattern[index];
+    if (bassNote !== null) {
+      scheduleTone(rootFrequency * semitoneRatio(bassNote - 12), time, stepDuration * 1.8, "sawtooth", 0.045, 900);
+    }
+    if (melodyNote !== null) {
+      scheduleTone(rootFrequency * semitoneRatio(melodyNote), time + 0.02, stepDuration * 0.72, "triangle", 0.032, 1800);
+    }
+    if (index % 8 === 0) {
+      scheduleTone(rootFrequency * semitoneRatio(24), time, stepDuration * 5.8, "sine", 0.018, 1200);
+    }
+  }
+
+  function scheduleTone(frequency: number, time: number, duration: number, type: OscillatorType, volume: number, filterFrequency: number) {
+    if (!audioContext || !masterGain) return;
+    const oscillator = audioContext.createOscillator();
+    const envelope = audioContext.createGain();
+    const filter = audioContext.createBiquadFilter();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, time);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(filterFrequency, time);
+    filter.Q.value = 0.7;
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.exponentialRampToValueAtTime(volume, time + 0.035);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+    oscillator.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(masterGain);
+    if (delayInput) envelope.connect(delayInput);
+    oscillator.start(time);
+    oscillator.stop(time + duration + 0.08);
+  }
+
+  return { start, update };
+}
+
+function semitoneRatio(semitones: number) {
+  return Math.pow(2, semitones / 12);
+}
+
+function updateWeather() {
+  const cycle = (elapsedTime * MARS_TIME_SCALE + 13200) % STORM_PERIOD_SECONDS;
+  const fadeIn = THREE.MathUtils.smoothstep(cycle, 0, STORM_FADE_SECONDS);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, STORM_DURATION_SECONDS - STORM_FADE_SECONDS, STORM_DURATION_SECONDS);
+  stormStrength = cycle < STORM_DURATION_SECONDS ? Math.min(fadeIn, fadeOut) : 0;
+
+  const fog = scene.fog as THREE.FogExp2;
+  fog.density = THREE.MathUtils.lerp(CLEAR_FOG_DENSITY, STORM_FOG_DENSITY, stormStrength);
+  fog.color.copy(new THREE.Color(0x120a0a).lerp(new THREE.Color(0x8d3a20), stormStrength));
+  if (scene.background instanceof THREE.Color) scene.background.copy(clearSkyColor).lerp(stormSkyColor, stormStrength * 0.82);
+  renderer.toneMappingExposure = THREE.MathUtils.lerp(1.08, 0.72, stormStrength);
+}
+
+function updateScheduledCalls() {
+  if (!started || dialogueOpen || pendingMotherCall || introCallQueued) return;
+  if (missionStep !== "intro") return;
+  if (elapsedTime - gameStartElapsed < 60) return;
+  introCallQueued = true;
+  queueMotherCall("intro", "Mother 正在呼叫。");
+}
+
+function updateRobotEncounters() {
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
+  if (elapsedTime - lastRobotGreetingAt < 8) return;
+
+  let nearestRobot: THREE.Group | null = null;
+  let nearestDistance = Infinity;
+  const robotPosition = new THREE.Vector3();
+  for (const rover of world.rovers) {
+    if (rover.userData.kind !== "bot") continue;
+    rover.getWorldPosition(robotPosition);
+    const distance = robotPosition.distanceTo(player.position);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestRobot = rover;
+    }
+  }
+
+  if (!nearestRobot || nearestDistance > 3.8) return;
+  nearestRobot.userData.pauseUntil = elapsedTime + 4.5;
+  lastRobotGreetingAt = elapsedTime;
+  showDialogue(nearestRobot.userData.label ?? "机器人", "你好！请问需要什么帮助吗？", 3.6);
+}
+
+function updatePlayer(delta: number) {
+  if (dialogueOpen) {
+    playerVelocity.set(0, 0, 0);
+    return 0;
+  }
+  if (world.habitatDoor.occupied) {
+    return updateHabitatInterior(delta);
+  }
+  if (insideGreenhouse) {
+    return updateGreenhouseInterior(delta);
+  }
+  if (ridingElevator) {
+    return updateElevatorRide(delta, ridingElevator);
+  }
+
+  const surfaceNormal = playerNormal.clone();
+  const { turnInput, forwardInput } = readMovementInput();
+
+  const turnRate = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 2.0 : 1.55;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(surfaceNormal, turnInput * turnRate * delta).projectOnPlane(surfaceNormal).normalize();
+  }
+
+  const speed = (keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 7.5 : 4.8) * (grounded ? 1 : 1.12);
+  const desired = playerForward.clone().multiplyScalar(speed * forwardInput);
+  playerVelocity.lerp(desired, 1 - Math.pow(grounded ? 0.0008 : 0.08, delta));
+  playerVelocity.projectOnPlane(surfaceNormal);
+
+  const previousNormal = playerNormal.clone();
+  const angularDistance = playerVelocity.length() * delta / PLANET_RADIUS;
+  if (angularDistance > 0.00001) {
+    const moveDirection = playerVelocity.clone().normalize();
+    playerNormal.addScaledVector(moveDirection, angularDistance).normalize();
+    playerForward.projectOnPlane(playerNormal).normalize();
+  }
+  resolveCollisions(previousNormal);
+  if (!grounded || playerAltitudeOffset > 0) {
+    verticalVelocity -= MARS_GRAVITY * delta;
+    playerAltitudeOffset += verticalVelocity * delta;
+    if (playerAltitudeOffset <= 0) {
+      playerAltitudeOffset = 0;
+      verticalVelocity = 0;
+      grounded = true;
+    }
+  }
+  placePlayerOnPlanet();
+  return playerVelocity.length();
+}
+
+function updateHabitatInterior(delta: number) {
+  const { turnInput, forwardInput } = readMovementInput();
+  const up = new THREE.Vector3(0, 1, 0).transformDirection(world.habitatDoor.root.matrixWorld).normalize();
+  playerNormal.copy(up);
+  playerForward.projectOnPlane(playerNormal).normalize();
+
+  const turnRate = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 2.0 : 1.55;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(playerNormal, turnInput * turnRate * delta).projectOnPlane(playerNormal).normalize();
+  }
+
+  const walkSpeed = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 3.6 : 2.35;
+  if (Math.abs(forwardInput) > 0.001) {
+    const proposedWorld = player.position.clone().addScaledVector(playerForward, walkSpeed * forwardInput * delta);
+    const proposedLocal = world.habitatDoor.root.worldToLocal(proposedWorld);
+    habitatLocal.x = THREE.MathUtils.clamp(proposedLocal.x, -5.1, 5.1);
+    habitatLocal.z = THREE.MathUtils.clamp(proposedLocal.z, -1.78, 1.62);
+  }
+
+  habitatLocal.y = -0.76;
+  player.position.copy(world.habitatDoor.root.localToWorld(habitatLocal.clone()));
+  player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
+  player.rotateY(headingFromForward(playerNormal, playerForward));
+  playerVelocity.set(0, 0, 0);
+  grounded = true;
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  return Math.abs(forwardInput) * walkSpeed;
+}
+
+function updateGreenhouseInterior(delta: number) {
+  const door = world.greenhouseDoor;
+  const { turnInput, forwardInput } = readMovementInput();
+  const up = new THREE.Vector3(0, 1, 0).transformDirection(door.root.matrixWorld).normalize();
+  playerNormal.copy(up);
+  playerForward.projectOnPlane(playerNormal).normalize();
+
+  const turnRate = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 2.0 : 1.55;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(playerNormal, turnInput * turnRate * delta).projectOnPlane(playerNormal).normalize();
+  }
+
+  const walkSpeed = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 3.8 : 2.45;
+  if (Math.abs(forwardInput) > 0.001) {
+    const proposedWorld = player.position.clone().addScaledVector(playerForward, walkSpeed * forwardInput * delta);
+    const proposedLocal = door.root.worldToLocal(proposedWorld);
+    const radius = 3.3;
+    proposedLocal.y = 0.62;
+    proposedLocal.z = THREE.MathUtils.clamp(proposedLocal.z, -3.25, 3.05);
+    const flat = new THREE.Vector2(proposedLocal.x, proposedLocal.z);
+    if (flat.length() > radius) flat.setLength(radius);
+    greenhouseLocal.set(flat.x, 0.62, flat.y);
+  }
+
+  player.position.copy(door.root.localToWorld(greenhouseLocal.clone()));
+  player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
+  player.rotateY(headingFromForward(playerNormal, playerForward));
+  playerVelocity.set(0, 0, 0);
+  grounded = true;
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  return Math.abs(forwardInput) * walkSpeed;
+}
+
+function updateElevatorRide(delta: number, elevator: ElevatorControl) {
+  const normal = new THREE.Vector3(0, 1, 0).transformDirection(elevator.car.matrixWorld).normalize();
+  playerNormal.copy(normal);
+  playerForward.projectOnPlane(playerNormal).normalize();
+  grounded = true;
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+
+  if (insideRocket) {
+    return updateRocketInteriorLook(delta, elevator);
+  }
+
+  if (!elevator.moving && elevator.target === "top") {
+    const { turnInput, forwardInput } = readMovementInput();
+    const turnRate = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 2.0 : 1.55;
+    if (Math.abs(turnInput) > 0.001) {
+      playerForward.applyAxisAngle(playerNormal, turnInput * turnRate * delta).projectOnPlane(playerNormal).normalize();
+    }
+
+    const walkSpeed = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 4.0 : 2.6;
+    if (Math.abs(forwardInput) > 0.001) {
+      const proposedWorld = player.position.clone().addScaledVector(playerForward, walkSpeed * forwardInput * delta);
+      const proposedLocal = elevator.car.worldToLocal(proposedWorld);
+      elevatorRideLocal.x = THREE.MathUtils.clamp(proposedLocal.x, elevator.walkBounds.minX, ROCKET_HATCH_STOP_X);
+      elevatorRideLocal.z = THREE.MathUtils.clamp(proposedLocal.z, elevator.walkBounds.minZ, elevator.walkBounds.maxZ);
+    }
+    placePlayerOnElevator(elevator);
+    return Math.abs(forwardInput) * walkSpeed;
+  }
+
+  playerVelocity.set(0, 0, 0);
+  placePlayerOnElevator(elevator);
+  return 0;
+}
+
+function updateRocketInteriorLook(delta: number, elevator: ElevatorControl) {
+  const { turnInput, forwardInput } = readMovementInput();
+  orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - turnInput * 1.45 * delta, -1.18, 1.18);
+  pitch = THREE.MathUtils.clamp(pitch + forwardInput * 0.65 * delta, 0.08, 1.12);
+  playerVelocity.set(0, 0, 0);
+  placePlayerInRocketInterior(elevator);
+  return 0;
+}
+
+function readMovementInput() {
+  let turnInput = 0;
+  let forwardInput = 0;
+  if (keyState.has("KeyW") || keyState.has("ArrowUp")) forwardInput += 1;
+  if (keyState.has("KeyS") || keyState.has("ArrowDown")) forwardInput -= 1;
+  if (keyState.has("KeyA") || keyState.has("ArrowLeft")) turnInput += 1;
+  if (keyState.has("KeyD") || keyState.has("ArrowRight")) turnInput -= 1;
+  turnInput -= mobileStick.x * 0.85;
+  forwardInput += -mobileStick.y;
+  return {
+    turnInput: THREE.MathUtils.clamp(turnInput, -1, 1),
+    forwardInput: THREE.MathUtils.clamp(forwardInput, -1, 1),
+  };
+}
+
+function updatePlayerContactShadow() {
+  if (ridingElevator || world.habitatDoor.occupied) {
+    playerContactShadow.visible = false;
+    return;
+  }
+  const shadowNormal = playerNormal.clone();
+  placeObjectOnPlanetNormal(playerContactShadow, shadowNormal, SHADOW_SURFACE_ALTITUDE, headingFromForward(shadowNormal, playerForward));
+  playerContactShadow.rotateX(-Math.PI / 2);
+  const jumpT = THREE.MathUtils.clamp(playerAltitudeOffset / 2.8, 0, 1);
+  const scale = THREE.MathUtils.lerp(1.18, 0.46, jumpT);
+  playerContactShadow.scale.set(scale * 1.1, scale * 0.72, 1);
+  const material = playerContactShadow.material as THREE.MeshBasicMaterial;
+  material.opacity = THREE.MathUtils.lerp(0.5, 0.16, jumpT);
+  playerContactShadow.visible = started;
+}
+
+function updateCamera(delta: number) {
+  if (!started) {
+    const distance = 230;
+    const titleYaw = yaw;
+    const target = new THREE.Vector3(0, 0, 0);
+    const desired = new THREE.Vector3(
+      Math.sin(titleYaw) * Math.cos(0.44) * distance,
+      Math.sin(0.44) * distance,
+      Math.cos(titleYaw) * Math.cos(0.44) * distance
+    );
+    camera.position.lerp(desired, 1 - Math.pow(0.0002, delta));
+    camera.up.set(0, 1, 0);
+    camera.lookAt(target);
+    yaw += delta * 0.08;
+    return;
+  }
+
+  const normal = playerNormal.clone();
+  if (cameraDistance <= 0.9 || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
+    const eye = player.position.clone().addScaledVector(normal, insideRocket ? 1.38 : 1.78);
+    const lookForward = playerForward
+      .clone()
+      .applyAxisAngle(normal, orbitYawOffset)
+      .projectOnPlane(normal)
+      .normalize();
+    const pitchOffset = insideRocket ? THREE.MathUtils.clamp(pitch - 0.24, -0.38, 0.5) : THREE.MathUtils.clamp(pitch - 0.34, -0.22, 0.36);
+    const lookDirection = lookForward.clone().multiplyScalar(Math.cos(pitchOffset)).addScaledVector(normal, Math.sin(pitchOffset)).normalize();
+    const desired = eye
+      .clone()
+      .addScaledVector(lookForward, insideRocket ? -0.92 : 0)
+      .addScaledVector(normal, insideRocket ? -0.12 : 0.03);
+    camera.position.lerp(desired, 1 - Math.pow(0.00002, delta));
+    camera.up.copy(normal);
+    camera.lookAt(eye.clone().addScaledVector(lookDirection, 24));
+    playerRig.visual.visible = false;
+    orbitYawOffset *= Math.pow(0.03, delta);
+    return;
+  }
+
+  const closeT = 1 - THREE.MathUtils.smoothstep(cameraDistance, 0.08, 2.2);
+  const targetHeight = THREE.MathUtils.lerp(1.35, 1.55, closeT);
+  const target = player.position.clone().addScaledVector(normal, targetHeight);
+  const distance = cameraDistance;
+  const activePitch = pitch;
+  const cameraForward = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
+  const backDistance = Math.cos(activePitch) * distance * (1 - closeT * 0.92);
+  const upDistance = Math.sin(activePitch) * distance + THREE.MathUtils.lerp(2.4, 0.03, closeT);
+  const offset = cameraForward.multiplyScalar(-backDistance).addScaledVector(normal, upDistance);
+  const desired = target.clone().add(offset);
+  camera.position.lerp(desired, 1 - Math.pow(0.00005, delta));
+  camera.up.copy(normal);
+  camera.lookAt(closeT > 0.85 ? target.clone().addScaledVector(cameraForward, 20) : target);
+  playerRig.visual.visible = cameraDistance > 1.15;
+  orbitYawOffset *= Math.pow(0.03, delta);
+}
+
+function placePlayerOnPlanet() {
+  placeObjectOnPlanetNormal(player, playerNormal, PLAYER_ALTITUDE + playerAltitudeOffset, headingFromForward(playerNormal, playerForward));
+}
+
+function resetPlayerToSpawn() {
+  ridingElevator = null;
+  activeElevator = null;
+  activeHabitatDoor = null;
+  activeGreenhouseDoor = null;
+  world.habitatDoor.occupied = false;
+  world.habitatDoor.interiorScene.visible = false;
+  setHabitatInteriorMode(false);
+  habitatLocal.set(0, -0.76, -1.55);
+  insideGreenhouse = false;
+  world.greenhouseDoor.occupied = false;
+  world.greenhouseDoor.doorPanels.visible = true;
+  greenhouseLocal.set(0, 0.62, -2.65);
+  insideRocket = false;
+  rocketDoorOpen = false;
+  setRocketDoorVisual(false);
+  playerNormal.copy(planetNormal(SPAWN_X, SPAWN_Z));
+  playerForward.copy(planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z).sub(playerNormal).projectOnPlane(playerNormal).normalize());
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  playerRig.visual.visible = true;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+  placePlayerOnPlanet();
+}
+
+function resetFufu() {
+  fufuRescued = false;
+  activeFufu = false;
+  fufuSpeed = 0;
+  fufuAlert = 0;
+  fufuWanderAngle = -2.25;
+  fufuWanderDistance = 3.1;
+  fufuNextWanderAt = 0;
+  fufu.visible = true;
+  fufuNormal.copy(world.fufuRescueSite.normal);
+  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, world.fufuRescueSite.yaw);
+  fufuForward.copy(new THREE.Vector3(0, 0, -1).applyQuaternion(fufu.quaternion).projectOnPlane(fufuNormal).normalize());
+  fufuRestForward.copy(fufuForward);
+}
+
+function updateFufu(delta: number) {
+  if (!started) {
+    settleFufuAnimation(delta);
+    return;
+  }
+
+  if (!fufuRescued) {
+    updateWaitingFufu(delta);
+    return;
+  }
+
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) {
+    fufu.visible = false;
+    settleFufuAnimation(delta);
+    return;
+  }
+
+  fufu.visible = true;
+  fufuAlert = THREE.MathUtils.lerp(fufuAlert, 0, 1 - Math.pow(0.04, delta));
+  if (elapsedTime > fufuNextWanderAt) {
+    const playerMoving = playerVelocity.length() > 0.5;
+    fufuWanderAngle = playerMoving ? Math.PI + THREE.MathUtils.randFloatSpread(1.7) : THREE.MathUtils.randFloat(-Math.PI, Math.PI);
+    fufuWanderDistance = THREE.MathUtils.randFloat(2.2, playerMoving ? 4.0 : 5.2);
+    fufuNextWanderAt = elapsedTime + THREE.MathUtils.randFloat(2.6, 5.2);
+  }
+
+  const side = playerForward.clone().cross(playerNormal).normalize();
+  const wanderDirection = playerForward
+    .clone()
+    .multiplyScalar(Math.cos(fufuWanderAngle))
+    .addScaledVector(side, Math.sin(fufuWanderAngle))
+    .projectOnPlane(playerNormal)
+    .normalize();
+  const targetNormal = playerNormal
+    .clone()
+    .addScaledVector(wanderDirection, fufuWanderDistance / PLANET_RADIUS)
+    .normalize();
+  const dot = THREE.MathUtils.clamp(fufuNormal.dot(targetNormal), -1, 1);
+  const targetDistance = Math.acos(dot) * PLANET_RADIUS;
+  const playerDot = THREE.MathUtils.clamp(fufuNormal.dot(playerNormal), -1, 1);
+  const playerDistance = Math.acos(playerDot) * PLANET_RADIUS;
+
+  if (playerDistance > 28) {
+    fufuNormal.copy(targetNormal);
+    fufuForward.copy(playerForward);
+    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    settleFufuAnimation(delta);
+    return;
+  }
+
+  if (targetDistance < 1.15 && playerDistance < 7.5) {
+    const relaxedForward = playerForward.clone().projectOnPlane(fufuNormal).normalize();
+    turnFufuToward(relaxedForward, delta, 0.7);
+    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    settleFufuAnimation(delta);
+    return;
+  }
+
+  const tangent = targetNormal.clone().addScaledVector(fufuNormal, -dot);
+  if (tangent.lengthSq() < 0.000001) {
+    settleFufuAnimation(delta);
+    return;
+  }
+  tangent.normalize();
+  const targetSpeed = playerDistance > 10 ? 7.2 : targetDistance > 4.2 ? 4.8 : 2.8;
+  const stepAngle = Math.min((targetSpeed * delta) / PLANET_RADIUS, Math.acos(dot));
+  fufuNormal.multiplyScalar(Math.cos(stepAngle)).addScaledVector(tangent, Math.sin(stepAngle)).normalize();
+  turnFufuToward(tangent, delta, 1.8);
+  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  fufuSpeed = THREE.MathUtils.lerp(fufuSpeed, targetSpeed, 1 - Math.pow(0.002, delta));
+}
+
+function updateWaitingFufu(delta: number) {
+  fufu.visible = true;
+  const dot = THREE.MathUtils.clamp(fufuNormal.dot(playerNormal), -1, 1);
+  const distance = Math.acos(dot) * PLANET_RADIUS;
+  const seesPlayer = distance < 10.5;
+  fufuAlert = THREE.MathUtils.lerp(fufuAlert, seesPlayer ? 1 : 0, 1 - Math.pow(0.03, delta));
+
+  const lookDirection = seesPlayer
+    ? playerNormal.clone().addScaledVector(fufuNormal, -dot).projectOnPlane(fufuNormal)
+    : fufuRestForward.clone().applyAxisAngle(fufuNormal, Math.sin(elapsedTime * 0.48) * 0.82 + Math.sin(elapsedTime * 1.05) * 0.16);
+  if (lookDirection.lengthSq() > 0.000001) turnFufuToward(lookDirection.normalize(), delta, seesPlayer ? 1.2 : 0.48);
+
+  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  settleFufuAnimation(delta);
+}
+
+function turnFufuToward(direction: THREE.Vector3, delta: number, responsiveness: number) {
+  const desired = direction.clone().projectOnPlane(fufuNormal);
+  if (desired.lengthSq() < 0.000001) return;
+  desired.normalize();
+  fufuForward.lerp(desired, 1 - Math.pow(0.0015, delta * responsiveness)).projectOnPlane(fufuNormal).normalize();
+}
+
+function settleFufuAnimation(delta: number) {
+  fufuSpeed = THREE.MathUtils.lerp(fufuSpeed, 0, 1 - Math.pow(0.02, delta));
+}
+
+function headingFromForward(normal: THREE.Vector3, forward: THREE.Vector3) {
+  const base = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal.clone().normalize());
+  const localForward = forward.clone().normalize().applyQuaternion(base.invert());
+  return Math.atan2(-localForward.x, -localForward.z);
+}
+
+function resolveCollisions(previousNormal: THREE.Vector3) {
+  const playerRadius = 0.34;
+  const current = playerNormal.clone();
+
+  for (const collider of world.colliders) {
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = new THREE.Vector3();
+    if (collider.dynamicObject) {
+      collider.center.set(collider.dynamicObject.userData.planetX ?? 0, collider.dynamicObject.userData.planetZ ?? 0);
+      collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
+    } else {
+      planetNormal(collider.center.x, collider.center.y, colliderNormal);
+    }
+
+    const minDistance = playerRadius + collider.radius;
+    const dot = THREE.MathUtils.clamp(current.dot(colliderNormal), -1, 1);
+    const distance = Math.acos(dot) * PLANET_RADIUS;
+    if (distance < minDistance) {
+      let away = current.clone().addScaledVector(colliderNormal, -dot);
+      if (away.lengthSq() < 0.000001) {
+        const previousDot = THREE.MathUtils.clamp(previousNormal.dot(colliderNormal), -1, 1);
+        away = previousNormal.clone().addScaledVector(colliderNormal, -previousDot);
+      }
+      if (away.lengthSq() < 0.000001) {
+        away = new THREE.Vector3(1, 0, 0).projectOnPlane(colliderNormal);
+        if (away.lengthSq() < 0.000001) away.set(0, 0, 1).projectOnPlane(colliderNormal);
+      }
+      away.normalize();
+      const minAngle = minDistance / PLANET_RADIUS;
+      current.copy(colliderNormal).multiplyScalar(Math.cos(minAngle)).addScaledVector(away, Math.sin(minAngle)).normalize();
+    }
+  }
+
+  playerNormal.copy(current);
+  playerForward.projectOnPlane(playerNormal).normalize();
+}
+
+function updateMissionState() {
+  if (dialogueOpen) {
+    activeInteractable = null;
+    activeElevator = null;
+    activeHabitatDoor = null;
+    activeGreenhouseDoor = null;
+    activeRobot = null;
+    activeFufu = false;
+    activeOxygenSupply = null;
+    interactionActions = [];
+    interactionChoiceOpen = false;
+    promptBox.textContent = "";
+    promptBox.classList.remove("is-visible");
+    interactionChoice.classList.remove("is-visible");
+    interactionChoice.setAttribute("aria-hidden", "true");
+    dialogueBox.classList.remove("is-visible");
+    return;
+  }
+  activeInteractable = null;
+  activeElevator = findActiveElevator();
+  activeHabitatDoor = findActiveHabitatDoor();
+  activeGreenhouseDoor = findActiveGreenhouseDoor();
+  activeRobot = null;
+  activeFufu = false;
+  activeOxygenSupply = null;
+  let bestDistance = Infinity;
+  for (const item of world.interactables) {
+    const pos = new THREE.Vector3();
+    item.object.getWorldPosition(pos);
+    const distance = pos.distanceTo(player.position);
+    const matchesMission =
+      (missionStep === "oxygen" && item.id === "oxygen") ||
+      (missionStep === "solar" && item.id === "solar") ||
+      (missionStep === "garage" && item.id === "garage");
+    if (matchesMission && distance < item.radius && distance < bestDistance) {
+      bestDistance = distance;
+      activeInteractable = item;
+    }
+  }
+  activeFufu = findActiveFufu();
+  activeRobot = findActiveRobot();
+  activeOxygenSupply = findActiveOxygenSupply();
+  interactionActions = buildInteractionActions();
+  if (selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
+  updateInteractionPrompts();
+  dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
+}
+
+function buildInteractionActions() {
+  const actions: InteractionAction[] = [];
+  if (activeElevator) actions.push({ id: "elevator", label: elevatorPrompt(activeElevator).replace(/^按 E /, "") });
+  if (activeHabitatDoor) actions.push({ id: "habitat", label: world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱" });
+  if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱" });
+  if (activeInteractable) actions.push({ id: "mission", label: activeInteractable.prompt.replace(/^按 E /, "") });
+  if (activeFufu) actions.push({ id: "fufu", label: "安抚 福福" });
+  if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
+  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
+  if (pendingMotherCall) actions.push({ id: "motherCall", label: "接听 Mother 呼叫" });
+  return actions.slice(0, 2);
+}
+
+function updateInteractionPrompts() {
+  if (interactionActions.length > 1) {
+    promptBox.textContent = "";
+    promptBox.classList.remove("is-visible");
+    if (interactionChoiceOpen) renderInteractionChoice();
+    else {
+      interactionChoice.classList.remove("is-visible");
+      interactionChoice.setAttribute("aria-hidden", "true");
+    }
+    return;
+  }
+  interactionChoiceOpen = false;
+  interactionChoice.classList.remove("is-visible");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  promptBox.textContent = interactionActions.length === 1 ? `E ${interactionActions[0].label}` : "";
+  promptBox.classList.toggle("is-visible", interactionActions.length === 1);
+}
+
+function renderInteractionChoice() {
+  const [first, second] = interactionActions;
+  if (!first || !second) return;
+  interactionChoiceA.textContent = first.label;
+  interactionChoiceB.textContent = second.label;
+  interactionChoice.classList.add("is-visible");
+  interactionChoice.setAttribute("aria-hidden", "false");
+  const options = interactionChoice.querySelectorAll<HTMLElement>(".interaction-option");
+  options.forEach((option, index) => option.classList.toggle("is-selected", index === selectedInteractionIndex));
+}
+
+function interact() {
+  if (interactionActions.length > 1) {
+    interactionChoiceOpen = true;
+    renderInteractionChoice();
+    return;
+  }
+  if (interactionActions.length === 1) {
+    executeSelectedInteraction();
+    return;
+  }
+}
+
+function executeSelectedInteraction() {
+  const action = interactionActions[Math.min(selectedInteractionIndex, interactionActions.length - 1)];
+  if (!action) return;
+  if (action.id === "elevator") {
+    interactElevator();
+    return;
+  }
+  if (action.id === "habitat" && activeHabitatDoor) {
+    openHabitatDoor(activeHabitatDoor);
+    return;
+  }
+  if (action.id === "greenhouse" && activeGreenhouseDoor) {
+    if (insideGreenhouse) exitGreenhouse(activeGreenhouseDoor);
+    else enterGreenhouse(activeGreenhouseDoor);
+    return;
+  }
+  if (action.id === "fufu") {
+    rescueFufu();
+    return;
+  }
+  if (action.id === "robot" && activeRobot) {
+    activeRobot.userData.pauseUntil = elapsedTime + 6;
+    openDialogueScene(missionStep === "garage" ? "garage" : "robot");
+    return;
+  }
+  if (action.id === "oxygenSupply" && activeOxygenSupply) {
+    refillSuitOxygen(activeOxygenSupply);
+    return;
+  }
+  if (action.id === "motherCall" && pendingMotherCall) {
+    const scene = pendingMotherCall;
+    pendingMotherCall = null;
+    openDialogueScene(scene);
+    return;
+  }
+  if (action.id === "mission" && activeInteractable) {
+    interactMission(activeInteractable);
+  }
+}
+
+function interactElevator() {
+  if (activeElevator) {
+    if (insideRocket) {
+      exitRocketInterior();
+      return;
+    }
+    if (isAtRocketHatch()) {
+      enterRocketInterior();
+      return;
+    }
+    toggleElevator(activeElevator);
+    return;
+  }
+}
+
+function interactMission(interactable: Interactable) {
+  if (interactable.id === "oxygen") {
+    openDialogueScene("oxygen");
+  } else if (interactable.id === "solar") {
+    openDialogueScene("solar");
+  } else if (interactable.id === "garage") {
+    openDialogueScene("garage");
+  }
+}
+
+function findActiveFufu() {
+  if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return false;
+  return fufu.position.distanceTo(player.position) < 3.4;
+}
+
+function rescueFufu() {
+  fufuRescued = true;
+  activeFufu = false;
+  fufuForward.copy(playerForward);
+  showDialogue("福福", "喵。它从残骸阴影里钻出来，开始跟着你。", 4.4);
+}
+
+function findActiveOxygenSupply() {
+  if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
+  if (suitOxygen >= 99) return null;
+  const coordinate = playerMapCoordinate();
+  const supplyPoints = [
+    { label: "居住舱补给柜", x: 11, z: 62, radius: 12 },
+    { label: "氧气生产站", x: -48.2, z: 40.4, radius: 15 },
+    { label: "登陆飞船补给舱", x: 59, z: 21.4, radius: 14 },
+  ];
+
+  let nearest: string | null = null;
+  let nearestDistance = Infinity;
+  for (const point of supplyPoints) {
+    const distance = Math.hypot(coordinate.x - point.x, coordinate.z - point.z);
+    if (distance < point.radius && distance < nearestDistance) {
+      nearest = point.label;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function resetSuitOxygen() {
+  suitOxygen = SUIT_OXYGEN_MAX;
+  stamina = STAMINA_MAX;
+  oxygenWarningShown = false;
+}
+
+function refillSuitOxygen(label: string) {
+  resetSuitOxygen();
+  showDialogue(label, "氧气背包已更换。剩余氧气 100%。", 2.8);
+}
+
+function updateSuitOxygen(delta: number) {
+  if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
+  const moving = playerVelocity.length() > 0.6;
+  const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
+  const drain = SUIT_OXYGEN_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
+  suitOxygen = Math.max(0, suitOxygen - drain * delta);
+  if (sprinting) stamina = Math.max(0, stamina - STAMINA_DRAIN_PER_SECOND * delta);
+  else stamina = Math.min(STAMINA_MAX, stamina + STAMINA_RECOVER_PER_SECOND * delta);
+  if (suitOxygen <= 20 && !oxygenWarningShown) {
+    oxygenWarningShown = true;
+    showDialogue("生命维持", "氧气背包低于 20%。寻找补给点更换。", 4);
+  }
+  if (suitOxygen <= 0) respawnAfterOxygenDepleted();
+}
+
+function respawnAfterOxygenDepleted() {
+  resetSuitOxygen();
+  resetPlayerToSpawn();
+  showDialogue("生命维持", "氧气耗尽。已从出发点重新同步。", 4);
+}
+
+function findActiveHabitatDoor() {
+  const door = world.habitatDoor;
+  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, -0.48, door.occupied ? -2.18 : -2.76));
+  const distance = doorWorld.distanceTo(player.position);
+  if (door.occupied) return door;
+  return distance < door.promptRadius ? door : null;
+}
+
+function findActiveRobot() {
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
+  let nearestRobot: THREE.Group | null = null;
+  let nearestDistance = Infinity;
+  const robotPosition = new THREE.Vector3();
+  for (const rover of world.rovers) {
+    if (rover.userData.kind !== "bot") continue;
+    rover.getWorldPosition(robotPosition);
+    const distance = robotPosition.distanceTo(player.position);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestRobot = rover;
+    }
+  }
+  return nearestRobot && nearestDistance < 4.2 ? nearestRobot : null;
+}
+
+function findActiveGreenhouseDoor() {
+  const door = world.greenhouseDoor;
+  if (insideGreenhouse) {
+    const local = door.root.worldToLocal(player.position.clone());
+    return local.z < -2.35 ? door : null;
+  }
+  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, 0.62, -4.55));
+  const distance = doorWorld.distanceTo(player.position);
+  return distance < door.promptRadius ? door : null;
+}
+
+function openHabitatDoor(door: HabitatDoorControl) {
+  if (door.occupied) {
+    exitHabitatDoor(door);
+    return;
+  }
+  enterHabitatInterior(door);
+}
+
+function isInsideHabitat() {
+  if (!world.habitatDoor.occupied && !world.habitatDoor.open) return false;
+  const local = world.habitatDoor.root.worldToLocal(player.position.clone());
+  return Math.abs(local.x) < 5.7 && local.z > -2.25 && local.z < 2.35;
+}
+
+function updateHabitatOccupancy() {
+  return;
+}
+
+function enterHabitatInterior(door: HabitatDoorControl) {
+  door.occupied = true;
+  door.open = false;
+  door.doorPanels.visible = true;
+  door.exteriorMask.visible = true;
+  door.interiorPortal.visible = false;
+  door.interiorDoor.visible = true;
+  door.interiorScene.visible = true;
+  door.interiorLight.visible = true;
+  setHabitatInteriorMode(true);
+  habitatLocal.set(0, -0.76, -1.46);
+  player.position.copy(door.root.localToWorld(habitatLocal.clone()));
+  cameraDistance = Math.min(cameraDistance, 0.72);
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，内部巡检模式切换为第一人称。", 4);
+}
+
+function setHabitatDoorExteriorOpen(door: HabitatDoorControl) {
+  door.open = true;
+  door.doorPanels.visible = false;
+  door.exteriorMask.visible = false;
+  door.interiorPortal.visible = true;
+  door.interiorDoor.visible = false;
+  door.interiorScene.visible = false;
+  door.interiorLight.visible = true;
+}
+
+function exitHabitatDoor(door: HabitatDoorControl) {
+  door.occupied = false;
+  door.open = false;
+  habitatLocal.set(0, -0.76, -1.55);
+  door.doorPanels.visible = true;
+  door.exteriorMask.visible = true;
+  door.interiorPortal.visible = false;
+  door.interiorDoor.visible = false;
+  door.interiorScene.visible = false;
+  door.interiorLight.visible = false;
+  setHabitatInteriorMode(false);
+  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -1.18, -3.15));
+  playerNormal.copy(exitWorld.normalize());
+  const faceAway = door.root.localToWorld(new THREE.Vector3(0, -1.18, -4.3)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
+  if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
+  cameraDistance = Math.max(cameraDistance, 10);
+  playerRig.visual.visible = true;
+  placePlayerOnPlanet();
+  showDialogue("居住舱", "外舱门已打开。", 2.8);
+}
+
+function enterGreenhouse(door: GreenhouseDoorControl) {
+  insideGreenhouse = true;
+  door.occupied = true;
+  door.doorPanels.visible = true;
+  door.interiorLight.visible = true;
+  greenhouseLocal.set(0, 0.62, -2.62);
+  player.position.copy(door.root.localToWorld(greenhouseLocal.clone()));
+  playerNormal.copy(new THREE.Vector3(0, 1, 0).transformDirection(door.root.matrixWorld).normalize());
+  const inward = door.root.localToWorld(new THREE.Vector3(0, 0.62, -1.6)).sub(player.position).projectOnPlane(playerNormal);
+  if (inward.lengthSq() > 0.0001) playerForward.copy(inward.normalize());
+  cameraDistance = Math.min(cameraDistance, 0.72);
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  showDialogue("Mother", "022号巡检员，已进入 02 建筑温室生态舱。检查舱压与水培床状态。", 4.2);
+}
+
+function exitGreenhouse(door: GreenhouseDoorControl) {
+  insideGreenhouse = false;
+  door.occupied = false;
+  greenhouseLocal.set(0, 0.62, -2.62);
+  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, 0.28, -5.08));
+  playerNormal.copy(exitWorld.normalize());
+  const faceAway = door.root.localToWorld(new THREE.Vector3(0, 0.28, -6.0)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
+  if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
+  cameraDistance = Math.max(cameraDistance, 10);
+  playerRig.visual.visible = true;
+  placePlayerOnPlanet();
+  showDialogue("Mother", "022号巡检员，温室外舱门已重新密封。", 3.2);
+}
+
+function setHabitatInteriorMode(active: boolean) {
+  if (!active) {
+    habitatHiddenObjects.forEach((visible, object) => {
+      object.visible = visible;
+    });
+    habitatHiddenObjects.clear();
+    return;
+  }
+  if (habitatHiddenObjects.size > 0) return;
+
+  const habitat = world.habitatDoor.root;
+  const base = habitat.parent;
+  for (const object of scene.children) {
+    if (object === player || object instanceof THREE.Light) continue;
+    if (object === base) {
+      for (const child of object.children) {
+        if (child === habitat) continue;
+        habitatHiddenObjects.set(child, child.visible);
+        child.visible = false;
+      }
+      continue;
+    }
+    habitatHiddenObjects.set(object, object.visible);
+    object.visible = false;
+  }
+}
+
+function findActiveElevator() {
+  if (ridingElevator) return ridingElevator;
+
+  let nearest: ElevatorControl | null = null;
+  let nearestDistance = Infinity;
+  for (const elevator of world.elevators) {
+    const carWorld = new THREE.Vector3();
+    const carScale = new THREE.Vector3();
+    elevator.car.getWorldPosition(carWorld);
+    elevator.car.getWorldScale(carScale);
+    const distance = carWorld.distanceTo(player.position);
+    const radius = elevator.radius * Math.max(carScale.x, carScale.z) + 0.9;
+    if (distance < radius && distance < nearestDistance) {
+      nearest = elevator;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function elevatorPrompt(elevator: ElevatorControl) {
+  if (insideRocket) return "按 E 离开飞船内舱";
+  if (isAtRocketHatch()) return "按 E 进入飞船内部观察";
+  if (elevator.moving) return `${elevator.label}运行中`;
+  return elevator.target === "top" ? "按 E 乘坐升降梯" : "按 E 启动飞船升降梯";
+}
+
+function toggleElevator(elevator: ElevatorControl) {
+  if (elevator.moving) return;
+  const scale = new THREE.Vector3();
+  elevator.car.getWorldScale(scale);
+  elevatorRideLocal.set(0, elevator.surfaceY + PLAYER_ALTITUDE / Math.max(scale.y, 0.001), 0);
+  ridingElevator = elevator;
+  elevator.target = elevator.target === "top" ? "bottom" : "top";
+  elevator.moving = true;
+  playerVelocity.set(0, 0, 0);
+  if (elevator.target === "bottom") {
+    insideRocket = false;
+    rocketDoorOpen = false;
+    setRocketInteriorMode(false);
+    setRocketDoorVisual(false);
+  }
+  showDialogue("飞船升降梯", elevator.target === "top" ? "升降梯上行，前往飞船舱门。" : "升降梯下行，返回地面。", 3.4);
+}
+
+function isAtRocketHatch() {
+  if (!ridingElevator || activeElevator !== ridingElevator) return false;
+  if (ridingElevator.moving || ridingElevator.target !== "top") return false;
+  return elevatorRideLocal.x >= ROCKET_PLATFORM_SPLIT_X;
+}
+
+function openRocketDoor() {
+  rocketDoorOpen = true;
+  setRocketDoorVisual(true);
+  showDialogue("登陆飞船", "飞船舱门已开启。可以进入内舱检查生命维持系统。", 3.8);
+}
+
+function enterRocketInterior() {
+  if (!ridingElevator) return;
+  elevatorRideLocal.x = ROCKET_HATCH_STOP_X;
+  elevatorRideLocal.z = 0;
+  insideRocket = true;
+  rocketDoorOpen = true;
+  setRocketDoorVisual(true, true);
+  setRocketInteriorMode(true, ridingElevator);
+  placePlayerInRocketInterior(ridingElevator);
+  cameraDistance = CAMERA_MIN_DISTANCE;
+  camera.fov = 84;
+  camera.updateProjectionMatrix();
+  pitch = 0.3;
+  orbitYawOffset = 0;
+  showDialogue("登陆飞船", "已进入飞船内舱。", 2.8);
+}
+
+function exitRocketInterior() {
+  insideRocket = false;
+  rocketDoorOpen = false;
+  setRocketInteriorMode(false);
+  setRocketDoorVisual(false);
+  if (ridingElevator) {
+    elevatorRideLocal.x = ROCKET_HATCH_STOP_X - 0.1;
+    elevatorRideLocal.z = 0;
+    alignPlayerWithElevator(ridingElevator, -1);
+    placePlayerOnElevator(ridingElevator);
+  }
+  cameraDistance = Math.max(cameraDistance, 10);
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  playerRig.visual.visible = true;
+  showDialogue("登陆飞船", "已离开飞船内舱。", 2.8);
+}
+
+function setRocketDoorVisual(open: boolean, showInterior = open, targetElevator: ElevatorControl | null = ridingElevator ?? activeElevator) {
+  for (const elevator of world.elevators) {
+    const selected = !targetElevator || elevator === targetElevator;
+    const doorOpen = selected && open;
+    const interiorVisible = selected && showInterior;
+    if (elevator.rocketDoorPanel) elevator.rocketDoorPanel.visible = !doorOpen;
+    if (elevator.rocketDoorPortal) elevator.rocketDoorPortal.visible = doorOpen;
+    if (elevator.rocketInterior) elevator.rocketInterior.visible = interiorVisible;
+    if (elevator.rocketInteriorLight) elevator.rocketInteriorLight.visible = interiorVisible;
+    if (elevator.rocketInteriorFillLight) elevator.rocketInteriorFillLight.visible = interiorVisible;
+  }
+}
+
+function setRocketInteriorMode(active: boolean, elevator?: ElevatorControl | null) {
+  if (!active) {
+    rocketHiddenObjects.forEach((visible, object) => {
+      object.visible = visible;
+    });
+    rocketHiddenObjects.clear();
+    return;
+  }
+  if (rocketHiddenObjects.size > 0 || !elevator?.rocketInterior) return;
+
+  const interior = elevator.rocketInterior;
+  const lander = interior.parent;
+  const base = lander?.parent;
+
+  for (const object of scene.children) {
+    if (object === player || object instanceof THREE.Light || object === base) continue;
+    rocketHiddenObjects.set(object, object.visible);
+    object.visible = false;
+  }
+
+  if (base) {
+    for (const child of base.children) {
+      if (child === lander) continue;
+      rocketHiddenObjects.set(child, child.visible);
+      child.visible = false;
+    }
+  }
+
+  if (lander) {
+    for (const child of lander.children) {
+      if (child === interior) continue;
+      rocketHiddenObjects.set(child, child.visible);
+      child.visible = false;
+    }
+  }
+
+  interior.visible = true;
+  if (elevator.rocketInteriorLight) elevator.rocketInteriorLight.visible = true;
+  if (elevator.rocketInteriorFillLight) elevator.rocketInteriorFillLight.visible = true;
+}
+
+function placePlayerInRocketInterior(elevator: ElevatorControl) {
+  if (!elevator.rocketInterior) {
+    placePlayerOnElevator(elevator);
+    return;
+  }
+  const interior = elevator.rocketInterior;
+  const floorY = elevator.rocketInteriorFloorY ?? 9.41;
+  const localFeet = new THREE.Vector3(0, floorY + PLAYER_ALTITUDE, -2.42);
+  const localForward = new THREE.Vector3(0, floorY + PLAYER_ALTITUDE, 1.62);
+  const worldFeet = interior.localToWorld(localFeet);
+  const worldForward = interior.localToWorld(localForward);
+  playerNormal.copy(new THREE.Vector3(0, 1, 0).transformDirection(interior.matrixWorld).normalize());
+  const forward = worldForward.sub(worldFeet).projectOnPlane(playerNormal);
+  if (forward.lengthSq() > 0.0001) playerForward.copy(forward.normalize());
+  player.position.copy(worldFeet);
+  player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
+  player.rotateY(headingFromForward(playerNormal, playerForward));
+  grounded = true;
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+}
+
+function alignPlayerWithElevator(elevator: ElevatorControl, localXDirection: 1 | -1) {
+  const origin = elevator.car.localToWorld(new THREE.Vector3(0, 0, 0));
+  const target = elevator.car.localToWorld(new THREE.Vector3(localXDirection, 0, 0));
+  const forward = target.sub(origin).projectOnPlane(playerNormal);
+  if (forward.lengthSq() > 0.0001) playerForward.copy(forward.normalize());
+}
+
+function placePlayerOnElevator(elevator: ElevatorControl) {
+  const scale = new THREE.Vector3();
+  elevator.car.getWorldScale(scale);
+  elevatorRideLocal.y = elevator.surfaceY + PLAYER_ALTITUDE / Math.max(scale.y, 0.001);
+  const worldPosition = elevator.car.localToWorld(elevatorRideLocal.clone());
+  const up = new THREE.Vector3(0, 1, 0).transformDirection(elevator.car.matrixWorld).normalize();
+  playerNormal.copy(up);
+  playerForward.projectOnPlane(playerNormal).normalize();
+  player.position.copy(worldPosition);
+  player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
+  player.rotateY(headingFromForward(playerNormal, playerForward));
+
+  if (!elevator.moving && elevator.target === "bottom") {
+    ridingElevator = null;
+    playerNormal.copy(player.position.clone().normalize());
+    playerForward.projectOnPlane(playerNormal).normalize();
+    placePlayerOnPlanet();
+  }
+}
+
+function addLabel(landmark: Landmark): LabelAnchor {
+  const element = document.createElement("div");
+  element.className = "label";
+  element.textContent = landmark.label;
+  labelsRoot.appendChild(element);
+  return { object: landmark.object, element, distance: landmark.labelDistance };
+}
+
+function updateLabels() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  labels.forEach((anchor) => {
+    const worldPosition = new THREE.Vector3();
+    anchor.object.getWorldPosition(worldPosition);
+    worldPosition.addScaledVector(worldPosition.clone().normalize(), 4.2);
+    const distance = worldPosition.distanceTo(player.position);
+    const projected = worldPosition.clone().project(camera);
+    const screenY = ((-projected.y + 1) / 2) * height;
+    const visible =
+      started &&
+      !(anchor.object === fufu && fufuRescued) &&
+      distance < anchor.distance &&
+      projected.z > -1 &&
+      projected.z < 1 &&
+      Math.abs(projected.x) < 1.15 &&
+      Math.abs(projected.y) < 1.15 &&
+      !(width < 560 && screenY < 170);
+    anchor.element.style.left = `${((projected.x + 1) / 2) * width}px`;
+    anchor.element.style.top = `${screenY}px`;
+    anchor.element.classList.toggle("is-visible", visible);
+  });
+}
+
+function updateMap() {
+  if (!mapOpen || !started) return;
+
+  const { x: playerMapX, z: playerMapZ } = playerMapCoordinate();
+  mapCoordinates.textContent = `X ${formatMapCoordinate(playerMapX)} / Z ${formatMapCoordinate(playerMapZ)}`;
+
+  mapRadar.querySelectorAll(".map-marker").forEach((node) => node.remove());
+  const radarSize = mapRadar.clientWidth || 280;
+  const radarRadius = radarSize * 0.42;
+  const right = playerForward.clone().cross(playerNormal).normalize();
+
+  const mapItems = world.landmarks.map((landmark) => ({
+    label: landmark.label,
+    object: landmark.object,
+    x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
+    z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
+    mapRange: landmark.mapRange,
+    type: mapTypeForLabel(landmark.label),
+    unknown: false,
+    missionTarget: isMissionTargetLabel(landmark.label),
+  }));
+
+  if (showUnnumberedOnMap || mapExpanded) {
+    mapItems.push(
+      ...world.unnumberedObjects.map((item) => ({
+        label: "未知残骸",
+        object: item.object,
+        x: item.x,
+        z: item.z,
+        mapRange: item.mapRange,
+        type: "unknown",
+        unknown: true,
+        missionTarget: false,
+      })),
+    );
+    if (!fufuRescued) {
+      mapItems.push({
+        label: "未知生命迹象",
+        object: fufu,
+        x: world.fufuRescueSite.x,
+        z: world.fufuRescueSite.z,
+        mapRange: 220,
+        type: "unknown",
+        unknown: true,
+        missionTarget: false,
+      });
+    }
+  }
+
+  const nearby = mapItems
+    .map((item) => {
+      const landmarkNormal = new THREE.Vector3();
+      if (item.object) item.object.getWorldPosition(landmarkNormal).normalize();
+      else planetNormal(item.x, item.z, landmarkNormal);
+      const dot = THREE.MathUtils.clamp(playerNormal.dot(landmarkNormal), -1, 1);
+      const distance = Math.acos(dot) * PLANET_RADIUS;
+      const tangent = landmarkNormal.clone().addScaledVector(playerNormal, -dot);
+      if (tangent.lengthSq() > 0.000001) tangent.normalize();
+      const lateral = tangent.dot(right);
+      const forward = tangent.dot(playerForward);
+      return { item, distance, lateral, forward };
+    })
+    .filter((entry) => entry.item.missionTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
+    .sort((a, b) => Number(b.item.missionTarget) - Number(a.item.missionTarget) || a.distance - b.distance)
+    .slice(0, mapExpanded ? 80 : showUnnumberedOnMap ? 24 : 18);
+
+  nearby.forEach((entry, index) => {
+    const range = mapRangeForItem(entry.item.mapRange);
+    const distanceRatio = THREE.MathUtils.clamp(entry.distance / range, 0, 1);
+    const spreadRatio = mapExpanded ? Math.sqrt(distanceRatio) : distanceRatio;
+    const x = THREE.MathUtils.clamp(entry.lateral * spreadRatio, -1, 1) * radarRadius;
+    const y = THREE.MathUtils.clamp(-entry.forward * spreadRatio, -1, 1) * radarRadius;
+    const marker = document.createElement("div");
+    marker.className = `map-marker type-${entry.item.type}`;
+    marker.classList.toggle("is-mission-target", entry.item.missionTarget);
+    if (entry.item.unknown) marker.textContent = "?";
+    if (mapExpanded && shouldShowExpandedMapLabel(entry.item, index)) {
+      const label = document.createElement("span");
+      label.textContent = entry.item.label;
+      marker.appendChild(label);
+    }
+    marker.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
+    mapRadar.appendChild(marker);
+  });
+
+  mapList.innerHTML = "";
+}
+
+function mapRangeForItem(itemRange: number) {
+  return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 : Math.min(itemRange, 320 / mapZoom);
+}
+
+function shouldShowExpandedMapLabel(item: { missionTarget: boolean; unknown: boolean }, index: number) {
+  if (item.missionTarget) return true;
+  if (item.unknown) return index < 12;
+  return index < 14 && index % 2 === 0;
+}
+
+function playerMapCoordinate() {
+  const projectedY = Math.max(Math.abs(playerNormal.y), 0.001);
+  return {
+    x: (playerNormal.x / projectedY) * PLANET_RADIUS,
+    z: (playerNormal.z / projectedY) * PLANET_RADIUS,
+  };
+}
+
+function formatMapCoordinate(value: number) {
+  const rounded = Math.round(value);
+  const sign = rounded < 0 ? "-" : "+";
+  return `${sign}${Math.abs(rounded).toString().padStart(3, "0")}`;
+}
+
+function mapTypeForLabel(label: string) {
+  if (label.includes("飞船")) return "ship";
+  if (label.includes("能源") || label.includes("太阳能")) return "energy";
+  if (label.includes("车辆")) return "vehicle";
+  if (label.includes("机器人")) return "robot";
+  return "building";
+}
+
+function isMissionTargetLabel(label: string) {
+  if (missionStep === "oxygen") return label.includes("03 建筑 氧气生产站");
+  if (missionStep === "solar") return label.includes("03 能源 太阳能阵列 C");
+  if (missionStep === "garage") return label.includes("05 建筑 机器人车库");
+  return false;
+}
+
+function resetDialogueState() {
+  activeDialogueNode = null;
+  dialogueOpen = false;
+  pendingMotherCall = null;
+  dialogueState.motherTrust = 0;
+  dialogueState.baseIntegrity = 0;
+  dialogueState.humanAutonomy = 0;
+  dialogueStage.classList.remove("is-visible");
+  dialogueLeftSlot.classList.remove("is-speaking", "is-listening");
+  dialogueRightSlot.classList.remove("is-speaking", "is-listening");
+  dialogueStage.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("dialogue-open");
+}
+
+function queueMotherCall(scene: DialogueSceneId, mission: string) {
+  pendingMotherCall = scene;
+  setMission(mission);
+}
+
+function openDialogueScene(scene: DialogueSceneId) {
+  pendingMotherCall = null;
+  activeDialogueNode = sceneStartNodes[scene];
+  dialogueOpen = true;
+  keyState.clear();
+  resetStick();
+  messageUntil = 0;
+  dialogueStage.classList.add("is-visible");
+  dialogueStage.setAttribute("aria-hidden", "false");
+  document.body.classList.add("dialogue-open");
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+  renderDialogueNode();
+}
+
+function closeDialogue() {
+  const closedNode = activeDialogueNode ? dialogueNodes[activeDialogueNode] : null;
+  activeDialogueNode = null;
+  dialogueOpen = false;
+  dialogueStage.classList.remove("is-visible");
+  dialogueLeftSlot.classList.remove("is-speaking", "is-listening");
+  dialogueRightSlot.classList.remove("is-speaking", "is-listening");
+  dialogueStage.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("dialogue-open");
+  if (closedNode?.scene === "intro" && missionStep === "intro") startOxygenMission();
+}
+
+function renderDialogueNode() {
+  if (!activeDialogueNode) return;
+  const node = dialogueNodes[activeDialogueNode];
+  const leftCharacter = characters.alex;
+  const rightCharacter = characters[node.speaker === "alex" ? node.listener : node.speaker];
+  const speaker = characters[node.speaker];
+
+  dialogueLeftPortrait.src = leftCharacter.portrait;
+  dialogueLeftName.textContent = leftCharacter.name;
+  dialogueLeftCallsign.textContent = leftCharacter.callsign;
+
+  dialogueRightPortrait.src = rightCharacter.portrait;
+  dialogueRightName.textContent = rightCharacter.name;
+  dialogueRightCallsign.textContent = rightCharacter.callsign;
+
+  const leftIsSpeaking = node.speaker === "alex";
+  dialogueLeftSlot.classList.toggle("is-speaking", leftIsSpeaking);
+  dialogueLeftSlot.classList.toggle("is-listening", !leftIsSpeaking);
+  dialogueRightSlot.classList.toggle("is-speaking", !leftIsSpeaking);
+  dialogueRightSlot.classList.toggle("is-listening", leftIsSpeaking);
+
+  dialogueSpeaker.textContent = `${speaker.name} / ${speaker.callsign}`;
+  dialogueStats.textContent = `TRUST ${dialogueState.motherTrust} · BASE ${dialogueState.baseIntegrity} · AUTO ${dialogueState.humanAutonomy}`;
+  dialogueText.textContent = node.text;
+  dialogueChoices.innerHTML = "";
+
+  const choices = node.choices ?? [];
+  selectedDialogueChoiceIndex = 0;
+  dialogueChoices.hidden = choices.length === 0;
+  dialogueContinue.hidden = choices.length > 0;
+  for (const [index, choice] of choices.entries()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.choiceIndex = String(index);
+    button.textContent = choice.label;
+    button.classList.toggle("is-selected", index === selectedDialogueChoiceIndex);
+    dialogueChoices.appendChild(button);
+  }
+}
+
+function handleDialogueKey(event: KeyboardEvent) {
+  event.preventDefault();
+  if (!activeDialogueNode) return;
+  const node = dialogueNodes[activeDialogueNode];
+  const choices = node.choices ?? [];
+  if (choices.length > 0) {
+    if (event.code === "ArrowLeft") {
+      selectedDialogueChoiceIndex = Math.max(0, selectedDialogueChoiceIndex - 1);
+      renderDialogueChoiceSelection();
+      return;
+    }
+    if (event.code === "ArrowRight") {
+      selectedDialogueChoiceIndex = Math.min(choices.length - 1, selectedDialogueChoiceIndex + 1);
+      renderDialogueChoiceSelection();
+      return;
+    }
+    if (event.code === "Space") chooseDialogue(selectedDialogueChoiceIndex);
+    return;
+  }
+  if (event.code === "Space") advanceDialogue();
+}
+
+function renderDialogueChoiceSelection() {
+  const options = dialogueChoices.querySelectorAll<HTMLElement>("button[data-choice-index]");
+  options.forEach((option, index) => option.classList.toggle("is-selected", index === selectedDialogueChoiceIndex));
+}
+
+function chooseDialogue(index: number) {
+  if (!activeDialogueNode) return;
+  const node = dialogueNodes[activeDialogueNode];
+  const choice = node.choices?.[index];
+  if (!choice) return;
+  applyDialogueEffects(choice);
+  activeDialogueNode = choice.next;
+  renderDialogueNode();
+}
+
+function advanceDialogue() {
+  if (!activeDialogueNode) return;
+  const node = dialogueNodes[activeDialogueNode];
+  if (node.choices?.length) return;
+  closeDialogue();
+}
+
+function applyDialogueEffects(choice: DialogueChoice) {
+  for (const effect of choice.effects ?? []) {
+    applyDialogueEffect(effect);
+  }
+}
+
+function applyDialogueEffect(effect: DialogueEffect) {
+  if (effect === "trustUp") dialogueState.motherTrust += 1;
+  if (effect === "trustDown") dialogueState.motherTrust -= 1;
+  if (effect === "integrityUp") dialogueState.baseIntegrity += 1;
+  if (effect === "integrityDown") dialogueState.baseIntegrity -= 1;
+  if (effect === "autonomyUp") dialogueState.humanAutonomy += 1;
+  if (effect === "completeOxygen") completeOxygenMission();
+  if (effect === "completeSolar") completeSolarMission();
+  if (effect === "completeGarage") completeGarageMission();
+}
+
+function startOxygenMission() {
+  missionStep = "oxygen";
+  setMission("03 建筑氧气生产站疑似泄漏。前往现场确认舱压、CO2 进气和功率。");
+}
+
+function completeOxygenMission() {
+  missionStep = "solar";
+  world.oxygenLight.color.set(0x66d9ff);
+  const item = world.interactables.find((interactable) => interactable.id === "oxygen");
+  if (item) item.completed = true;
+  setMission("前往 03 能源太阳能阵列 C，恢复 3 号功率组。");
+}
+
+function completeSolarMission() {
+  missionStep = "garage";
+  world.solarLight.color.set(0x66ff9b);
+  const item = world.interactables.find((interactable) => interactable.id === "solar");
+  if (item) item.completed = true;
+  setMission("能源恢复。前往 05 建筑机器人车库，授权 A-12 维修单元出动。");
+}
+
+function completeGarageMission() {
+  missionStep = "complete";
+  const item = world.interactables.find((interactable) => interactable.id === "garage");
+  if (item) item.completed = true;
+  setMission("ARES BASE ALPHA 达到最低生存标准。1.0 主线完成。");
+}
+
+function setMission(text: string) {
+  missionText.textContent = text;
+}
+
+function showDialogue(speaker: string, text: string, seconds: number) {
+  dialogueBox.innerHTML = `<strong>${speaker}</strong><span>${text}</span>`;
+  messageUntil = performance.now() + seconds * 1000;
+}
+
+function updateReadouts() {
+  if (oxygenReadout) {
+    const value = missionStep === "oxygen" ? 58 + Math.sin(elapsedTime * 3) * 4 : 78 + Math.sin(elapsedTime * 0.36) * 2;
+    oxygenReadout.textContent = `${Math.round(value)}%`;
+  }
+  if (suitOxygenReadout) {
+    suitOxygenReadout.textContent = `${Math.ceil(suitOxygen)}%`;
+    suitOxygenReadout.classList.toggle("is-low", suitOxygen <= 20);
+  }
+  if (staminaReadout) {
+    staminaReadout.textContent = `${Math.round(stamina)}%`;
+    staminaReadout.classList.toggle("is-low", stamina <= 20);
+  }
+  if (powerReadout) {
+    const value = missionStep === "solar" ? 61 + Math.sin(elapsedTime * 3.2) * 4 : 89 + Math.sin(elapsedTime * 0.22 + 1.8) * 4;
+    powerReadout.textContent = `${Math.round(value)}%`;
+  }
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function isTouchLike() {
+  return matchMedia("(hover: none), (pointer: coarse)").matches;
+}
+
+function isSmallScreenMapTouch() {
+  return window.innerWidth <= 700 || isTouchLike();
+}
