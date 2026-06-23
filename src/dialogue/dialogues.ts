@@ -139,7 +139,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "intro",
     speaker: "mother",
     listener: "alex",
-    text: "记录完成。当前基地制氧量低于计划值，03 建筑氧气生产站出现压降报警。暂无破口证据，可能来自 CO2 进气、压缩机功率或外部管线异常。",
+    text: "记录完成。先确认你的生活空间。01 建筑居住舱需要完成空气循环和补给柜验收。随后处理 03 建筑氧气生产站压降报警。",
     choices: [{ label: "确认第一项任务。", next: "intro_task_confirm" }],
   },
   intro_task_confirm: {
@@ -147,7 +147,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "intro",
     speaker: "alex",
     listener: "mother",
-    text: "收到。我先去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。",
+    text: "收到。我先验收居住舱，再去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。",
     end: true,
   },
   oxygen_start: {
@@ -239,7 +239,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "garage",
     speaker: "mother",
     listener: "alex",
-    text: "授权完成。基地恢复到最低生存标准。后续殖民队抵达前，ARES BASE ALPHA 可以继续运行。",
+    text: "授权完成。生命支持验收通过。下一项：温室生态舱启动。",
     end: true,
   },
   garage_manual: {
@@ -247,7 +247,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "garage",
     speaker: "mother",
     listener: "alex",
-    text: "外部阀门优先级已更新。你的判断有效，但我会保留风险限制。基地恢复到最低生存标准。",
+    text: "外部阀门优先级已更新。你的判断有效，但我会保留风险限制。下一项：温室生态舱启动。",
     end: true,
   },
   garage_protocol: {
@@ -255,7 +255,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "garage",
     speaker: "mother",
     listener: "alex",
-    text: "协作协议已建立。人类现场判断权已写入基地规则。欢迎来到火星，X。",
+    text: "维修协议已建立。人类现场判断权将进入后续评估。下一项：温室生态舱启动。",
     end: true,
   },
   robot_status: {

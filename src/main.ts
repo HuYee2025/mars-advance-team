@@ -164,6 +164,63 @@ const STAMINA_DRAIN_PER_SECOND = 8;
 const STAMINA_RECOVER_PER_SECOND = 7;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
 
+type MainMissionStep =
+  | "intro"
+  | "m1_habitat"
+  | "m1_oxygen"
+  | "m1_solarC"
+  | "m1_garage"
+  | "m2_greenhouse"
+  | "m2_storehouse"
+  | "m2_lab"
+  | "m2_solarB"
+  | "m2_seed"
+  | "m3_tower"
+  | "m3_lab"
+  | "m3_methane"
+  | "m3_solarA"
+  | "m3_garage"
+  | "m3_mother"
+  | "complete";
+type SideMissionStep = "available" | "medical" | "habitat" | "cargoShip" | "garage" | "lab" | "storehouse" | "solarA" | "tower" | "complete";
+type SideMissionId = "fufu" | "cargo" | "patrol";
+
+const mainMissionTargets: Partial<Record<MainMissionStep, Interactable["id"]>> = {
+  m1_habitat: "habitatCheck",
+  m1_oxygen: "oxygen",
+  m1_solarC: "solarC",
+  m1_garage: "garage",
+  m2_greenhouse: "greenhouse",
+  m2_storehouse: "storehouse",
+  m2_lab: "lab",
+  m2_solarB: "solarB",
+  m2_seed: "greenhouse",
+  m3_tower: "tower",
+  m3_lab: "lab",
+  m3_methane: "methane",
+  m3_solarA: "solarA",
+  m3_garage: "garage",
+  m3_mother: "habitatCheck",
+};
+
+const sideMissionTargets: Record<SideMissionId, Partial<Record<SideMissionStep, Interactable["id"]>>> = {
+  fufu: {
+    medical: "medical",
+    habitat: "habitatCheck",
+  },
+  cargo: {
+    cargoShip: "cargoShip",
+    garage: "garage",
+    lab: "lab",
+    storehouse: "storehouse",
+  },
+  patrol: {
+    solarA: "solarA",
+    tower: "tower",
+    lab: "lab",
+  },
+};
+
 let yaw = Math.PI * 0.15;
 let pitch = 0.34;
 let orbitYawOffset = 0;
@@ -177,7 +234,7 @@ let activeInteractable: Interactable | null = null;
 let activeElevator: ElevatorControl | null = null;
 let activeHabitatDoor: HabitatDoorControl | null = null;
 let ridingElevator: ElevatorControl | null = null;
-let missionStep: "intro" | "oxygen" | "solar" | "garage" | "complete" = "intro";
+let missionStep: MainMissionStep = "intro";
 let messageUntil = 0;
 let hudCollapsed = false;
 let mapOpen = false;
@@ -199,6 +256,9 @@ let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
 let fufuRescued = false;
+let fufuSideStep: SideMissionStep = "available";
+let cargoSideStep: SideMissionStep = "available";
+let patrolSideStep: SideMissionStep = "available";
 let fufuSpeed = 0;
 let fufuAlert = 0;
 let fufuWanderAngle = -2.25;
@@ -726,7 +786,7 @@ function jump() {
 function startGame() {
   if (started) return;
   started = true;
-  missionStep = "intro";
+  resetQuestState();
   resetDialogueState();
   gameStartElapsed = elapsedTime;
   introCallQueued = false;
@@ -769,13 +829,13 @@ function startGame() {
   startBackgroundMusic();
   titleScreen.classList.add("is-hidden");
   document.body.classList.add("is-playing");
-  setMission("先熟悉移动和视角。可以观察基地、飞船、居住舱和机器人。");
+  setCurrentMissionText();
 }
 
 function returnToTitle() {
   if (!started) return;
   started = false;
-  missionStep = "intro";
+  resetQuestState();
   hudCollapsed = false;
   mapOpen = false;
   mapExpanded = false;
@@ -858,7 +918,7 @@ function animate() {
   updateBackgroundMusicFade();
 
   world.flickerLights.forEach((light, index) => {
-    const base = light === world.oxygenLight && missionStep === "oxygen" ? 2.3 : 1.25;
+    const base = light === world.oxygenLight && missionStep === "m1_oxygen" ? 2.3 : 1.25;
     light.intensity *= 0.96;
     light.intensity += (base + Math.sin(elapsedTime * 2.7 + index) * 0.26) * 0.04;
   });
@@ -1489,10 +1549,7 @@ function updateMissionState() {
     const pos = new THREE.Vector3();
     item.object.getWorldPosition(pos);
     const distance = pos.distanceTo(player.position);
-    const matchesMission =
-      (missionStep === "oxygen" && item.id === "oxygen") ||
-      (missionStep === "solar" && item.id === "solar") ||
-      (missionStep === "garage" && item.id === "garage");
+    const matchesMission = isActiveMissionInteractable(item.id);
     if (matchesMission && distance < item.radius && distance < bestDistance) {
       bestDistance = distance;
       activeInteractable = item;
@@ -1628,12 +1685,14 @@ function openRobotBriefing(robot: THREE.Group) {
 }
 
 function interactMission(interactable: Interactable) {
-  if (interactable.id === "oxygen") {
+  if (missionStep === "m1_oxygen" && interactable.id === "oxygen") {
     openDialogueScene("oxygen");
-  } else if (interactable.id === "solar") {
+  } else if (missionStep === "m1_solarC" && interactable.id === "solarC") {
     openDialogueScene("solar");
-  } else if (interactable.id === "garage") {
+  } else if (missionStep === "m1_garage" && interactable.id === "garage") {
     openDialogueScene("garage");
+  } else {
+    advanceWorldQuest(interactable.id);
   }
 }
 
@@ -1646,7 +1705,9 @@ function rescueFufu() {
   fufuRescued = true;
   activeFufu = false;
   fufuForward.copy(playerForward);
-  showDialogue("福福", "喵。它从残骸阴影里钻出来，开始跟着你。", 4.4);
+  fufuSideStep = "medical";
+  showDialogue("福福", "喵。它从残骸阴影里钻出来，开始跟着你。Mother 标记：未登记生命体，请前往医疗舱扫描。", 5.2);
+  setCurrentMissionText();
 }
 
 function findActiveOxygenSupply() {
@@ -1678,10 +1739,9 @@ function resetSuitOxygen() {
 }
 
 function resetRunUiAfterRespawn() {
-  missionStep = "intro";
   pendingMotherCall = null;
-  introCallQueued = false;
-  gameStartElapsed = elapsedTime;
+  introCallQueued = missionStep !== "intro";
+  if (missionStep === "intro") gameStartElapsed = elapsedTime;
   hudCollapsed = false;
   showUnnumberedOnMap = false;
   helmetLampOn = false;
@@ -1710,7 +1770,7 @@ function resetRunUiAfterRespawn() {
   interactionChoice.setAttribute("aria-hidden", "true");
   dialogueBox.innerHTML = "";
   dialogueBox.classList.remove("is-visible");
-  setMission("先熟悉移动和视角。可以观察基地、飞船、居住舱和机器人。");
+  setCurrentMissionText();
 }
 
 function refillSuitOxygen(label: string) {
@@ -2251,9 +2311,37 @@ function mapTypeForLabel(label: string) {
 }
 
 function isMissionTargetLabel(label: string) {
-  if (missionStep === "oxygen") return label.includes("03 建筑 氧气生产站");
-  if (missionStep === "solar") return label.includes("03 能源 太阳能阵列 C");
-  if (missionStep === "garage") return label.includes("05 建筑 机器人车库");
+  const currentTarget = mainMissionTargets[missionStep];
+  if (currentTarget && labelMatchesInteractableId(label, currentTarget)) return true;
+  if (fufuSideStep !== "available" && fufuSideStep !== "complete") {
+    const target = sideMissionTargets.fufu[fufuSideStep];
+    if (target && labelMatchesInteractableId(label, target)) return true;
+  }
+  if (isCargoAvailable() && cargoSideStep !== "complete") {
+    const target = sideMissionTargets.cargo[cargoSideStep === "available" ? "cargoShip" : cargoSideStep];
+    if (target && labelMatchesInteractableId(label, target)) return true;
+  }
+  if (isPatrolAvailable() && patrolSideStep !== "complete") {
+    const target = sideMissionTargets.patrol[patrolSideStep === "available" ? "solarA" : patrolSideStep];
+    if (target && labelMatchesInteractableId(label, target)) return true;
+  }
+  return false;
+}
+
+function labelMatchesInteractableId(label: string, id: Interactable["id"]) {
+  if (id === "habitatCheck") return label.includes("01 建筑 居住舱");
+  if (id === "greenhouse") return label.includes("02 建筑 温室生态舱");
+  if (id === "oxygen") return label.includes("03 建筑 氧气生产站");
+  if (id === "methane") return label.includes("04 建筑 甲烷燃料厂");
+  if (id === "garage") return label.includes("05 建筑 机器人车库");
+  if (id === "tower") return label.includes("06 建筑 通信塔");
+  if (id === "lab") return label.includes("07 建筑 科研舱");
+  if (id === "storehouse") return label.includes("08 建筑 物资仓");
+  if (id === "medical") return label.includes("09 建筑 医疗舱");
+  if (id === "solarA") return label.includes("01 能源 太阳能阵列 A");
+  if (id === "solarB") return label.includes("02 能源 太阳能阵列 B");
+  if (id === "solarC") return label.includes("03 能源 太阳能阵列 C");
+  if (id === "cargoShip") return label.includes("02 飞船 货运飞船");
   return false;
 }
 
@@ -2403,32 +2491,215 @@ function applyDialogueEffect(effect: DialogueEffect) {
   if (effect === "completeGarage") completeGarageMission();
 }
 
+function resetQuestState() {
+  missionStep = "intro";
+  fufuSideStep = "available";
+  cargoSideStep = "available";
+  patrolSideStep = "available";
+  for (const item of world.interactables) item.completed = false;
+  world.oxygenLight.color.set(0xff3d2f);
+  world.solarLight.color.set(0xff3d2f);
+}
+
 function startOxygenMission() {
-  missionStep = "oxygen";
-  setMission("03 建筑氧气生产站疑似泄漏。前往现场确认舱压、CO2 进气和功率。");
+  missionStep = "m1_habitat";
+  setCurrentMissionText();
 }
 
 function completeOxygenMission() {
-  missionStep = "solar";
+  missionStep = "m1_solarC";
   world.oxygenLight.color.set(0x66d9ff);
   const item = world.interactables.find((interactable) => interactable.id === "oxygen");
   if (item) item.completed = true;
-  setMission("前往 03 能源太阳能阵列 C，恢复 3 号功率组。");
+  setCurrentMissionText();
 }
 
 function completeSolarMission() {
-  missionStep = "garage";
+  missionStep = "m1_garage";
   world.solarLight.color.set(0x66ff9b);
-  const item = world.interactables.find((interactable) => interactable.id === "solar");
+  const item = world.interactables.find((interactable) => interactable.id === "solarC");
   if (item) item.completed = true;
-  setMission("能源恢复。前往 05 建筑机器人车库，授权 A-12 维修单元出动。");
+  setCurrentMissionText();
 }
 
 function completeGarageMission() {
-  missionStep = "complete";
+  if (missionStep === "m1_garage") {
+    missionStep = "m2_greenhouse";
+    const item = world.interactables.find((interactable) => interactable.id === "garage");
+    if (item) item.completed = true;
+    showDialogue("Mother", "生命支持验收完成。下一项：启动温室生态舱。", 4.6);
+    setCurrentMissionText();
+    return;
+  }
   const item = world.interactables.find((interactable) => interactable.id === "garage");
   if (item) item.completed = true;
-  setMission("ARES BASE ALPHA 达到最低生存标准。1.0 主线完成。");
+  missionStep = "complete";
+  setCurrentMissionText();
+}
+
+function advanceWorldQuest(id: Interactable["id"]) {
+  if (advanceSideQuest(id)) return;
+  if (mainMissionTargets[missionStep] !== id) return;
+
+  if (missionStep === "m1_habitat") {
+    completeInteractable(id);
+    missionStep = "m1_oxygen";
+    showDialogue("Mother", "居住舱空气循环正常。氧气生产站仍有压降，请前往 03 建筑氧气生产站。", 4.8);
+  } else if (missionStep === "m2_greenhouse") {
+    missionStep = "m2_storehouse";
+    showDialogue("温室生态舱", "水循环处于保护模式。缺少密封环，请前往物资仓清点货箱。", 4.8);
+  } else if (missionStep === "m2_storehouse") {
+    missionStep = "m2_lab";
+    showDialogue("A-01", "货箱 07-B 外壳破损。可用密封件无法确认，请前往科研舱做材料检测。", 4.8);
+  } else if (missionStep === "m2_lab") {
+    missionStep = "m2_solarB";
+    showDialogue("科研舱", "临时密封环打印完成。温室补光功率不足，请调整太阳能阵列 B。", 4.8);
+  } else if (missionStep === "m2_solarB") {
+    missionStep = "m2_seed";
+    showDialogue("Mother", "阵列 B 已分配温室补光。回到温室，决定火星第一批种植方案。", 4.8);
+  } else if (missionStep === "m2_seed") {
+    completeInteractable(id);
+    missionStep = "m3_tower";
+    dialogueState.humanAutonomy += 1;
+    showDialogue("Alex", "种植方案确认。第一批纪念植物进入培养槽。火星基地不只是在维持运行，也开始生活。", 5.4);
+  } else if (missionStep === "m3_tower") {
+    missionStep = "m3_lab";
+    showDialogue("P-03", "风暴提前。通信塔只收到半段地球指令。请到科研舱比对本地气象数据。", 5.2);
+  } else if (missionStep === "m3_lab") {
+    missionStep = "m3_methane";
+    dialogueState.humanAutonomy += 1;
+    showDialogue("科研舱", "地球旧指令已过时。本地数据支持低功率启动甲烷燃料厂。", 4.8);
+  } else if (missionStep === "m3_methane") {
+    missionStep = "m3_solarA";
+    showDialogue("甲烷燃料厂", "第一轮低功率试生产完成。风暴加强，请固定太阳能阵列 A。", 4.8);
+  } else if (missionStep === "m3_solarA") {
+    missionStep = "m3_garage";
+    showDialogue("Mother", "阵列 A 锁定。A-12 与 A-01 同时请求调度，请前往机器人车库分配优先级。", 5.2);
+  } else if (missionStep === "m3_garage") {
+    missionStep = "m3_mother";
+    dialogueState.baseIntegrity += 1;
+    showDialogue("机器人车库", "A-12 去封闭外部阀门，A-01 固定物资仓货架。请回到居住舱 Mother 终端签署协作协议。", 5.6);
+  } else if (missionStep === "m3_mother") {
+    missionStep = "complete";
+    dialogueState.motherTrust += 1;
+    const ending = dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4 ? "协作协议已建立。欢迎来到火星，X。" : "协作协议已建立。Alex 拥有现场判断权，Mother 保留风险限制。";
+    showDialogue("Mother", ending, 6);
+  }
+  completeInteractable(id);
+  setCurrentMissionText();
+}
+
+function advanceSideQuest(id: Interactable["id"]) {
+  if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) {
+    if (fufuSideStep === "medical") {
+      fufuSideStep = "habitat";
+      dialogueState.motherTrust += 1;
+      showDialogue("医疗舱", "扫描完成。福福没有污染风险。请把它带回居住舱观察。", 4.8);
+    } else if (fufuSideStep === "habitat") {
+      fufuSideStep = "complete";
+      dialogueState.humanAutonomy += 1;
+      showDialogue("Mother", "未登记生命体已进入观察名单。记录：人类会为小生命调整流程。", 5.2);
+    }
+    setCurrentMissionText();
+    return true;
+  }
+
+  const cargoStep = cargoSideStep === "available" ? "cargoShip" : cargoSideStep;
+  if (cargoSideStep !== "complete" && isCargoAvailable() && sideMissionTargets.cargo[cargoStep] === id) {
+    if (cargoSideStep === "available") cargoSideStep = "cargoShip";
+    if (cargoSideStep === "cargoShip") {
+      cargoSideStep = "garage";
+      showDialogue("A-01", "卸载轨迹异常。一个货箱被临时送往机器人车库。", 4.4);
+    } else if (cargoSideStep === "garage") {
+      cargoSideStep = "lab";
+      showDialogue("机器人车库", "错位货箱已找到，外壳变形。请送科研舱检测内部模块。", 4.6);
+    } else if (cargoSideStep === "lab") {
+      cargoSideStep = "storehouse";
+      showDialogue("科研舱", "密封件可用，电子模块需降级使用。请回物资仓登记保留方案。", 4.8);
+    } else if (cargoSideStep === "storehouse") {
+      cargoSideStep = "complete";
+      dialogueState.baseIntegrity += 1;
+      showDialogue("物资仓", "错位货箱归档完成。后续温室与通信维修获得备用密封件。", 5);
+    }
+    setCurrentMissionText();
+    return true;
+  }
+
+  const patrolStep = patrolSideStep === "available" ? "solarA" : patrolSideStep;
+  if (patrolSideStep !== "complete" && isPatrolAvailable() && sideMissionTargets.patrol[patrolStep] === id) {
+    if (patrolSideStep === "available") patrolSideStep = "solarA";
+    if (patrolSideStep === "solarA") {
+      patrolSideStep = "tower";
+      showDialogue("P-03", "阵列 A 外侧旧传感器被沙尘遮挡。请同步通信塔外侧回波。", 4.8);
+    } else if (patrolSideStep === "tower") {
+      patrolSideStep = "lab";
+      showDialogue("通信塔", "异常回波确认。需要科研舱重建风暴路径。", 4.6);
+    } else if (patrolSideStep === "lab") {
+      patrolSideStep = "complete";
+      dialogueState.baseIntegrity += 1;
+      showDialogue("科研舱", "外围巡逻数据完成。主线风暴协议获得提前预警。", 5);
+    }
+    setCurrentMissionText();
+    return true;
+  }
+
+  return false;
+}
+
+function completeInteractable(id: Interactable["id"]) {
+  const item = world.interactables.find((interactable) => interactable.id === id);
+  if (item) item.completed = true;
+}
+
+function isCargoAvailable() {
+  return ["m2_storehouse", "m2_lab", "m2_solarB", "m2_seed", "m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+}
+
+function isPatrolAvailable() {
+  return ["m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+}
+
+function isActiveMissionInteractable(id: Interactable["id"]) {
+  if (mainMissionTargets[missionStep] === id) return true;
+  if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) return true;
+  if (isCargoAvailable() && cargoSideStep !== "complete") {
+    const cargoStep = cargoSideStep === "available" ? "cargoShip" : cargoSideStep;
+    if (sideMissionTargets.cargo[cargoStep] === id) return true;
+  }
+  if (isPatrolAvailable() && patrolSideStep !== "complete") {
+    const patrolStep = patrolSideStep === "available" ? "solarA" : patrolSideStep;
+    if (sideMissionTargets.patrol[patrolStep] === id) return true;
+  }
+  return false;
+}
+
+function setCurrentMissionText() {
+  const textByStep: Record<MainMissionStep, string> = {
+    intro: "先熟悉移动和视角。Mother 会建立通信，随后开始基地验收。",
+    m1_habitat: "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。",
+    m1_oxygen: "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。",
+    m1_solarC: "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。",
+    m1_garage: "主线一：前往 05 建筑机器人车库，授权 A-12 生成维修单。",
+    m2_greenhouse: "主线二：前往 02 建筑温室生态舱，检查水循环、补光和舱压。",
+    m2_storehouse: "主线二：前往 08 建筑物资仓，清点可用密封件。",
+    m2_lab: "主线二：前往 07 建筑科研舱，制作临时密封环。",
+    m2_solarB: "主线二：前往 02 能源太阳能阵列 B，给温室分配补光功率。",
+    m2_seed: "主线二：回到 02 建筑温室生态舱，决定火星第一批种植方案。",
+    m3_tower: "主线三：前往 06 建筑通信塔，校准风暴中的延迟通信。",
+    m3_lab: "主线三：前往 07 建筑科研舱，比对地球旧指令和本地气象数据。",
+    m3_methane: "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。",
+    m3_solarA: "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。",
+    m3_garage: "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。",
+    m3_mother: "主线三：回到 01 建筑居住舱 Mother 终端，签署人机协作协议。",
+    complete: "主线完成：ARES BASE ALPHA 达到最低生存标准。可继续完成剩余支线。",
+  };
+
+  const sideHints: string[] = [];
+  if (fufuSideStep === "medical") sideHints.push("支线：带福福去医疗舱扫描");
+  if (fufuSideStep === "habitat") sideHints.push("支线：带福福回居住舱");
+  if (isCargoAvailable() && cargoSideStep !== "complete") sideHints.push("支线：调查 A-01 的错位货箱");
+  if (isPatrolAvailable() && patrolSideStep !== "complete") sideHints.push("支线：跟进 P-03 的外围异常");
+  setMission(sideHints.length ? `${textByStep[missionStep]} ｜ ${sideHints.join("；")}` : textByStep[missionStep]);
 }
 
 function setMission(text: string) {
@@ -2442,7 +2713,7 @@ function showDialogue(speaker: string, text: string, seconds: number) {
 
 function updateReadouts() {
   if (oxygenReadout) {
-    const value = missionStep === "oxygen" ? 58 + Math.sin(elapsedTime * 3) * 4 : 78 + Math.sin(elapsedTime * 0.36) * 2;
+    const value = missionStep === "m1_oxygen" ? 58 + Math.sin(elapsedTime * 3) * 4 : 78 + Math.sin(elapsedTime * 0.36) * 2;
     oxygenReadout.textContent = `${Math.round(value)}%`;
   }
   if (suitOxygenReadout) {
@@ -2455,7 +2726,7 @@ function updateReadouts() {
     staminaReadout.classList.toggle("is-low", stamina <= 20);
   }
   if (powerReadout) {
-    const value = missionStep === "solar" ? 61 + Math.sin(elapsedTime * 3.2) * 4 : 89 + Math.sin(elapsedTime * 0.22 + 1.8) * 4;
+    const value = missionStep === "m1_solarC" ? 61 + Math.sin(elapsedTime * 3.2) * 4 : 89 + Math.sin(elapsedTime * 0.22 + 1.8) * 4;
     powerReadout.textContent = `${Math.round(value)}%`;
   }
 }

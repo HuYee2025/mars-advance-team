@@ -2,7 +2,20 @@ import * as THREE from "three";
 import marsAlbedoUrl from "./assets/mars-albedo-generated.png";
 
 export type Interactable = {
-  id: "oxygen" | "solar" | "garage";
+  id:
+    | "habitatCheck"
+    | "greenhouse"
+    | "oxygen"
+    | "methane"
+    | "garage"
+    | "tower"
+    | "lab"
+    | "storehouse"
+    | "medical"
+    | "solarA"
+    | "solarB"
+    | "solarC"
+    | "cargoShip";
   label: string;
   prompt: string;
   object: THREE.Object3D;
@@ -271,6 +284,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(habitat);
   landmarks.push(landmark("01 建筑 居住舱", habitat, habitatX, habitatZ, 34, 220));
   addMaintenanceBot("01 机器人 居住舱维修工", habitatX, habitatZ, habitatYaw, 0, -8.6, "01 建筑 居住舱", "居住舱是 Alex 的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。");
+  interactables.push({
+    id: "habitatCheck",
+    label: "01 建筑 居住舱",
+    prompt: "按 E 检查 01 建筑 居住舱",
+    object: habitat,
+    radius: 11.5,
+    completed: false,
+  });
   for (const x of [-8.2, -5.4, -2.7, 0, 2.7, 5.4, 8.2]) {
     colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, x, 0.2, 3.05, "关闭的居住舱"), enabled: () => !habitatDoor.occupied });
   }
@@ -291,6 +312,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(greenhouse);
   landmarks.push(landmark("02 建筑 温室生态舱", greenhouse, greenhouseX, greenhouseZ, 46, 260));
   addMaintenanceBot("02 机器人 温室维修工", greenhouseX, greenhouseZ, greenhouseYaw, -7.8, -5.8, "02 建筑 温室生态舱", "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。");
+  interactables.push({
+    id: "greenhouse",
+    label: "02 建筑 温室生态舱",
+    prompt: "按 E 启动 02 建筑 温室生态舱",
+    object: greenhouse,
+    radius: 13.5,
+    completed: false,
+  });
   colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, -8.6, 0.2, 5.0, "温室左舱壁"));
   colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, 8.6, 0.2, 5.0, "温室右舱壁"));
   colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, 0, 9.2, 6.6, "温室后舱壁"));
@@ -330,6 +359,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("04 建筑 甲烷燃料厂", methanePlant, methaneX, methaneZ, 34, 230));
   addMaintenanceBot("04 机器人 燃料厂维修工", methaneX, methaneZ, 0.8, -6.2, -5.4, "04 建筑 甲烷燃料厂", "甲烷燃料厂把 CO2 和氢反应生成 CH4，为返回飞船和基地备用发电储备燃料。我负责反应器、冷凝管和安全阀。");
   colliders.push(circle(methaneX, methaneZ, 6.4, "甲烷燃料厂"));
+  interactables.push({
+    id: "methane",
+    label: "04 建筑 甲烷燃料厂",
+    prompt: "按 E 预启动 04 建筑 甲烷燃料厂",
+    object: methanePlant,
+    radius: 10.5,
+    completed: false,
+  });
 
   const garage = createGarage();
   garage.scale.setScalar(GARAGE_SCALE);
@@ -358,6 +395,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("06 建筑 通信塔", tower, towerX, towerZ, 34, 220));
   addMaintenanceBot("06 机器人 通信塔维修工", towerX, towerZ, 0.2, -5.4, -4.4, "06 建筑 通信塔", "通信塔负责基地内网、轨道中继和地球方向的延迟通信。我负责天线姿态、电源冗余和风暴后的信号校准。");
   colliders.push(circle(towerX, towerZ, 3.2, "通信塔"));
+  interactables.push({
+    id: "tower",
+    label: "06 建筑 通信塔",
+    prompt: "按 E 校准 06 建筑 通信塔",
+    object: tower,
+    radius: 9.5,
+    completed: false,
+  });
 
   const lab04 = createNumberedFacility("04", 0x75d7ff, "lab");
   lab04.scale.setScalar(NUMBERED_FACILITY_SCALE);
@@ -368,6 +413,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("07 建筑 科研舱", lab04, lab04X, lab04Z, 34, 230));
   addMaintenanceBot("07 机器人 科研舱维修工", lab04X, lab04Z, -0.38, 5.8, -5.6, "07 建筑 科研舱", "科研舱用于岩石样本、辐射数据和基地环境记录。我负责样本锁、分析台、传感器阵列和数据备份。");
   colliders.push(circle(lab04X, lab04Z, 6.2, "04 科研舱"));
+  interactables.push({
+    id: "lab",
+    label: "07 建筑 科研舱",
+    prompt: "按 E 使用 07 建筑 科研舱",
+    object: lab04,
+    radius: 10.5,
+    completed: false,
+  });
 
   const store07 = createNumberedFacility("07", 0xffc36d, "depot");
   store07.scale.setScalar(NUMBERED_FACILITY_SCALE);
@@ -378,6 +431,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("08 建筑 物资仓", store07, store07X, store07Z, 34, 230));
   addMaintenanceBot("08 机器人 物资仓维修工", store07X, store07Z, 0.72, -5.8, -5.4, "08 建筑 物资仓", "物资仓保存食品、密封件、氧气背包、工具和备用电子模块。我负责货架固定、库存扫描和气闸门维护。");
   colliders.push(circle(store07X, store07Z, 6.5, "07 物资仓"));
+  interactables.push({
+    id: "storehouse",
+    label: "08 建筑 物资仓",
+    prompt: "按 E 清点 08 建筑 物资仓",
+    object: store07,
+    radius: 10.5,
+    completed: false,
+  });
 
   const med06 = createNumberedFacility("06", 0x9ff28b, "clinic");
   med06.scale.setScalar(NUMBERED_FACILITY_SCALE);
@@ -388,6 +449,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("09 建筑 医疗舱", med06, med06X, med06Z, 34, 230));
   addMaintenanceBot("09 机器人 医疗舱维修工", med06X, med06Z, -0.86, 5.6, -5.2, "09 建筑 医疗舱", "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。");
   colliders.push(circle(med06X, med06Z, 6.0, "06 医疗舱"));
+  interactables.push({
+    id: "medical",
+    label: "09 建筑 医疗舱",
+    prompt: "按 E 使用 09 建筑 医疗舱",
+    object: med06,
+    radius: 10.5,
+    completed: false,
+  });
 
   const solarAX = spread(95);
   const solarAZ = spread(79.8);
@@ -396,6 +465,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("01 能源 太阳能阵列 A", solarA, solarAX, solarAZ, 30, 220));
   addMaintenanceBot("10 机器人 阵列 A 维修工", solarAX, solarAZ, -0.36, 0, -7.6, "01 能源 太阳能阵列 A", "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。");
   colliders.push(circle(solarAX, solarAZ, 8.6, "太阳能阵列 A"));
+  interactables.push({
+    id: "solarA",
+    label: "01 能源 太阳能阵列 A",
+    prompt: "按 E 检查 01 能源 太阳能阵列 A",
+    object: solarA,
+    radius: 12.5,
+    completed: false,
+  });
   const solarBX = spread(-116.6);
   const solarBZ = spread(42.4);
   const solarB = createSolarArray(solarBX, solarBZ, -0.36, base);
@@ -403,6 +480,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   landmarks.push(landmark("02 能源 太阳能阵列 B", solarB, solarBX, solarBZ, 30, 220));
   addMaintenanceBot("11 机器人 阵列 B 维修工", solarBX, solarBZ, -0.36, 0, -7.6, "02 能源 太阳能阵列 B", "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。");
   colliders.push(circle(solarBX, solarBZ, 8.6, "太阳能阵列 B"));
+  interactables.push({
+    id: "solarB",
+    label: "02 能源 太阳能阵列 B",
+    prompt: "按 E 分配 02 能源 太阳能阵列 B",
+    object: solarB,
+    radius: 12.5,
+    completed: false,
+  });
   const solarCX = spread(21.5);
   const solarCZ = spread(-122.2);
   const solarNode = createSolarArray(solarCX, solarCZ, 0.18, base);
@@ -415,7 +500,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(solarLight);
   flickerLights.push(solarLight);
   interactables.push({
-    id: "solar",
+    id: "solarC",
     label: "03 能源 太阳能阵列 C",
     prompt: "按 E 重启 03 能源 太阳能阵列 C",
     object: solarNode,
@@ -461,6 +546,16 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     base.add(lander);
     landmarks.push(landmark(label, lander, x, z, 42, 260));
     addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -7.8, -8.4, label, shipBriefing(label));
+    if (label.includes("货运飞船")) {
+      interactables.push({
+        id: "cargoShip",
+        label,
+        prompt: "按 E 检查 02 飞船 货运飞船",
+        object: lander,
+        radius: 13.5,
+        completed: false,
+      });
+    }
     colliders.push(circle(x, z, 8.6, `${label}主体`));
     colliders.push(offsetCircle(x, z, yaw, -3.25 * LANDER_SCALE, -2.36 * LANDER_SCALE, 2.1, `${label}升降梯塔`));
     for (const angle of [Math.PI / 2, Math.PI / 2 + (Math.PI * 2) / 3, Math.PI / 2 + (Math.PI * 4) / 3]) {
