@@ -481,10 +481,14 @@ function bindInput() {
       updateMap();
       return;
     }
+    if (event.code === "Enter" && interactionChoiceOpen && interactionActions.length > 1) {
+      event.preventDefault();
+      executeSelectedInteraction();
+      return;
+    }
     if (event.code === "Space") {
       event.preventDefault();
-      if (interactionChoiceOpen && interactionActions.length > 1) executeSelectedInteraction();
-      else jump();
+      jump();
       return;
     }
     if (event.code === "Equal" || event.code === "NumpadAdd") {
@@ -599,6 +603,16 @@ function showControlsGuide(visible: boolean) {
   controlsGuideOpen = visible;
   controlsGuide.classList.toggle("is-visible", controlsGuideOpen);
   controlsGuide.setAttribute("aria-hidden", String(!controlsGuideOpen));
+}
+
+function closeMapUi() {
+  mapOpen = false;
+  mapExpanded = false;
+  mapHoldTriggered = false;
+  clearMapHoldTimer();
+  document.body.classList.remove("map-open", "map-expanded");
+  mapOverlay.setAttribute("aria-hidden", "true");
+  updateMapButtonState();
 }
 
 function toggleMap() {
@@ -1569,7 +1583,7 @@ function executeSelectedInteraction() {
   }
   if (action.id === "robot" && activeRobot) {
     activeRobot.userData.pauseUntil = elapsedTime + 6;
-    openDialogueScene(missionStep === "garage" ? "garage" : "robot");
+    openRobotBriefing(activeRobot);
     return;
   }
   if (action.id === "oxygenSupply" && activeOxygenSupply) {
@@ -1600,6 +1614,17 @@ function interactElevator() {
     toggleElevator(activeElevator);
     return;
   }
+}
+
+function openRobotBriefing(robot: THREE.Group) {
+  const label = typeof robot.userData.label === "string" ? robot.userData.label : "维修机器人";
+  const facilityLabel = typeof robot.userData.facilityLabel === "string" ? robot.userData.facilityLabel : "基地设施";
+  const briefing =
+    typeof robot.userData.briefing === "string"
+      ? robot.userData.briefing
+      : "A-12 在线。当前服从 Mother 维修队列。可执行：管线检查、密封、阵列固定、低速搬运。";
+  dialogueNodes.robot_status.text = `${label} 在线。我负责 ${facilityLabel}。${briefing}`;
+  openDialogueScene("robot");
 }
 
 function interactMission(interactable: Interactable) {
@@ -1652,6 +1677,42 @@ function resetSuitOxygen() {
   oxygenWarningShown = false;
 }
 
+function resetRunUiAfterRespawn() {
+  missionStep = "intro";
+  pendingMotherCall = null;
+  introCallQueued = false;
+  gameStartElapsed = elapsedTime;
+  hudCollapsed = false;
+  showUnnumberedOnMap = false;
+  helmetLampOn = false;
+  messageUntil = 0;
+  selectedInteractionIndex = 0;
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  activeInteractable = null;
+  activeElevator = null;
+  activeHabitatDoor = null;
+  activeGreenhouseDoor = null;
+  activeRobot = null;
+  activeFufu = false;
+  activeOxygenSupply = null;
+  resetDialogueState();
+  closeMapUi();
+  showControlsGuide(false);
+  keyState.clear();
+  resetStick();
+  document.body.classList.remove("hud-collapsed");
+  hudToggle.setAttribute("aria-pressed", "false");
+  hudToggle.setAttribute("aria-label", "隐藏界面信息");
+  promptBox.textContent = "";
+  promptBox.classList.remove("is-visible");
+  interactionChoice.classList.remove("is-visible");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  dialogueBox.innerHTML = "";
+  dialogueBox.classList.remove("is-visible");
+  setMission("先熟悉移动和视角。可以观察基地、飞船、居住舱和机器人。");
+}
+
 function refillSuitOxygen(label: string) {
   resetSuitOxygen();
   showDialogue(label, "氧气背包已更换。剩余氧气 100%。", 2.8);
@@ -1675,6 +1736,7 @@ function updateSuitOxygen(delta: number) {
 function respawnAfterOxygenDepleted() {
   resetSuitOxygen();
   resetPlayerToSpawn();
+  resetRunUiAfterRespawn();
   showDialogue("生命维持", "氧气耗尽。已从出发点重新同步。", 4);
 }
 
@@ -2296,10 +2358,10 @@ function handleDialogueKey(event: KeyboardEvent) {
       renderDialogueChoiceSelection();
       return;
     }
-    if (event.code === "Space") chooseDialogue(selectedDialogueChoiceIndex);
+    if (event.code === "Enter") chooseDialogue(selectedDialogueChoiceIndex);
     return;
   }
-  if (event.code === "Space") advanceDialogue();
+  if (event.code === "Enter") advanceDialogue();
 }
 
 function renderDialogueChoiceSelection() {
@@ -2386,6 +2448,7 @@ function updateReadouts() {
   if (suitOxygenReadout) {
     suitOxygenReadout.textContent = `${Math.ceil(suitOxygen)}%`;
     suitOxygenReadout.classList.toggle("is-low", suitOxygen <= 20);
+    suitOxygenReadout.classList.toggle("is-critical", suitOxygen <= 20);
   }
   if (staminaReadout) {
     staminaReadout.textContent = `${Math.round(stamina)}%`;

@@ -248,6 +248,27 @@ h1 {
   text-shadow: 0 0 12px rgba(255, 92, 66, 0.45);
 }
 
+.status-group dd.is-critical {
+  animation: oxygen-critical-blink 0.75s steps(2, end) infinite;
+}
+
+@keyframes oxygen-critical-blink {
+  0%,
+  100% {
+    color: #ff4b3e;
+    opacity: 1;
+    text-shadow:
+      0 0 10px rgba(255, 66, 54, 0.8),
+      0 0 22px rgba(255, 66, 54, 0.45);
+  }
+
+  50% {
+    color: #ffd0c8;
+    opacity: 0.42;
+    text-shadow: none;
+  }
+}
+
 .mission-panel {
   width: 100%;
   margin-top: 8px;
@@ -276,6 +297,11 @@ h1 {
   max-width: none;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.mission-panel p b {
+  color: #ffd08a;
+  font-weight: 900;
 }
 
 .hud-buttons {
