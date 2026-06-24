@@ -10,6 +10,7 @@ export type PlayerRig = {
   helmet: THREE.Mesh;
   visor: THREE.Mesh;
   jetpackFlames: THREE.Group;
+  scaleGun: THREE.Group;
 };
 
 function makeMaterial(color: number, roughness = 0.72, metalness = 0.08, emissive = 0x000000) {
@@ -32,6 +33,13 @@ function capsule(radius: number, length: number, material: THREE.Material) {
 
 function box(w: number, h: number, d: number, material: THREE.Material) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function cylinder(radiusTop: number, radiusBottom: number, height: number, material: THREE.Material, radialSegments = 8) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments), material);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
@@ -159,6 +167,11 @@ export function createMarsEngineer(): PlayerRig {
   leftArm.add(leftGlove);
   rightArm.add(rightGlove);
 
+  const scaleGun = createScaleGun(graphite, hardSuit, orange, cyan);
+  scaleGun.position.set(0.075, -0.96, -0.26);
+  scaleGun.rotation.set(-0.38, 0.04, 0);
+  rightArm.add(scaleGun);
+
   const leftLeg = limb(0.86, 0.14, hardSuit);
   leftLeg.position.set(-0.22, 0.45, 0);
   const rightLeg = limb(0.86, 0.14, hardSuit);
@@ -177,7 +190,38 @@ export function createMarsEngineer(): PlayerRig {
   shoulderB.position.x = 0.49;
   visual.add(shoulderA, shoulderB);
 
-  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor, jetpackFlames };
+  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor, jetpackFlames, scaleGun };
+}
+
+function createScaleGun(graphite: THREE.Material, hardSuit: THREE.Material, orange: THREE.Material, cyan: THREE.Material) {
+  const gun = new THREE.Group();
+  gun.name = "Scale gun";
+
+  const body = box(0.18, 0.16, 0.56, hardSuit);
+  body.position.set(0, 0.02, -0.2);
+  const grip = box(0.12, 0.32, 0.12, graphite);
+  grip.position.set(0, -0.18, -0.02);
+  grip.rotation.x = -0.28;
+  const spine = box(0.11, 0.08, 0.68, graphite);
+  spine.position.set(0, 0.1, -0.22);
+  const emitter = cylinder(0.105, 0.075, 0.22, cyan, 12);
+  emitter.position.set(0, 0.02, -0.55);
+  emitter.rotation.x = Math.PI / 2;
+  const lensRing = new THREE.Mesh(new THREE.TorusGeometry(0.116, 0.014, 6, 16), orange);
+  lensRing.position.set(0, 0.02, -0.67);
+  lensRing.rotation.x = Math.PI / 2;
+  lensRing.castShadow = true;
+  const rearCap = box(0.16, 0.13, 0.1, graphite);
+  rearCap.position.set(0, 0.02, 0.11);
+  const scaleDial = cylinder(0.05, 0.05, 0.035, cyan, 10);
+  scaleDial.position.set(0.095, 0.12, -0.2);
+  scaleDial.rotation.z = Math.PI / 2;
+  const safety = box(0.055, 0.04, 0.16, orange);
+  safety.position.set(0, 0.13, -0.02);
+
+  gun.add(body, grip, spine, emitter, lensRing, rearCap, scaleDial, safety);
+  gun.scale.setScalar(1.18);
+  return gun;
 }
 
 export function updateMarsEngineer(rig: PlayerRig, speed: number, elapsed: number, flying = false, thrusting = false) {
