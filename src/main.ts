@@ -80,6 +80,7 @@ const exitResumeButton = must<HTMLButtonElement>("#exit-resume");
 const exitTitleButton = must<HTMLButtonElement>("#exit-title");
 const exitConfirmButtons = [exitResumeButton, exitTitleButton] as const;
 const controlsGuide = must<HTMLElement>("#controls-guide");
+const controlsGuideHint = must<HTMLElement>("#control-guide-hint");
 const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
@@ -306,6 +307,7 @@ let lastRobotGreetingAt = -Infinity;
 let helmetLampOn = false;
 let showUnnumberedOnMap = false;
 let controlsGuideOpen = false;
+let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
 let dialogueOpen = false;
 let pendingMotherCall: DialogueSceneId | null = null;
@@ -885,6 +887,10 @@ function toggleHud() {
 
 function showControlsGuide(visible: boolean) {
   controlsGuideOpen = visible;
+  if (visible && !controlsGuideUsed) {
+    controlsGuideUsed = true;
+    controlsGuideHint.hidden = true;
+  }
   controlsGuide.classList.toggle("is-visible", controlsGuideOpen);
   controlsGuide.setAttribute("aria-hidden", String(!controlsGuideOpen));
 }
