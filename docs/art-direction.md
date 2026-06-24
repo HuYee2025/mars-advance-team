@@ -9,6 +9,7 @@
 - 角色概念图：`assets/concepts/mars-engineer-character.png`
 - 车辆/机器人概念图：`assets/concepts/mars-rover-robots.png`
 - 基地布局概念图：`assets/concepts/mars-base-layout.png`
+- 故事页首屏火星地表背景：`assets/story/mars-surface-hero.png`
 - 福福宇航服概念图：`assets/concepts/fufu/fufu-astronaut-concept.png`
 - 福福深色角色立绘：`assets/portraits/fufu-dialogue.png`
 - Elon 概念图：`assets/concepts/elon-character-concept.png`

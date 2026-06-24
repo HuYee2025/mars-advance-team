@@ -18,6 +18,7 @@
 - 核心角色卡增加身份标签，章节区改为任务记录式卡片，正文区强化阅读节奏和章节索引。
 - 新增 `assets/portraits/fufu-dialogue.png`，用于福福角色卡深色立绘展示；原 `assets/concepts/fufu/fufu-astronaut-concept.png` 继续作为飞船残骸场景概念图。
 - 章节索引增加滚动同步高亮：阅读到对应正文段落时，右侧导航自动标记当前章节。
+- 首屏背景从基地鸟瞰图改为更真实的火星地表图，底部渐隐到黑；基地鸟瞰图移到首屏之后，作为完整满宽图片展示，说明文字放在图片下方。
 - 移动端需要保持标题、状态条、角色卡和正文无横向溢出。
 
 已登记文件：
@@ -25,6 +26,8 @@
 - `docs/story/core-story-v2-visual.html`
 - `public/story-overview.html`
 - `public/story-assets/fufu-dialogue.png`
+- `assets/story/mars-surface-hero.png`
+- `public/story-assets/mars-surface-hero.png`
 - `assets/portraits/fufu-dialogue.png`
 - `docs/lore/fufu.md`
 - `docs/art-direction.md`
