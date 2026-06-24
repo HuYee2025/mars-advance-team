@@ -9,7 +9,7 @@
 ## 已新增资料
 
 - `docs/lore/fufu.md`：福福角色设定、外观、动作、Alex/Mother 关系、剧情来源、玩法用途。
-- `assets/concepts/fufu/fufu-spritesheet.png`：项目内福福参考图。
+- `assets/concepts/fufu/fufu-spritesheet.webp`：项目内福福参考图。
 
 原始素材路径：
 

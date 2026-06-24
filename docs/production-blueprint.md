@@ -28,10 +28,10 @@
 - 机器人、火星车巡逻。
 - 玩家控制、地图、HUD、基础交互、氧气/能源读数。
 - 概念图：
-  - Alex：`assets/concepts/mars-engineer-character.png`
-  - 机器人/火星车：`assets/concepts/mars-rover-robots.png`
-  - 基地布局：`assets/concepts/mars-base-layout.png`
-  - Mother：`assets/concepts/mother-ai-terminal.png`
+  - Alex：`assets/concepts/mars-engineer-character.webp`
+  - 机器人/火星车：`assets/concepts/mars-rover-robots.webp`
+  - 基地布局：`assets/concepts/mars-base-layout.webp`
+  - Mother：`assets/concepts/mother-ai-terminal.webp`
 
 ## 3. 美术策略
 

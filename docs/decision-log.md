@@ -13,8 +13,9 @@
 - 游戏运行时贴图和对话立绘切换为 WebP：火星星球贴图、Alex、Mother、维修机器人、Elon 对话图均改为 WebP 引用。
 - 故事概要公开资源 `public/story-assets/` 全部改为 WebP，并删除未引用 PNG 副本，避免部署包继续携带大文件。
 - 故事源页面 `docs/story/core-story-v2-visual.html` 同步改用 WebP 资源。
+- 项目内概念图也补齐 WebP 版本，文档默认引用压缩图，避免继续把 1MB 以上 PNG 当作预览路径。
 - 压缩策略：在尽量保持清晰度的前提下，按实际展示尺寸适度降采样；透明角色图保留 alpha 通道。
-- 构建结果中，大图从约 1.4-2.8MB 降到约 55-256KB，火星贴图约 189KB。
+- 构建结果中，大图从约 1.4-2.8MB 降到约 55-256KB，火星贴图约 189KB；概念图压缩后约 83-341KB。
 
 已登记文件：
 
@@ -24,13 +25,21 @@
 - `assets/portraits/repair-robot-dialogue.webp`
 - `assets/portraits/elon-dialogue-transparent.webp`
 - `assets/story/mars-surface-hero.webp`
+- `assets/concepts/mars-engineer-character.webp`
+- `assets/concepts/mars-rover-robots.webp`
+- `assets/concepts/mother-ai-terminal.webp`
+- `assets/concepts/elon-character-concept.webp`
 - `assets/concepts/mars-base-layout.webp`
+- `assets/concepts/fufu/fufu-astronaut-concept.webp`
+- `assets/concepts/fufu/fufu-spritesheet.webp`
 - `assets/portraits/fufu-dialogue.webp`
 - `public/story-assets/*.webp`
 - `src/world.ts`
 - `src/dialogue/dialogues.ts`
 - `public/story-overview.html`
 - `docs/story/core-story-v2-visual.html`
+- `docs/art-direction.md`
+- `docs/production-blueprint.md`
 
 ### 黑色石碑赠送放大缩小枪概念
 
@@ -44,13 +53,14 @@
 - 黑色石碑改名为“黑色方碑”，形状改成更宽的直立矩形，去掉底座，仅保留暗色接触阴影。
 - 方碑位置从 `(260, -315)` 移到 `(-360, -300)`；按现有建筑/飞船/太阳能阵列表面弧长计算，最近距离从约 `19` 提升到约 `32`，不再靠近医疗舱。
 - 放大缩小枪第一阶段先作为概念资产入库，并制作程序化低多边形手持模型；模型默认隐藏，必须通过黑色方碑互动获得后才装备到 Alex 右手。
-- 方碑获取逻辑：靠近出现 `E` 互动提示；按 `E` 打开对话界面，方碑不说话；界面展示缩放枪图片和使用说明；选择收下工具后获得缩放枪。
+- 方碑获取逻辑：靠近出现 `E` 互动提示；按 `E` 打开对话界面，右侧对话对象显示 45 度透明背景黑色方碑立绘，缩放枪图片只出现在对话框内容区；按钮流程为先点“获取”获得工具，再点“继续”退出对话。
 - 玩法建议采用“装备态 + 瞄准态 + 确认操作”三段式：按 `R` 装备/进入瞄准，屏幕中央出现可移动放大镜准星，选中目标后再选择“放大”或“缩小”。
 - 缩放对象先尽量开放，但不缩放火星星球本身和天上的星星本身；其他星球上的物体、场景内物体都可以被缩放。
 - 缩放效果有时间限制：每次缩放持续 1 分钟，时间结束后自动恢复到原始尺寸。
 - 数值限制仍按相对原始尺寸计算，放大和缩小极限都是 3 倍：最大 `3x`，最小约 `0.33x`。
 - 新增概念图 `assets/concepts/scale-gun-concept.png`，深色底、简洁流线型、适合宇航员手持。
-- 新增黑色方碑绿幕源图 `assets/portraits/monolith-dialogue-green.png` 和压缩参考图 `assets/portraits/monolith-dialogue-green.webp`；当前先作为后续对话演出/抠图素材，不直接接入运行时。
+- 新增黑色方碑绿幕源图 `assets/portraits/monolith-dialogue-green.png`，仅作为抠图源；运行时使用透明版 `assets/portraits/monolith-dialogue-transparent.webp` 作为方碑对话的右侧角色立绘。
+- 方碑对话文案只做玩家可读的缩放枪介绍，不展示设计参数、效果时长、数值上限或“头盔自动展开图纸”等实现解释。
 - 缩放枪 3D 模型已使用 Three.js 几何体拼装，材质沿用宇航服暖白、石墨黑、橙色安全件和蓝色镜头。
 
 已登记文件：
@@ -59,10 +69,14 @@
 - `assets/concepts/scale-gun-concept.webp`
 - `assets/portraits/monolith-dialogue-green.png`
 - `assets/portraits/monolith-dialogue-green.webp`
+- `assets/portraits/monolith-dialogue-transparent.png`
+- `assets/portraits/monolith-dialogue-transparent.webp`
 - `src/player.ts`
 - `src/world.ts`
 - `src/main.ts`
 - `src/dialogue/dialogues.ts`
+- `index.html`
+- `src/style.css`
 - `docs/decision-log.md`
 
 ### HUYEE 神秘代码与飞行模式
@@ -74,7 +88,7 @@
 决策：
 
 - 全局监听连续字母输入 `HUYEE`，触发后播放两段式“叮咚”合成音。
-- 飞行模式只改变室外星球表面移动：按住空格持续上升，WASD/方向键继续控制前后和转向。
+- 飞行模式只改变室外星球表面移动：按住空格持续上升，按住 `Control/Ctrl` 持续下降，WASD/方向键继续控制前后和转向。
 - 进入居住舱、温室、飞船内视角或升降梯时，不启用飞行移动，避免破坏室内和任务交互边界。
 - 飞行开启时，Alex 背包两根圆柱状罐体下方显示两团蓝色喷焰；喷焰使用程序化 ConeGeometry 和加色材质，不新增图片资源。
 - 该功能定位为隐藏彩蛋/调试能力，不写入普通操作指南主流程。

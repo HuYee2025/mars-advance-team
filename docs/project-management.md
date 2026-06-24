@@ -102,7 +102,7 @@
 另一个对话已把宠物福福写入项目：
 
 - 设定文件：`docs/lore/fufu.md`
-- 参考素材：`assets/concepts/fufu/fufu-spritesheet.png`
+- 参考素材：`assets/concepts/fufu/fufu-spritesheet.webp`
 
 福福的当前定位：
 

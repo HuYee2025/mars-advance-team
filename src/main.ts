@@ -179,6 +179,7 @@ const STAMINA_DRAIN_PER_SECOND = 8;
 const STAMINA_RECOVER_PER_SECOND = 7;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
+const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
 const FLIGHT_MAX_ALTITUDE = 96;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
@@ -755,6 +756,8 @@ function setFlightModeEnabled(enabled: boolean) {
   }
   if (!enabled) {
     keyState.delete("Space");
+    keyState.delete("ControlLeft");
+    keyState.delete("ControlRight");
   }
 }
 
@@ -1154,7 +1157,7 @@ function animate() {
   updateMap();
   updateMissionState();
   updateReadouts();
-  updateMarsEngineer(playerRig, speed, elapsedTime, flightModeEnabled && canUseFlightMode(), keyState.has("Space"));
+  updateMarsEngineer(playerRig, speed, elapsedTime, flightModeEnabled && canUseFlightMode(), isFlightAscending() || isFlightDescending());
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
   updatePlayerContactShadow();
   updateHelmetLamp();
@@ -1389,15 +1392,26 @@ function updateFlightPlayer(delta: number) {
     playerForward.projectOnPlane(playerNormal).normalize();
   }
 
-  if (keyState.has("Space")) {
+  const verticalInput = (isFlightAscending() ? 1 : 0) - (isFlightDescending() ? 1 : 0);
+  if (verticalInput > 0) {
     playerAltitudeOffset = Math.min(FLIGHT_MAX_ALTITUDE, playerAltitudeOffset + FLIGHT_ASCEND_SPEED * delta);
+  } else if (verticalInput < 0) {
+    playerAltitudeOffset = Math.max(FLIGHT_MIN_ALTITUDE, playerAltitudeOffset - FLIGHT_DESCEND_SPEED * delta);
   } else {
     playerAltitudeOffset = Math.max(FLIGHT_MIN_ALTITUDE, playerAltitudeOffset);
   }
   grounded = false;
   verticalVelocity = 0;
   placePlayerOnPlanet();
-  return playerVelocity.length() + (keyState.has("Space") ? FLIGHT_ASCEND_SPEED : 0);
+  return playerVelocity.length() + (verticalInput !== 0 ? FLIGHT_ASCEND_SPEED : 0);
+}
+
+function isFlightAscending() {
+  return keyState.has("Space");
+}
+
+function isFlightDescending() {
+  return keyState.has("ControlLeft") || keyState.has("ControlRight");
 }
 
 function updateHabitatInterior(delta: number) {
