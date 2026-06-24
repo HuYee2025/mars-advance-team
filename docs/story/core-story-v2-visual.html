@@ -436,14 +436,40 @@
 
       .side-index a {
         display: block;
-        padding: 9px 0;
+        position: relative;
+        padding: 9px 0 9px 14px;
         color: var(--muted);
         text-decoration: none;
         border-top: 1px solid rgba(255, 255, 255, 0.07);
+        transition:
+          color 160ms ease,
+          background-color 160ms ease;
+      }
+
+      .side-index a::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 10px;
+        bottom: 10px;
+        width: 3px;
+        background: transparent;
+        transition: background-color 160ms ease;
       }
 
       .side-index a:hover {
         color: var(--text);
+      }
+
+      .side-index a.active,
+      .side-index a[aria-current="true"] {
+        color: var(--text);
+        background: rgba(134, 215, 232, 0.08);
+      }
+
+      .side-index a.active::before,
+      .side-index a[aria-current="true"]::before {
+        background: var(--cyan);
       }
 
       .index-note {
@@ -768,5 +794,79 @@
         ARES BASE ALPHA 本地记录片段。状态：最低生存标准已建立；首位人类居民已登记。
       </div>
     </footer>
+    <script>
+      (() => {
+        const links = Array.from(document.querySelectorAll('.side-index a[href^="#story-"]'));
+        const sections = links
+          .map((link) => document.querySelector(link.getAttribute("href")))
+          .filter(Boolean);
+
+        const setActive = (id) => {
+          links.forEach((link) => {
+            const isActive = link.getAttribute("href") === `#${id}`;
+            link.classList.toggle("active", isActive);
+            if (isActive) {
+              link.setAttribute("aria-current", "true");
+            } else {
+              link.removeAttribute("aria-current");
+            }
+          });
+        };
+
+        const updateByScroll = () => {
+          const marker = window.innerHeight * 0.34;
+          let current = sections[0]?.id;
+          for (const section of sections) {
+            if (section.getBoundingClientRect().top <= marker) {
+              current = section.id;
+            }
+          }
+          if (current) setActive(current);
+        };
+
+        let ticking = false;
+        window.addEventListener(
+          "scroll",
+          () => {
+            if (ticking) return;
+            ticking = true;
+            window.requestAnimationFrame(() => {
+              updateByScroll();
+              ticking = false;
+            });
+          },
+          { passive: true }
+        );
+
+        links.forEach((link) => {
+          link.addEventListener("click", () => {
+            const id = link.getAttribute("href").slice(1);
+            setActive(id);
+          });
+        });
+
+        if ("IntersectionObserver" in window) {
+          const observer = new IntersectionObserver(
+            (entries) => {
+              const visible = entries
+                .filter((entry) => entry.isIntersecting)
+                .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+              if (visible) setActive(visible.target.id);
+            },
+            {
+              rootMargin: "-18% 0px -58% 0px",
+              threshold: [0.08, 0.2, 0.4, 0.6],
+            }
+          );
+          sections.forEach((section) => observer.observe(section));
+        }
+
+        if (location.hash && document.querySelector(location.hash)) {
+          setActive(location.hash.slice(1));
+        } else {
+          updateByScroll();
+        }
+      })();
+    </script>
   </body>
 </html>
