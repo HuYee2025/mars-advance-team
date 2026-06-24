@@ -72,6 +72,7 @@ const dialogueLeftCallsign = must<HTMLElement>("#dialogue-left-callsign");
 const dialogueRightCallsign = must<HTMLElement>("#dialogue-right-callsign");
 const dialogueSpeaker = must<HTMLElement>("#dialogue-speaker");
 const dialogueStats = must<HTMLElement>("#dialogue-stats");
+const dialogueItemImage = must<HTMLImageElement>("#dialogue-item-image");
 const dialogueText = must<HTMLParagraphElement>("#dialogue-text");
 const dialogueChoices = must<HTMLDivElement>("#dialogue-choices");
 const dialogueContinue = must<HTMLButtonElement>("#dialogue-continue");
@@ -290,6 +291,7 @@ let oxygenWarningShown = false;
 let fufuRescued = false;
 let mysteryCodeProgress = "";
 let flightModeEnabled = false;
+let hasScaleGun = false;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
@@ -1055,6 +1057,7 @@ function startGame() {
   verticalVelocity = 0;
   grounded = true;
   resetSuitOxygen();
+  setScaleGunOwned(false);
   resetPlayerToSpawn();
   resetFufu();
   resetStick();
@@ -1080,6 +1083,7 @@ function returnToTitle() {
   controlsGuideOpen = false;
   messageUntil = 0;
   resetSuitOxygen();
+  setScaleGunOwned(false);
   closeDialogue();
   clearMapHoldTimer();
   keyState.clear();
@@ -1957,7 +1961,9 @@ function openRobotBriefing(robot: THREE.Group) {
 }
 
 function interactMission(interactable: Interactable) {
-  if (isElonSideQuestTarget(interactable.id)) {
+  if (interactable.id === "monolith") {
+    openDialogueScene("monolith");
+  } else if (isElonSideQuestTarget(interactable.id)) {
     advanceSideQuest(interactable.id);
   } else if (missionStep === "m1_oxygen" && interactable.id === "oxygen") {
     openDialogueScene("oxygen");
@@ -2744,6 +2750,8 @@ function renderDialogueNode() {
 
   dialogueSpeaker.textContent = `${speaker.name} / ${speaker.callsign}`;
   dialogueStats.textContent = `信任 ${dialogueState.motherTrust} · 基地 ${dialogueState.baseIntegrity} · 自主 ${dialogueState.humanAutonomy}`;
+  dialogueItemImage.hidden = !node.image;
+  if (node.image) dialogueItemImage.src = node.image;
   dialogueText.textContent = node.text;
   dialogueChoices.innerHTML = "";
 
@@ -2825,6 +2833,7 @@ function applyDialogueEffect(effect: DialogueEffect) {
   if (effect === "completeOxygen") completeOxygenMission();
   if (effect === "completeSolar") completeSolarMission();
   if (effect === "completeGarage") completeGarageMission();
+  if (effect === "acquireScaleGun") setScaleGunOwned(true);
 }
 
 function resetQuestState() {
@@ -2839,6 +2848,13 @@ function resetQuestState() {
   for (const item of world.interactables) item.completed = false;
   world.oxygenLight.color.set(0xff3d2f);
   world.solarLight.color.set(0xff3d2f);
+}
+
+function setScaleGunOwned(owned: boolean) {
+  hasScaleGun = owned;
+  playerRig.scaleGun.visible = owned;
+  const item = world.interactables.find((interactable) => interactable.id === "monolith");
+  if (item) item.completed = owned;
 }
 
 function startOxygenMission() {
@@ -3027,6 +3043,7 @@ function isElonSideQuestTarget(id: Interactable["id"]) {
 }
 
 function isActiveMissionInteractable(id: Interactable["id"]) {
+  if (id === "monolith") return !hasScaleGun;
   if (mainMissionTargets[missionStep] === id) return true;
   if (isElonSideQuestTarget(id)) return true;
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) return true;

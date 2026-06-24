@@ -1,10 +1,12 @@
-import alexPortraitUrl from "../../assets/portraits/alex-dialogue.png";
-import motherPortraitUrl from "../../assets/portraits/mother-bust.png";
-import repairRobotPortraitUrl from "../../assets/portraits/repair-robot-dialogue.png";
-import elonPortraitUrl from "../../assets/portraits/elon-dialogue-transparent.png";
+import alexPortraitUrl from "../../assets/portraits/alex-dialogue.webp";
+import motherPortraitUrl from "../../assets/portraits/mother-bust.webp";
+import repairRobotPortraitUrl from "../../assets/portraits/repair-robot-dialogue.webp";
+import elonPortraitUrl from "../../assets/portraits/elon-dialogue-transparent.webp";
+import scaleGunPortraitUrl from "../../assets/concepts/scale-gun-concept.webp";
+import monolithPortraitUrl from "../../assets/portraits/monolith-dialogue-green.webp";
 
-export type CharacterId = "alex" | "mother" | "repairRobot" | "elon";
-export type DialogueSceneId = "intro" | "oxygen" | "solar" | "garage" | "robot" | "elon";
+export type CharacterId = "alex" | "mother" | "repairRobot" | "elon" | "scaleGun" | "monolith";
+export type DialogueSceneId = "intro" | "oxygen" | "solar" | "garage" | "robot" | "elon" | "monolith";
 export type DialogueNodeId = string;
 
 export type DialogueEffect =
@@ -15,7 +17,8 @@ export type DialogueEffect =
   | "autonomyUp"
   | "completeOxygen"
   | "completeSolar"
-  | "completeGarage";
+  | "completeGarage"
+  | "acquireScaleGun";
 
 export type DialogueChoice = {
   label: string;
@@ -29,6 +32,7 @@ export type DialogueNode = {
   speaker: CharacterId;
   listener: CharacterId;
   text: string;
+  image?: string;
   next?: DialogueNodeId;
   choices?: DialogueChoice[];
   end?: boolean;
@@ -59,6 +63,18 @@ export const characters: Record<CharacterId, { name: string; callsign: string; p
     portrait: elonPortraitUrl,
     side: "right",
   },
+  scaleGun: {
+    name: "放大缩小枪",
+    callsign: "黑色方碑赠予工具",
+    portrait: scaleGunPortraitUrl,
+    side: "right",
+  },
+  monolith: {
+    name: "黑色方碑",
+    callsign: "无声异常物",
+    portrait: monolithPortraitUrl,
+    side: "right",
+  },
 };
 
 export const sceneStartNodes: Record<DialogueSceneId, DialogueNodeId> = {
@@ -68,9 +84,28 @@ export const sceneStartNodes: Record<DialogueSceneId, DialogueNodeId> = {
   garage: "garage_start",
   robot: "robot_status",
   elon: "elon_intro_1",
+  monolith: "monolith_silence",
 };
 
 export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
+  monolith_silence: {
+    id: "monolith_silence",
+    scene: "monolith",
+    speaker: "monolith",
+    listener: "alex",
+    image: scaleGunPortraitUrl,
+    text: "黑色方碑没有发出任何声音。你的头盔界面自动展开一张装备图纸：放大缩小枪。获得后装备在右手；后续按 R 进入瞄准模式，准星对准目标后选择“放大”或“缩小”。效果持续 1 分钟后自动还原，最大 3 倍，最小约三分之一。",
+    choices: [{ label: "获取", next: "monolith_scale_gun_acquired", effects: ["acquireScaleGun"] }],
+  },
+  monolith_scale_gun_acquired: {
+    id: "monolith_scale_gun_acquired",
+    scene: "monolith",
+    speaker: "monolith",
+    listener: "alex",
+    image: scaleGunPortraitUrl,
+    text: "装备已绑定。黑色方碑仍然沉默。",
+    end: true,
+  },
   intro_start: {
     id: "intro_start",
     scene: "intro",

@@ -2,6 +2,36 @@
 
 ## 2026-06-24
 
+### 线上图片加载速度优化
+
+原因：
+
+用户反馈互联网页面打开时图片加载偏慢，重点包括火星星球贴图、故事概要页场景概念图和角色贴图。排查发现多张 PNG 在 1.4MB 到 2.8MB 之间，线上静态包会直接下载这些大图。
+
+决策：
+
+- 游戏运行时贴图和对话立绘切换为 WebP：火星星球贴图、Alex、Mother、维修机器人、Elon 对话图均改为 WebP 引用。
+- 故事概要公开资源 `public/story-assets/` 全部改为 WebP，并删除未引用 PNG 副本，避免部署包继续携带大文件。
+- 故事源页面 `docs/story/core-story-v2-visual.html` 同步改用 WebP 资源。
+- 压缩策略：在尽量保持清晰度的前提下，按实际展示尺寸适度降采样；透明角色图保留 alpha 通道。
+- 构建结果中，大图从约 1.4-2.8MB 降到约 55-256KB，火星贴图约 189KB。
+
+已登记文件：
+
+- `src/assets/mars-albedo-generated.webp`
+- `assets/portraits/alex-dialogue.webp`
+- `assets/portraits/mother-bust.webp`
+- `assets/portraits/repair-robot-dialogue.webp`
+- `assets/portraits/elon-dialogue-transparent.webp`
+- `assets/story/mars-surface-hero.webp`
+- `assets/concepts/mars-base-layout.webp`
+- `assets/portraits/fufu-dialogue.webp`
+- `public/story-assets/*.webp`
+- `src/world.ts`
+- `src/dialogue/dialogues.ts`
+- `public/story-overview.html`
+- `docs/story/core-story-v2-visual.html`
+
 ### 黑色石碑赠送放大缩小枪概念
 
 原因：
@@ -11,18 +41,28 @@
 决策：
 
 - 当前场景已存在黑色石碑，位置记录在 `src/world.ts` 的 `world.monolith`，此前仅作为远端异常点和声音触发点。
-- 放大缩小枪第一阶段先作为概念资产入库，并制作程序化低多边形手持模型；完整缩放玩法后续再接入。
+- 黑色石碑改名为“黑色方碑”，形状改成更宽的直立矩形，去掉底座，仅保留暗色接触阴影。
+- 方碑位置从 `(260, -315)` 移到 `(-360, -300)`；按现有建筑/飞船/太阳能阵列表面弧长计算，最近距离从约 `19` 提升到约 `32`，不再靠近医疗舱。
+- 放大缩小枪第一阶段先作为概念资产入库，并制作程序化低多边形手持模型；模型默认隐藏，必须通过黑色方碑互动获得后才装备到 Alex 右手。
+- 方碑获取逻辑：靠近出现 `E` 互动提示；按 `E` 打开对话界面，方碑不说话；界面展示缩放枪图片和使用说明；选择收下工具后获得缩放枪。
 - 玩法建议采用“装备态 + 瞄准态 + 确认操作”三段式：按 `R` 装备/进入瞄准，屏幕中央出现可移动放大镜准星，选中目标后再选择“放大”或“缩小”。
 - 缩放对象先尽量开放，但不缩放火星星球本身和天上的星星本身；其他星球上的物体、场景内物体都可以被缩放。
 - 缩放效果有时间限制：每次缩放持续 1 分钟，时间结束后自动恢复到原始尺寸。
 - 数值限制仍按相对原始尺寸计算，放大和缩小极限都是 3 倍：最大 `3x`，最小约 `0.33x`。
 - 新增概念图 `assets/concepts/scale-gun-concept.png`，深色底、简洁流线型、适合宇航员手持。
-- 缩放枪 3D 模型已使用 Three.js 几何体拼装并装备到 Alex 右手，材质沿用宇航服暖白、石墨黑、橙色安全件和蓝色镜头。
+- 新增黑色方碑绿幕源图 `assets/portraits/monolith-dialogue-green.png` 和压缩参考图 `assets/portraits/monolith-dialogue-green.webp`；当前先作为后续对话演出/抠图素材，不直接接入运行时。
+- 缩放枪 3D 模型已使用 Three.js 几何体拼装，材质沿用宇航服暖白、石墨黑、橙色安全件和蓝色镜头。
 
 已登记文件：
 
 - `assets/concepts/scale-gun-concept.png`
+- `assets/concepts/scale-gun-concept.webp`
+- `assets/portraits/monolith-dialogue-green.png`
+- `assets/portraits/monolith-dialogue-green.webp`
 - `src/player.ts`
+- `src/world.ts`
+- `src/main.ts`
+- `src/dialogue/dialogues.ts`
 - `docs/decision-log.md`
 
 ### HUYEE 神秘代码与飞行模式

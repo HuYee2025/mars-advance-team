@@ -1068,6 +1068,22 @@ h1 {
   white-space: nowrap;
 }
 
+#dialogue-item-image {
+  display: block;
+  width: min(260px, 44vw);
+  max-height: 132px;
+  object-fit: contain;
+  object-position: left center;
+  margin: 2px 0 12px;
+  border: 1px solid rgba(122, 226, 255, 0.24);
+  background: rgba(2, 10, 14, 0.36);
+  box-shadow: 0 0 24px rgba(89, 212, 255, 0.12);
+}
+
+#dialogue-item-image[hidden] {
+  display: none;
+}
+
 #dialogue-text {
   min-height: 50px;
   margin: 0;
