@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import marsAlbedoUrl from "./assets/mars-albedo-generated.png";
+import marsAlbedoUrl from "./assets/mars-albedo-generated.webp";
 
 export type Interactable = {
   id:
@@ -15,7 +15,8 @@ export type Interactable = {
     | "solarA"
     | "solarB"
     | "solarC"
-    | "cargoShip";
+    | "cargoShip"
+    | "monolith";
   label: string;
   prompt: string;
   object: THREE.Object3D;
@@ -298,13 +299,21 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
   addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, true);
 
-  const monolithX = 260;
-  const monolithZ = -315;
+  const monolithX = -360;
+  const monolithZ = -300;
   const monolith = createBlackMonolith();
   placeObjectOnPlanet(monolith, monolithX, monolithZ, 0.05, -0.38);
   base.add(monolith);
-  landmarks.push(landmark("黑色石碑", monolith, monolithX, monolithZ, 42, 380));
-  colliders.push(circle(monolithX, monolithZ, 1.45, "黑色石碑"));
+  landmarks.push(landmark("黑色方碑", monolith, monolithX, monolithZ, 46, 420));
+  colliders.push(circle(monolithX, monolithZ, 1.9, "黑色方碑"));
+  interactables.push({
+    id: "monolith",
+    label: "黑色方碑",
+    prompt: "按 E 触碰 黑色方碑",
+    object: monolith,
+    radius: 8.2,
+    completed: false,
+  });
 
   const wreckNormal = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
   const wreckX = (wreckNormal.x / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
@@ -1473,22 +1482,20 @@ function createBlackMonolith() {
     depthWrite: false,
   });
 
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(1.08, 5.9, 0.42), monolithMat);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(2.18, 5.9, 0.36), monolithMat);
   slab.position.y = 2.95;
   slab.castShadow = true;
   slab.receiveShadow = true;
   const bevelLineA = box(0.035, 5.82, 0.045, edgeMat);
-  bevelLineA.position.set(-0.56, 2.96, -0.23);
+  bevelLineA.position.set(-1.11, 2.96, -0.2);
   const bevelLineB = bevelLineA.clone();
-  bevelLineB.position.x = 0.56;
-  const baseStone = box(1.72, 0.16, 0.94, edgeMat);
-  baseStone.position.y = 0.08;
+  bevelLineB.position.x = 1.11;
   const darkContact = new THREE.Mesh(new THREE.CircleGeometry(4.4, 36), dustMat);
   darkContact.rotation.x = -Math.PI / 2;
   darkContact.position.y = 0.012;
   darkContact.renderOrder = 1;
 
-  group.add(darkContact, baseStone, slab, bevelLineA, bevelLineB);
+  group.add(darkContact, slab, bevelLineA, bevelLineB);
   return group;
 }
 

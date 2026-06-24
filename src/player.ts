@@ -170,6 +170,7 @@ export function createMarsEngineer(): PlayerRig {
   const scaleGun = createScaleGun(graphite, hardSuit, orange, cyan);
   scaleGun.position.set(0.075, -0.96, -0.26);
   scaleGun.rotation.set(-0.38, 0.04, 0);
+  scaleGun.visible = false;
   rightArm.add(scaleGun);
 
   const leftLeg = limb(0.86, 0.14, hardSuit);

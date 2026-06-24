@@ -16,8 +16,11 @@
 - Elon 对话图：`assets/portraits/elon-dialogue-transparent.png`
 - Elon 绿幕源图：`assets/portraits/elon-dialogue-green.png`
 - 放大缩小枪概念图：`assets/concepts/scale-gun-concept.png`
+- 黑色方碑绿幕源图：`assets/portraits/monolith-dialogue-green.png`
+- 黑色方碑压缩参考图：`assets/portraits/monolith-dialogue-green.webp`
 
 这些图用于方向确认，不直接作为游戏贴图。
+网页和游戏运行时优先使用同名 WebP 压缩版本；PNG 原图主要作为后续再处理的源文件。
 
 ## 可落地规则
 
@@ -26,7 +29,7 @@
 - 建筑必须看得出功能差异：居住舱、温室、氧气站、燃料站、车库、通信塔。
 - 所有模型先用 Three.js 几何体拼装，不要求用户使用 Blender。
 - 颜色控制在少数几类：火星红、暖白舱体、石墨黑结构、橙色安全件、蓝色状态灯、温室绿色。
-- 远端异常物可以更克制：黑色石碑使用纯黑长方体、极少边线和暗色接触阴影，作为背光区域里的沉默地标。
+- 远端异常物可以更克制：黑色方碑使用宽直立矩形、纯黑表面、极少边线和暗色接触阴影，不设底座，作为背光区域里的沉默地标。
 - 福福相关飞船遗骸背景应偏 SpaceX Starship 式薄壁不锈钢工业感：圆筒壳体、环形接缝、锐利破口、尘土和少量结构梁即可；不要厚重装甲感，也不要湿漉漉、粘稠、滴落或有机感破损物。
 - 手持工具优先做成低多边形、清晰剪影的小道具；颜色沿用暖白外壳、石墨黑结构、橙色安全件和蓝色发光镜头，避免过度写实或武器化。
 
