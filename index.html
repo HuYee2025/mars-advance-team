@@ -138,6 +138,17 @@
           <button id="dialogue-continue" type="button">继续</button>
         </div>
       </section>
+      <section id="exit-confirm" aria-label="退出游戏确认" aria-hidden="true">
+        <div class="exit-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title">
+          <p class="exit-confirm-kicker">SYSTEM</p>
+          <h2 id="exit-confirm-title">要退出当前游戏吗？</h2>
+          <p class="exit-confirm-text">退出会返回主页，当前巡检进度不会保留。</p>
+          <div class="exit-confirm-actions">
+            <button id="exit-resume" class="exit-confirm-action is-selected" type="button">返回游戏</button>
+            <button id="exit-title" class="exit-confirm-action" type="button">退出游戏</button>
+          </div>
+        </div>
+      </section>
       <div class="scanline" aria-hidden="true"></div>
       <div id="joystick" aria-hidden="true">
         <div id="joystick-knob"></div>
@@ -156,7 +167,7 @@
           </div>
           <div class="guide-keyboard" aria-hidden="true">
             <div class="guide-row">
-              <div class="guide-key wide"><b>ESC</b><span>返回主页</span></div>
+              <div class="guide-key wide"><b>ESC</b><span>退出确认</span></div>
               <div class="guide-key wide"><b>· / ~</b><span>按住指南</span></div>
               <div class="guide-key wide"><b>V</b><span>隐藏界面</span></div>
               <div class="guide-key wide"><b>I</b><span>头灯</span></div>

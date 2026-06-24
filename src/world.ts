@@ -38,6 +38,30 @@ type MaintenanceBotConfig = {
   waitMax: number;
 };
 
+type WheelTrackPatch = {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  createdAt: number;
+};
+
+type DustParticle = {
+  sprite: THREE.Sprite;
+  material: THREE.SpriteMaterial;
+  velocity: THREE.Vector3;
+  age: number;
+  lifetime: number;
+  baseScale: number;
+};
+
+type RoverSurfaceEffectState = {
+  group: THREE.Group;
+  tracks: WheelTrackPatch[];
+  trackCursor: number;
+  lastTrackPosition?: THREE.Vector3;
+  dust: DustParticle[];
+  dustCursor: number;
+  dustAccumulator: number;
+};
+
 export type MarsWorld = {
   interactables: Interactable[];
   landmarks: Landmark[];
@@ -171,11 +195,18 @@ const NUMBERED_FACILITY_SCALE = 1.55;
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
+const scratchTrackNormal = new THREE.Vector3();
+const scratchTrackSide = new THREE.Vector3();
+const scratchTrackForward = new THREE.Vector3();
+const scratchTrackMatrix = new THREE.Matrix4();
 const marsAlbedoTexture = new THREE.TextureLoader().load(marsAlbedoUrl);
 marsAlbedoTexture.colorSpace = THREE.SRGBColorSpace;
 marsAlbedoTexture.wrapS = THREE.RepeatWrapping;
 marsAlbedoTexture.wrapT = THREE.ClampToEdgeWrapping;
 marsAlbedoTexture.anisotropy = 8;
+
+const wheelTrackGeometry = new THREE.PlaneGeometry(0.54, 3.15);
+let dustFogTexture: THREE.CanvasTexture | null = null;
 
 function spread(value: number) {
   return value * LAYOUT_SPREAD;
@@ -1735,7 +1766,7 @@ function createRovers(
 ) {
   const configs = [
     { centerX: 0, centerZ: 0, patrolRadius: spread(174), speed: 0.058, offset: 0.25, size: 1.08, kind: "rover", route: "meridianLoop", label: "01 车辆 电动巡检车" },
-    { centerX: 0, centerZ: 0, patrolRadius: spread(174), speed: -0.0464, offset: 4.6, size: 1.08, kind: "cargo", route: "latitudeLoop", label: "02 车辆 运输车" },
+    { centerX: -18, centerZ: -92, patrolRadius: 22, speed: -0.044, offset: 2.6, size: 1.08, kind: "cargo", route: "garageLoop", label: "02 车辆 运输车" },
     ...maintenanceBots,
   ];
   configs.forEach((config) => {
@@ -2209,6 +2240,7 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       rover.userData.planetX = (normal.x / projectedY) * PLANET_RADIUS;
       rover.userData.planetZ = (normal.z / projectedY) * PLANET_RADIUS;
       updateRoverWheelSpin(rover, elapsed, speed);
+      updateRoverSurfaceEffects(rover, elapsed, delta, speed);
       return;
     }
 
@@ -2220,7 +2252,10 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
     const yaw = kind === "bot" || route === "planetLoop" ? Math.atan2(-tangentX, -tangentZ) : -angle + (speed > 0 ? Math.PI / 2 : -Math.PI / 2);
     placeObjectOnPlanet(rover, x, z, route === "planetLoop" ? 0.08 : 0.0, yaw);
     if (kind === "bot") updateUtilityBotWalk(rover, elapsed, speed);
-    if (route === "planetLoop") updateRoverWheelSpin(rover, elapsed, speed);
+    if (kind !== "bot") {
+      updateRoverWheelSpin(rover, elapsed, speed);
+      updateRoverSurfaceEffects(rover, elapsed, delta, speed);
+    }
   });
 }
 
@@ -2395,6 +2430,199 @@ function updateRoverWheelSpin(rover: THREE.Group, elapsed: number, speed: number
   if (!wheels) return;
   const spin = elapsed * Math.abs(speed) * 36;
   for (const wheel of wheels) wheel.rotation.x = spin;
+}
+
+function updateRoverSurfaceEffects(rover: THREE.Group, elapsed: number, delta: number, speed: number) {
+  if (!rover.parent || Math.abs(speed) < 0.001) return;
+  const effects = getRoverSurfaceEffects(rover);
+  const normal = scratchTrackNormal.copy(rover.position).normalize();
+  const side = scratchTrackSide.set(1, 0, 0).applyQuaternion(rover.quaternion).addScaledVector(normal, -scratchTrackSide.dot(normal));
+  const forward = scratchTrackForward.set(0, 0, -1).applyQuaternion(rover.quaternion).addScaledVector(normal, -scratchTrackForward.dot(normal));
+  if (side.lengthSq() < 0.000001 || forward.lengthSq() < 0.000001) return;
+  side.normalize();
+  forward.normalize();
+
+  const routeDirection = speed >= 0 ? 1 : -1;
+  const trackAnchor = rover.position.clone().addScaledVector(forward, -routeDirection * 0.7);
+  if (!effects.lastTrackPosition || effects.lastTrackPosition.distanceTo(trackAnchor) > 2.35) {
+    emitWheelTrackPair(effects, elapsed, normal, side, forward, routeDirection);
+    effects.lastTrackPosition = trackAnchor;
+  }
+
+  effects.dustAccumulator += delta * (Math.abs(speed) > 0.05 ? 18 : 12);
+  while (effects.dustAccumulator >= 1) {
+    emitFineDust(effects, normal, side, forward, routeDirection, Math.abs(speed));
+    effects.dustAccumulator -= 1;
+  }
+  updateFineDust(effects, delta);
+  fadeWheelTracks(effects, elapsed);
+}
+
+function getRoverSurfaceEffects(rover: THREE.Group) {
+  const existing = rover.userData.surfaceEffects as RoverSurfaceEffectState | undefined;
+  if (existing) return existing;
+
+  const group = new THREE.Group();
+  group.name = `${rover.userData.label ?? "rover"} surface trail`;
+  rover.parent?.add(group);
+
+  const tracks: WheelTrackPatch[] = [];
+  for (let i = 0; i < 168; i += 1) {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x35160e,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    const mesh = new THREE.Mesh(wheelTrackGeometry, material);
+    mesh.visible = false;
+    mesh.renderOrder = 1;
+    group.add(mesh);
+    tracks.push({ mesh, createdAt: -Infinity });
+  }
+
+  const fogTexture = getDustFogTexture();
+  const dust: DustParticle[] = [];
+  for (let i = 0; i < 58; i += 1) {
+    const material = new THREE.SpriteMaterial({
+      map: fogTexture,
+      color: 0xc77a4d,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: true,
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.visible = false;
+    sprite.renderOrder = 2;
+    group.add(sprite);
+    dust.push({
+      sprite,
+      material,
+      velocity: new THREE.Vector3(),
+      age: 0,
+      lifetime: 1,
+      baseScale: 1,
+    });
+  }
+
+  const state: RoverSurfaceEffectState = {
+    group,
+    tracks,
+    trackCursor: 0,
+    dust,
+    dustCursor: 0,
+    dustAccumulator: 0,
+  };
+  rover.userData.surfaceEffects = state;
+  return state;
+}
+
+function emitWheelTrackPair(
+  effects: RoverSurfaceEffectState,
+  elapsed: number,
+  normal: THREE.Vector3,
+  side: THREE.Vector3,
+  forward: THREE.Vector3,
+  routeDirection: number
+) {
+  const orientedForward = forward.clone().multiplyScalar(routeDirection);
+  for (const lateral of [-1.38, 1.38]) {
+    const trackNormal = normal.clone().addScaledVector(side, lateral / PLANET_RADIUS).normalize();
+    const patch = effects.tracks[effects.trackCursor];
+    effects.trackCursor = (effects.trackCursor + 1) % effects.tracks.length;
+    patch.createdAt = elapsed;
+    patch.mesh.position.copy(planetSurfacePointFromNormal(trackNormal, 0.09));
+    patch.mesh.quaternion.setFromRotationMatrix(scratchTrackMatrix.makeBasis(side, orientedForward, trackNormal));
+    patch.mesh.scale.set(1, 0.95 + Math.random() * 0.18, 1);
+    patch.mesh.material.opacity = 0.5;
+    patch.mesh.visible = true;
+  }
+}
+
+function fadeWheelTracks(effects: RoverSurfaceEffectState, elapsed: number) {
+  for (const patch of effects.tracks) {
+    if (!patch.mesh.visible) continue;
+    const age = elapsed - patch.createdAt;
+    if (age > 42) {
+      patch.mesh.visible = false;
+      patch.mesh.material.opacity = 0;
+    } else if (age > 32) {
+      patch.mesh.material.opacity = THREE.MathUtils.lerp(0.5, 0.12, (age - 32) / 10);
+    }
+  }
+}
+
+function emitFineDust(
+  effects: RoverSurfaceEffectState,
+  normal: THREE.Vector3,
+  side: THREE.Vector3,
+  forward: THREE.Vector3,
+  routeDirection: number,
+  speedMagnitude: number
+) {
+  const particle = effects.dust[effects.dustCursor];
+  effects.dustCursor = (effects.dustCursor + 1) % effects.dust.length;
+
+  const rearDirection = forward.clone().multiplyScalar(-routeDirection);
+  const lateral = (Math.random() - 0.5) * 2.7;
+  const rearOffset = 2.2 + Math.random() * 1.9;
+  const spawnNormal = normal.clone().addScaledVector(side, lateral / PLANET_RADIUS).addScaledVector(rearDirection, rearOffset / PLANET_RADIUS).normalize();
+  particle.sprite.position.copy(planetSurfacePointFromNormal(spawnNormal, 0.62 + Math.random() * 0.62));
+  particle.velocity
+    .copy(rearDirection)
+    .multiplyScalar(0.18 + speedMagnitude * 1.1)
+    .addScaledVector(side, (Math.random() - 0.5) * 0.36)
+    .addScaledVector(normal, 0.16 + Math.random() * 0.18);
+  particle.age = 0;
+  particle.lifetime = 1.75 + Math.random() * 0.85;
+  particle.baseScale = 1.04 + Math.random() * 0.9;
+  particle.material.opacity = 0.18 + Math.random() * 0.06;
+  particle.sprite.scale.setScalar(particle.baseScale);
+  particle.sprite.visible = true;
+}
+
+function updateFineDust(effects: RoverSurfaceEffectState, delta: number) {
+  for (const particle of effects.dust) {
+    if (!particle.sprite.visible) continue;
+    particle.age += delta;
+    const progress = particle.age / particle.lifetime;
+    if (progress >= 1) {
+      particle.sprite.visible = false;
+      particle.material.opacity = 0;
+      continue;
+    }
+    particle.sprite.position.addScaledVector(particle.velocity, delta);
+    particle.velocity.multiplyScalar(0.985);
+    const scale = particle.baseScale * (1 + progress * 1.85);
+    particle.sprite.scale.set(scale, scale * 0.72, scale);
+    particle.material.opacity = (1 - THREE.MathUtils.smoothstep(progress, 0.2, 1)) * 0.24;
+  }
+}
+
+function getDustFogTexture() {
+  if (dustFogTexture) return dustFogTexture;
+  const size = 96;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0.55)");
+    gradient.addColorStop(0.34, "rgba(255, 255, 255, 0.22)");
+    gradient.addColorStop(0.72, "rgba(255, 255, 255, 0.06)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+  }
+  dustFogTexture = new THREE.CanvasTexture(canvas);
+  dustFogTexture.colorSpace = THREE.SRGBColorSpace;
+  return dustFogTexture;
 }
 
 function updateUtilityBotWalk(bot: THREE.Group, elapsed: number, speed: number) {

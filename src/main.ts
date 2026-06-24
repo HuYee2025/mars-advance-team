@@ -75,6 +75,10 @@ const dialogueStats = must<HTMLElement>("#dialogue-stats");
 const dialogueText = must<HTMLParagraphElement>("#dialogue-text");
 const dialogueChoices = must<HTMLDivElement>("#dialogue-choices");
 const dialogueContinue = must<HTMLButtonElement>("#dialogue-continue");
+const exitConfirm = must<HTMLElement>("#exit-confirm");
+const exitResumeButton = must<HTMLButtonElement>("#exit-resume");
+const exitTitleButton = must<HTMLButtonElement>("#exit-title");
+const exitConfirmButtons = [exitResumeButton, exitTitleButton] as const;
 const controlsGuide = must<HTMLElement>("#controls-guide");
 const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
@@ -260,6 +264,8 @@ let hudCollapsed = false;
 let mapOpen = false;
 let mapExpanded = false;
 let selectedTitleActionIndex = 0;
+let exitConfirmOpen = false;
+let selectedExitConfirmIndex = 0;
 let mapHoldTimer: ReturnType<typeof window.setTimeout> | null = null;
 let mapHoldTriggered = false;
 let mapZoom = 1;
@@ -545,7 +551,17 @@ function bindInput() {
     if (!button) return;
     chooseDialogue(Number(button.dataset.choiceIndex ?? 0));
   });
+  exitResumeButton.addEventListener("click", closeExitConfirm);
+  exitTitleButton.addEventListener("click", confirmExitToTitle);
+  exitConfirmButtons.forEach((button, index) => {
+    button.addEventListener("pointerenter", () => selectExitConfirmAction(index, false, true));
+    button.addEventListener("focus", () => selectExitConfirmAction(index, false, false));
+  });
   window.addEventListener("keydown", (event) => {
+    if (started && exitConfirmOpen) {
+      handleExitConfirmKey(event);
+      return;
+    }
     if (event.code === "Backquote") {
       event.preventDefault();
       showControlsGuide(true);
@@ -564,7 +580,7 @@ function bindInput() {
       return;
     }
     if (event.code === "Escape") {
-      returnToTitle();
+      openExitConfirm();
       return;
     }
     if (event.code === "KeyV") {
@@ -644,7 +660,7 @@ function bindInput() {
       : THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.12, 0.92);
   });
   window.addEventListener("wheel", (event) => {
-    if (!started) return;
+    if (!started || exitConfirmOpen) return;
     if (mapOpen) {
       event.preventDefault();
       adjustMapZoom(-Math.sign(event.deltaY));
@@ -654,7 +670,7 @@ function bindInput() {
   }, { passive: false });
 
   joystick.addEventListener("pointerdown", (event) => {
-    if (!started) return;
+    if (!started || exitConfirmOpen) return;
     mobileStick.active = true;
     mobileStick.pointerId = event.pointerId;
     joystick.setPointerCapture(event.pointerId);
@@ -669,24 +685,24 @@ function bindInput() {
 
   mobileJumpButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (!started) return;
+    if (!started || exitConfirmOpen) return;
     if (dialogueOpen) advanceDialogue();
     else interact();
   });
   mobileInteractButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (started && !dialogueOpen) jump();
+    if (started && !exitConfirmOpen && !dialogueOpen) jump();
   });
   mobileMapButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (started && !dialogueOpen) toggleMap();
+    if (started && !exitConfirmOpen && !dialogueOpen) toggleMap();
   });
   mobileLampButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (started && !dialogueOpen) toggleHelmetLamp();
+    if (started && !exitConfirmOpen && !dialogueOpen) toggleHelmetLamp();
   });
   mapRadar.addEventListener("pointerdown", (event) => {
-    if (!started || !mapOpen || dialogueOpen || !isSmallScreenMapTouch()) return;
+    if (!started || exitConfirmOpen || !mapOpen || dialogueOpen || !isSmallScreenMapTouch()) return;
     event.preventDefault();
     event.stopPropagation();
     setMapExpanded(true);
@@ -741,6 +757,76 @@ function openStorySummary() {
   window.setTimeout(() => {
     window.location.href = "/story-overview.html";
   }, 110);
+}
+
+function openExitConfirm() {
+  if (exitConfirmOpen) return;
+  exitConfirmOpen = true;
+  selectedExitConfirmIndex = 0;
+  keyState.clear();
+  resetStick();
+  clearMapHoldTimer();
+  playUiBeep();
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+  exitConfirm.classList.add("is-visible");
+  exitConfirm.setAttribute("aria-hidden", "false");
+  document.body.classList.add("exit-confirm-open");
+  updateExitConfirmSelection(true);
+}
+
+function closeExitConfirm() {
+  if (!exitConfirmOpen) return;
+  exitConfirmOpen = false;
+  keyState.clear();
+  playUiBeep();
+  exitConfirm.classList.remove("is-visible");
+  exitConfirm.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("exit-confirm-open");
+  renderer.domElement.focus();
+}
+
+function confirmExitToTitle() {
+  if (!exitConfirmOpen) return;
+  playUiBeep();
+  exitConfirmOpen = false;
+  exitConfirm.classList.remove("is-visible");
+  exitConfirm.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("exit-confirm-open");
+  returnToTitle();
+}
+
+function handleExitConfirmKey(event: KeyboardEvent) {
+  event.preventDefault();
+  if (event.code === "Escape") {
+    closeExitConfirm();
+    return;
+  }
+  if (event.code === "ArrowLeft" || event.code === "ArrowUp" || event.code === "ArrowRight" || event.code === "ArrowDown") {
+    const direction = event.code === "ArrowLeft" || event.code === "ArrowUp" ? -1 : 1;
+    const nextIndex = (selectedExitConfirmIndex + direction + exitConfirmButtons.length) % exitConfirmButtons.length;
+    selectExitConfirmAction(nextIndex, true, true);
+    return;
+  }
+  if (event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space") {
+    if (selectedExitConfirmIndex === 0) closeExitConfirm();
+    else confirmExitToTitle();
+  }
+}
+
+function selectExitConfirmAction(index: number, shouldFocus = false, shouldBeep = false) {
+  const changed = selectedExitConfirmIndex !== index;
+  selectedExitConfirmIndex = index;
+  updateExitConfirmSelection(shouldFocus);
+  if (changed && shouldBeep) playUiBeep();
+}
+
+function updateExitConfirmSelection(shouldFocus = false) {
+  exitConfirmButtons.forEach((button, index) => {
+    const selected = index === selectedExitConfirmIndex;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-current", selected ? "true" : "false");
+  });
+  if (shouldFocus) exitConfirmButtons[selectedExitConfirmIndex]?.focus();
 }
 
 function toggleHud() {
@@ -890,6 +976,7 @@ function startGame() {
   orbitYawOffset = 0;
   mapOpen = false;
   showUnnumberedOnMap = false;
+  exitConfirmOpen = false;
   helmetLampOn = false;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -932,6 +1019,8 @@ function returnToTitle() {
   hudCollapsed = false;
   mapOpen = false;
   mapExpanded = false;
+  exitConfirmOpen = false;
+  selectedExitConfirmIndex = 0;
   showUnnumberedOnMap = false;
   helmetLampOn = false;
   pendingMotherCall = null;
@@ -947,6 +1036,9 @@ function returnToTitle() {
   resetStick();
   updateHelmetLamp();
   document.body.classList.remove("is-playing", "hud-collapsed", "map-open", "map-expanded");
+  exitConfirm.classList.remove("is-visible");
+  exitConfirm.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("exit-confirm-open");
   controlsGuide.classList.remove("is-visible");
   controlsGuide.setAttribute("aria-hidden", "true");
   hudToggle.setAttribute("aria-pressed", "false");
