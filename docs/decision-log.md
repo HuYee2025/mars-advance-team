@@ -2,6 +2,27 @@
 
 ## 2026-06-24
 
+### 新增 Elon 实验性 AI 角色设定
+
+原因：
+
+用户希望创建一个名为 Elon 的新角色，用来测试未来“固定知识库 + 开放式 AI 问答”的对话能力。该角色需要借鉴本地 `elon-musk-perspective` 技能中的工程判断框架，但不能在本次直接进入游戏场景、模型或代码。
+
+决策：
+
+- 新增 `docs/lore/elon.md`，作为 Elon 的角色卡。
+- 新增 `docs/ai/elon-agent-design.md`，作为未来 AI 对话接口、prompt、知识库和边界规则的设计草案。
+- Elon 定位为 ARES 计划构建的实验性工程顾问 AI，不是现实中的 Elon Musk 本人，也不是数字复活。
+- Elon 的思维框架采用第一性原理、白痴指数、五步算法、垂直整合、快速迭代和多行星文明尺度。
+- Elon 和 Mother 不构成敌对关系：Mother 负责安全、保护和长期稳定；Elon 负责挑战默认假设；Alex 保留现场决策权。
+- 当前只创造设定和 AI 对话设计，暂不创建游戏内人物模型、场景实体或代码实现。
+
+已登记文件：
+
+- `docs/lore/elon.md`
+- `docs/ai/elon-agent-design.md`
+- `docs/production-blueprint.md`
+
 ### GitHub 发布同步入口
 
 原因：
@@ -40,6 +61,142 @@
 
 - `docs/story/core-story-v1.md`
 - `docs/production-blueprint.md`
+
+### Elon支线任务与固定对白池
+
+原因：
+
+用户进一步明确：Elon当前虽然是实验型开放角色，但第一阶段仍要依靠固定知识库和大量固定对白互动。玩家需要在 `03 飞船 返回飞船` 上找到它，但 3 号飞船升降梯初始无法运行，必须先完成修复任务。
+
+决策：
+
+- Elon 在游戏内本名就是 `Elon`，只是同名，不指向现实中的 Elon Musk 本人，也不是数字复活。
+- Elon 可被理解为接近马斯克式思维的工程思想人格或“精神体式”顾问，但不代表现实人物发言。
+- Elon 的位置设在 `03 飞船 返回飞船` 升降平台到达顶端后的固定高空廊道，靠近飞船舱门处。
+- `03 飞船 返回飞船` 内舱不可进入，玩家只在外部高空廊道靠近舱门处与 Elon 互动。
+- 新增解锁支线：玩家需要寻找执行器驱动轴、高功率继电器、姿态锁止传感器、低温润滑胶囊，并在科研舱生成校准密钥，修复升降梯后才能见到 Elon。
+- 升降梯修好后，玩家后续可以随时乘坐 3 号飞船升降梯，到达上层高空廊道与 Elon 交流。
+
+后续修正：
+
+- 用户明确要求 Elon 不在飞船内部，也不是站在升降平台本身上，而是在升降平台到达顶端后的高空廊道，靠近飞船舱门处。
+- `03 飞船 返回飞船` 内舱对所有人不可进入；当前实现中靠近舱门时触发 Elon 对话，不进入飞船内舱。
+- 新增大型固定对白池草案。每组对白有 ID，后续实现时应优先播放未读内容，避免玩家每次聊天都重复。
+- 该阶段先写脚本和设计文档；后续已接入游戏代码和人物模型，见下方最新记录。
+
+已登记文件：
+
+- `docs/tasks/elon-ship-03-elevator-sidequest.md`
+- `docs/dialogue/elon-fixed-dialogue-draft-v1.md`
+- `docs/lore/elon.md`
+- `docs/ai/elon-agent-design.md`
+- `docs/production-blueprint.md`
+
+### Elon 角色形象资产入库
+
+原因：
+
+用户确认 Elon 的角色形象方向：站立的人形机器狗，身体是人形宇航服结构，头部像机器狗。该图需要用于后续游戏对话区制作。
+
+决策：
+
+- 确认 Elon 第一版形象为人形机器狗，不使用真人脸，不指向现实人物。
+- 保存完整概念图到 `assets/concepts/elon-character-concept.png`。
+- 保存对话区引用图到 `assets/portraits/elon-dialogue.png`。
+- 删除重复临时副本，只保留上述两张项目资产。
+- `src/dialogue/dialogues.ts` 中的 Elon 对话角色已从临时 SVG 占位图切换为真实对话图。
+
+已登记文件：
+
+- `assets/concepts/elon-character-concept.png`
+- `assets/portraits/elon-dialogue.png`
+- `assets/portraits/elon-dialogue-transparent.png`
+- `src/dialogue/dialogues.ts`
+- `docs/lore/elon.md`
+- `docs/art-direction.md`
+
+补充：
+
+- 新增 `assets/portraits/elon-dialogue-green.png`，作为绿色背景版本，方便后续抠图或制作透明对话立绘。
+- 当前游戏已从绿幕源图生成透明对话图 `assets/portraits/elon-dialogue-transparent.png`；绿色残边已压为深灰，运行时使用透明版。
+
+### Elon 游戏内模型与高空廊道站位接入
+
+原因：
+
+用户要求 Elon 真正出现在当前游戏中，并强调位置不是飞船内部，也不是升降平台本身，而是升降平台到达顶端后的高空廊道，靠近飞船舱门处；模型需要参考完整身体设定，约 2 米高，略高于 Alex，并看向火星基地。
+
+决策：
+
+- 03 飞船升降梯修好后，玩家可上行到固定高空廊道，与 Elon 对话。
+- Elon 的 3D 模型使用简洁几何体重建：机器狗头部、人形宇航服身体、浅色装甲、深色关节、橙色点缀和蓝色发光传感器。
+- Elon 挂在升降梯固定结构上，不挂在移动升降平台车厢上；站位靠近飞船舱门侧，身体朝向基地方向。
+- 03 飞船内舱仍不可进入；到达舱门位置时触发 Elon 对话，而不是进入飞船。
+- 对话角色图使用由绿幕源图处理出的 `assets/portraits/elon-dialogue-transparent.png`。
+
+已登记文件：
+
+- `src/world.ts`
+- `src/main.ts`
+- `src/dialogue/dialogues.ts`
+- `docs/lore/elon.md`
+- `docs/tasks/elon-ship-03-elevator-sidequest.md`
+
+### 飞船内舱视角与几何体简化
+
+原因：
+
+用户反馈飞船内舱只能向前和向下看，无法抬头看到飞船内部顶端；同时内舱里有几块额外几何体影响观察。
+
+决策：
+
+- 飞船内舱移除控制台、侧边箱体、后部封板等额外几何体。
+- 保留舱体圆筒、结构肋骨、地板和舱顶灯条，用更清爽的结构表达飞船内部。
+- 飞船内第一人称视角放宽向上 pitch 限制，让玩家可以抬头看到舱顶。
+
+已登记文件：
+
+- `src/world.ts`
+- `src/main.ts`
+
+### 核心故事向理性惊奇方向优化，并新增机器人对白草案
+
+原因：
+
+用户希望故事背景更接近阿瑟·克拉克式的硬科幻气质：宏观、理性、带有宇宙尺度的惊奇；同时当前游戏内机器人对白过短，需要扩展为 2-3 轮对话，但暂时不接入代码。
+
+决策：
+
+- 新增 `docs/story/core-story-v2-rational-wonder.md`，作为核心故事背景 v2。
+- v2 不直接模仿具体文本，而是借鉴“理性惊奇”方向：更克制、更宏观、更强调技术系统和宇宙尺度。
+- 新增 `docs/dialogue/robot-dialogue-draft-v1.md`，覆盖 15 个现有设施/飞船/阵列/任务机器人。
+- 每个机器人对白保持执行单元气质，不写成复杂人格，但扩展为 2-3 轮，补充设施功能、当前风险和火星工程逻辑。
+- 本次只写文档草案，不修改游戏代码。
+
+已登记文件：
+
+- `docs/story/core-story-v2-rational-wonder.md`
+- `docs/dialogue/robot-dialogue-draft-v1.md`
+- `docs/production-blueprint.md`
+
+### 将核心故事 v2 和机器人对白草案接入当前游戏
+
+原因：
+
+用户希望把“游戏编剧”对话中已经形成的最新故事背景和机器人对白，直接应用到当前游戏，而不是继续停留在文档草案。
+
+决策：
+
+- 保留 `docs/story/core-story-v2-rational-wonder.md` 作为当前剧情气质基准。
+- 将 `docs/dialogue/robot-dialogue-draft-v1.md` 中 15 组机器人对白接入 `src/dialogue/dialogues.ts`。
+- 运行时根据机器人 `userData.label` 匹配对应对白：3 艘飞船维护工、9 个建筑维修工、3 个太阳能阵列维修工。
+- 对话系统新增普通 `next` 推进能力，让非选项对白可以自然进入 2-3 轮。
+- 福福相关提示改为“隔离、扫描、确认安全、进入观察名单”的工程化善意逻辑。
+
+实现边界：
+
+- 本次不新增 3D 模型、不接入 AI 后端、不处理仍在进行中的 Elon 角色设定。
+- A-12、A-01、P-03 的专属任务对白仍主要通过主线/支线提示呈现，后续可再升级为独立可交互对象。
 
 ### 任务扩展采用 3 条主线任务包 + 3 条支线任务包
 

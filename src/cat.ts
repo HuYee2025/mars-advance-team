@@ -53,22 +53,32 @@ export function createFufuCat(): FufuCatRig {
 
   const black = makeMaterial(0x101214, 0.82, 0.04);
   const white = makeMaterial(0xf4efe6, 0.78, 0.02);
+  const suitWhite = makeMaterial(0xe9edf0, 0.62, 0.06);
+  const graphite = makeMaterial(0x24282c, 0.55, 0.18);
   const pink = makeMaterial(0xc77a70, 0.82, 0.02);
   const yellow = makeMaterial(0xf4e44a, 0.38, 0.04, 0xb0a114);
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0xc8f4ff,
+    roughness: 0.08,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+    flatShading: true,
+  });
   const cyan = new THREE.LineBasicMaterial({ color: 0x9ff7ff, transparent: true, opacity: 0.92 });
 
-  const body = ellipsoid(1, black, [0.3, 0.2, 0.64]);
+  const body = ellipsoid(1, suitWhite, [0.34, 0.23, 0.68]);
   body.position.y = 0.42;
   visual.add(body);
 
   const chest = ellipsoid(1, white, [0.2, 0.18, 0.34]);
-  chest.position.set(0, 0.43, -0.28);
+  chest.position.set(0, 0.44, -0.3);
   visual.add(chest);
 
-  const bellyPatch = ellipsoid(1, white, [0.16, 0.1, 0.22]);
-  bellyPatch.position.set(0.13, 0.28, 0.12);
-  bellyPatch.rotation.z = -0.28;
-  visual.add(bellyPatch);
+  const chestPanel = ellipsoid(1, graphite, [0.09, 0.055, 0.03]);
+  chestPanel.position.set(0, 0.5, -0.52);
+  visual.add(chestPanel);
 
   const head = new THREE.Group();
   head.position.set(0, 0.73, -0.55);
@@ -103,10 +113,6 @@ export function createFufuCat(): FufuCatRig {
     const eye = ellipsoid(1, yellow, [0.045, 0.06, 0.018]);
     eye.position.set(side * 0.088, 0.06, -0.22);
     head.add(eye);
-
-    const frontPawPatch = ellipsoid(1, white, [0.05, 0.04, 0.07]);
-    frontPawPatch.position.set(side * 0.16, 0.08, -0.46);
-    visual.add(frontPawPatch);
   }
 
   const whiskerSets = [
@@ -119,26 +125,41 @@ export function createFufuCat(): FufuCatRig {
     head.add(whisker([new THREE.Vector3(0.07, y, -0.2), new THREE.Vector3(0.34, endY, endZ)], cyan));
   }
 
-  const frontLeftLeg = makeLeg(-0.16, -0.32, white);
-  const frontRightLeg = makeLeg(0.16, -0.32, white);
-  const rearLeftLeg = makeLeg(-0.18, 0.28, black, white);
-  const rearRightLeg = makeLeg(0.18, 0.28, black, white);
+  const helmet = mesh(new THREE.SphereGeometry(0.42, 14, 10), glass);
+  helmet.position.set(0, 0.03, -0.02);
+  helmet.scale.set(1.04, 1, 1.02);
+  helmet.castShadow = false;
+  head.add(helmet);
+
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.035, 8, 18), graphite);
+  collar.position.set(0, 0.62, -0.5);
+  collar.rotation.x = Math.PI / 2;
+  collar.castShadow = true;
+  visual.add(collar);
+
+  const frontLeftLeg = makeLeg(-0.16, -0.32, suitWhite, graphite);
+  const frontRightLeg = makeLeg(0.16, -0.32, suitWhite, graphite);
+  const rearLeftLeg = makeLeg(-0.18, 0.28, suitWhite, graphite);
+  const rearRightLeg = makeLeg(0.18, 0.28, suitWhite, graphite);
   visual.add(frontLeftLeg, frontRightLeg, rearLeftLeg, rearRightLeg);
 
   const tail = new THREE.Group();
   tail.position.set(0, 0.48, 0.58);
-  const tailMesh = capsule(0.045, 0.62, black);
+  const tailMesh = capsule(0.048, 0.62, suitWhite);
   tailMesh.position.set(0.04, 0.03, 0.3);
   tailMesh.rotation.x = Math.PI / 2.25;
   tailMesh.rotation.z = -0.34;
+  const tailTip = ellipsoid(1, black, [0.055, 0.055, 0.085]);
+  tailTip.position.set(0.08, -0.23, 0.55);
   tail.add(tailMesh);
+  tail.add(tailTip);
   visual.add(tail);
 
-  const shoulderPatch = ellipsoid(1, black, [0.12, 0.12, 0.18]);
-  shoulderPatch.position.set(-0.16, 0.56, -0.16);
-  visual.add(shoulderPatch);
+  const backPack = ellipsoid(1, graphite, [0.18, 0.14, 0.12]);
+  backPack.position.set(0, 0.48, 0.46);
+  visual.add(backPack);
 
-  group.scale.setScalar(0.78);
+  group.scale.setScalar(1.38);
   return { group, visual, head, tail, frontLeftLeg, frontRightLeg, rearLeftLeg, rearRightLeg };
 }
 
