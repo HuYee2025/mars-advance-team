@@ -107,8 +107,8 @@ body {
   padding: 0 22px;
   border: 0;
   border-radius: 0;
-  background: #d98236;
-  color: #1d0d08;
+  background: rgba(15, 20, 22, 0.82);
+  color: #f7efe3;
   font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
   font-size: 14px;
   font-weight: 800;
@@ -116,20 +116,25 @@ body {
   cursor: pointer;
   clip-path: polygon(var(--corner-cut) 0, calc(100% - var(--corner-cut)) 0, 100% var(--corner-cut), 100% calc(100% - var(--corner-cut)), calc(100% - var(--corner-cut)) 100%, var(--corner-cut) 100%, 0 calc(100% - var(--corner-cut)), 0 var(--corner-cut));
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .title-action::before {
   content: "";
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(255, 214, 158, 0.72);
+  border: 1px solid rgba(102, 217, 255, 0.42);
   clip-path: inherit;
   pointer-events: none;
 }
 
 .title-action-primary {
-  background: #d98236;
-  color: #1d0d08;
+  background: rgba(15, 20, 22, 0.82);
+  color: #f7efe3;
 }
 
 .title-action-secondary {
@@ -138,12 +143,25 @@ body {
   border: 1px solid rgba(247, 239, 227, 0.24);
 }
 
-.title-action-secondary::before {
-  border-color: rgba(102, 217, 255, 0.42);
+.title-action:hover {
+  background: #d98236;
+  color: #1d0d08;
+  box-shadow: 0 18px 46px rgba(217, 130, 54, 0.24);
+  transform: translateY(-1px);
+}
+
+.title-action:hover::before {
+  border-color: rgba(255, 214, 158, 0.72);
+}
+
+.title-action.is-title-selected {
+  box-shadow:
+    0 0 0 2px rgba(102, 217, 255, 0.58),
+    0 16px 42px rgba(0, 0, 0, 0.28);
 }
 
 .title-action:focus-visible {
-  outline: 2px solid #ffe0ac;
+  outline: 2px solid rgba(102, 217, 255, 0.82);
   outline-offset: 4px;
 }
 

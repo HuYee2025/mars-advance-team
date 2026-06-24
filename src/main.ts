@@ -52,6 +52,7 @@ const mobileLampButton = must<HTMLButtonElement>("#mobile-lamp");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const enterButton = must<HTMLButtonElement>("#enter-base");
 const storySummaryButton = must<HTMLButtonElement>("#story-summary");
+const titleActionButtons = [enterButton, storySummaryButton] as const;
 const hudToggle = must<HTMLButtonElement>("#hud-toggle");
 const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const missionText = must<HTMLDivElement>("#mission-text");
@@ -258,6 +259,7 @@ let messageUntil = 0;
 let hudCollapsed = false;
 let mapOpen = false;
 let mapExpanded = false;
+let selectedTitleActionIndex = 0;
 let mapHoldTimer: ReturnType<typeof window.setTimeout> | null = null;
 let mapHoldTriggered = false;
 let mapZoom = 1;
@@ -512,17 +514,21 @@ function createRadialShadowTexture() {
 }
 
 function bindInput() {
+  updateTitleActionSelection();
   enterButton.addEventListener("click", startGame);
   enterButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     event.stopPropagation();
     startGame();
   });
-  storySummaryButton.addEventListener("click", () => {
-    playUiBeep();
-    window.setTimeout(() => {
-      window.location.href = "/story-overview.html";
-    }, 110);
+  storySummaryButton.addEventListener("click", openStorySummary);
+  titleActionButtons.forEach((button, index) => {
+    button.addEventListener("pointerenter", () => {
+      selectTitleAction(index, false, true);
+    });
+    button.addEventListener("focus", () => {
+      selectTitleAction(index, false, false);
+    });
   });
   titleScreen.addEventListener("pointerup", (event) => {
     if (started) return;
@@ -545,10 +551,7 @@ function bindInput() {
       showControlsGuide(true);
       return;
     }
-    if (event.code === "Enter" && !started) {
-      startGame();
-      return;
-    }
+    if (!started && handleTitleScreenKey(event)) return;
     if (!started) return;
     if (dialogueOpen) {
       handleDialogueKey(event);
@@ -691,6 +694,53 @@ function bindInput() {
 
   window.addEventListener("pointerdown", startBackgroundMusic, { once: true, passive: true });
   window.addEventListener("keydown", startBackgroundMusic, { once: true });
+}
+
+function handleTitleScreenKey(event: KeyboardEvent) {
+  if (event.code === "ArrowUp" || event.code === "ArrowDown") {
+    event.preventDefault();
+    const direction = event.code === "ArrowUp" ? -1 : 1;
+    const nextIndex = (selectedTitleActionIndex + direction + titleActionButtons.length) % titleActionButtons.length;
+    selectTitleAction(nextIndex, true, true);
+    return true;
+  }
+  if (event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space") {
+    event.preventDefault();
+    activateSelectedTitleAction();
+    return true;
+  }
+  return false;
+}
+
+function selectTitleAction(index: number, shouldFocus = false, shouldBeep = false) {
+  const changed = selectedTitleActionIndex !== index;
+  selectedTitleActionIndex = index;
+  updateTitleActionSelection(shouldFocus);
+  if (changed && shouldBeep) playUiBeep();
+}
+
+function updateTitleActionSelection(shouldFocus = false) {
+  titleActionButtons.forEach((button, index) => {
+    const selected = index === selectedTitleActionIndex;
+    button.classList.toggle("is-title-selected", selected);
+    button.setAttribute("aria-current", selected ? "true" : "false");
+  });
+  if (shouldFocus) titleActionButtons[selectedTitleActionIndex]?.focus();
+}
+
+function activateSelectedTitleAction() {
+  if (selectedTitleActionIndex === 0) {
+    startGame();
+    return;
+  }
+  openStorySummary();
+}
+
+function openStorySummary() {
+  playUiBeep();
+  window.setTimeout(() => {
+    window.location.href = "/story-overview.html";
+  }, 110);
 }
 
 function toggleHud() {
@@ -903,6 +953,8 @@ function returnToTitle() {
   hudToggle.setAttribute("aria-label", "隐藏界面信息");
   updateMapButtonState();
   mapOverlay.setAttribute("aria-hidden", "true");
+  selectedTitleActionIndex = 0;
+  updateTitleActionSelection();
   titleScreen.classList.remove("is-hidden");
   dialogueBox.innerHTML = "";
   promptBox.textContent = "";

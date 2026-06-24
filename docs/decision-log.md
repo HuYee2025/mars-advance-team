@@ -17,11 +17,14 @@
 - 色彩基于火星尘土、薄壁不锈钢、氧气 HUD 蓝和温室绿，避免模板化单色科幻风。
 - 核心角色卡增加身份标签，章节区改为任务记录式卡片，正文区强化阅读节奏和章节索引。
 - 新增 `assets/portraits/fufu-dialogue.png`，用于福福角色卡深色立绘展示；原 `assets/concepts/fufu/fufu-astronaut-concept.png` 继续作为飞船残骸场景概念图。
+- 章节索引增加滚动同步高亮：阅读到对应正文段落时，右侧导航自动标记当前章节。
 - 移动端需要保持标题、状态条、角色卡和正文无横向溢出。
 
 已登记文件：
 
 - `docs/story/core-story-v2-visual.html`
+- `public/story-overview.html`
+- `public/story-assets/fufu-dialogue.png`
 - `assets/portraits/fufu-dialogue.png`
 - `docs/lore/fufu.md`
 - `docs/art-direction.md`
@@ -274,6 +277,8 @@
 - 首页标题区新增“故事概要”按钮，位于“进入基地”下方。
 - “故事概要”点击后先播放一个短促“滴”声，再跳转到 `/story-overview.html`。
 - “进入基地”开始进入游戏时也播放同一类短促“滴”声，作为按钮转换反馈。
+- 首页两个按钮默认都使用深色描边样式，只有鼠标悬停时切换为橙色填充样式。
+- 标题页默认选中“进入基地”；支持键盘上下键或鼠标悬停切换当前按钮，切换时播放短促“滴”声，按 Enter 或 Space 执行当前选中项。
 - 滴声使用 Web Audio 程序合成，不新增音频文件。
 - 故事概要网页由 `docs/story/core-story-v2-visual.html` 发布副本生成，运行时文件放在 `public/story-overview.html`。
 - 故事页依赖图片复制到 `public/story-assets/`，确保构建部署后仍可访问。
