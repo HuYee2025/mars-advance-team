@@ -9,6 +9,7 @@ export type PlayerRig = {
   rightLeg: THREE.Group;
   helmet: THREE.Mesh;
   visor: THREE.Mesh;
+  jetpackFlames: THREE.Group;
 };
 
 function makeMaterial(color: number, roughness = 0.72, metalness = 0.08, emissive = 0x000000) {
@@ -105,6 +106,36 @@ export function createMarsEngineer(): PlayerRig {
   packTankB.position.x = 0.18;
   visual.add(packTankA, packTankB);
 
+  const jetpackFlames = new THREE.Group();
+  jetpackFlames.name = "Jetpack blue flames";
+  jetpackFlames.visible = false;
+  const outerFlameMat = new THREE.MeshBasicMaterial({
+    color: 0x2bbcff,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const innerFlameMat = new THREE.MeshBasicMaterial({
+    color: 0xd7f6ff,
+    transparent: true,
+    opacity: 0.82,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  for (const x of [-0.18, 0.18]) {
+    const flame = new THREE.Group();
+    flame.position.set(x, 0.56, 0.53);
+    const outer = new THREE.Mesh(new THREE.ConeGeometry(0.115, 0.48, 10), outerFlameMat);
+    outer.rotation.x = Math.PI;
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.32, 8), innerFlameMat);
+    inner.rotation.x = Math.PI;
+    inner.position.y = 0.02;
+    flame.add(outer, inner);
+    jetpackFlames.add(flame);
+  }
+  visual.add(jetpackFlames);
+
   const hoseCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-0.22, 1.48, 0.41),
     new THREE.Vector3(-0.55, 1.48, 0.2),
@@ -146,18 +177,24 @@ export function createMarsEngineer(): PlayerRig {
   shoulderB.position.x = 0.49;
   visual.add(shoulderA, shoulderB);
 
-  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor };
+  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor, jetpackFlames };
 }
 
-export function updateMarsEngineer(rig: PlayerRig, speed: number, elapsed: number) {
+export function updateMarsEngineer(rig: PlayerRig, speed: number, elapsed: number, flying = false, thrusting = false) {
   const moving = speed > 0.2;
   const stride = moving ? Math.sin(elapsed * 8.6) : Math.sin(elapsed * 1.8) * 0.12;
   const amount = moving ? 0.42 : 0.06;
 
-  rig.visual.position.y = moving ? Math.abs(Math.sin(elapsed * 8.6)) * 0.035 : Math.sin(elapsed * 1.5) * 0.012;
+  rig.visual.position.y = flying ? Math.sin(elapsed * 9.0) * 0.018 : moving ? Math.abs(Math.sin(elapsed * 8.6)) * 0.035 : Math.sin(elapsed * 1.5) * 0.012;
   rig.leftArm.rotation.x = stride * amount;
   rig.rightArm.rotation.x = -stride * amount;
   rig.leftLeg.rotation.x = -stride * amount * 0.92;
   rig.rightLeg.rotation.x = stride * amount * 0.92;
   rig.helmet.rotation.y = moving ? stride * 0.035 : Math.sin(elapsed * 0.9) * 0.035;
+  rig.jetpackFlames.visible = flying;
+  rig.jetpackFlames.children.forEach((flame, index) => {
+    const pulse = 0.9 + Math.sin(elapsed * 22 + index * 1.7) * 0.12;
+    const thrustScale = thrusting ? 1.2 : 0.84;
+    flame.scale.set(0.86 + pulse * 0.1, thrustScale * pulse, 0.86 + pulse * 0.1);
+  });
 }

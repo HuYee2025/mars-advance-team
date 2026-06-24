@@ -175,6 +175,10 @@ const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.35;
 const STAMINA_MAX = 100;
 const STAMINA_DRAIN_PER_SECOND = 8;
 const STAMINA_RECOVER_PER_SECOND = 7;
+const MYSTERY_CODE = "HUYEE";
+const FLIGHT_ASCEND_SPEED = 8.2;
+const FLIGHT_MIN_ALTITUDE = 1.2;
+const FLIGHT_MAX_ALTITUDE = 96;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
 
 type MainMissionStep =
@@ -283,6 +287,8 @@ let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
 let fufuRescued = false;
+let mysteryCodeProgress = "";
+let flightModeEnabled = false;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
@@ -558,6 +564,7 @@ function bindInput() {
     button.addEventListener("focus", () => selectExitConfirmAction(index, false, false));
   });
   window.addEventListener("keydown", (event) => {
+    if (handleMysteryCodeKey(event)) return;
     if (started && exitConfirmOpen) {
       handleExitConfirmKey(event);
       return;
@@ -607,7 +614,8 @@ function bindInput() {
     }
     if (event.code === "Space") {
       event.preventDefault();
-      jump();
+      if (flightModeEnabled && canUseFlightMode()) keyState.add(event.code);
+      else jump();
       return;
     }
     if (event.code === "Equal" || event.code === "NumpadAdd") {
@@ -710,6 +718,44 @@ function bindInput() {
 
   window.addEventListener("pointerdown", startBackgroundMusic, { once: true, passive: true });
   window.addEventListener("keydown", startBackgroundMusic, { once: true });
+}
+
+function handleMysteryCodeKey(event: KeyboardEvent) {
+  if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return false;
+  const key = event.key.toUpperCase();
+  if (!/^[A-Z]$/.test(key)) return false;
+
+  const next = `${mysteryCodeProgress}${key}`;
+  if (MYSTERY_CODE.startsWith(next)) {
+    mysteryCodeProgress = next;
+    event.preventDefault();
+    if (mysteryCodeProgress === MYSTERY_CODE) {
+      mysteryCodeProgress = "";
+      setFlightModeEnabled(!flightModeEnabled);
+    }
+    return true;
+  }
+
+  mysteryCodeProgress = MYSTERY_CODE.startsWith(key) ? key : "";
+  if (mysteryCodeProgress) event.preventDefault();
+  return mysteryCodeProgress.length > 0;
+}
+
+function setFlightModeEnabled(enabled: boolean) {
+  flightModeEnabled = enabled;
+  playDingDong();
+  if (enabled && started && canUseFlightMode()) {
+    grounded = false;
+    verticalVelocity = 0;
+    playerAltitudeOffset = Math.max(playerAltitudeOffset, FLIGHT_MIN_ALTITUDE);
+  }
+  if (!enabled) {
+    keyState.delete("Space");
+  }
+}
+
+function canUseFlightMode() {
+  return started && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
 }
 
 function handleTitleScreenKey(event: KeyboardEvent) {
@@ -1098,7 +1144,7 @@ function animate() {
   updateMap();
   updateMissionState();
   updateReadouts();
-  updateMarsEngineer(playerRig, speed, elapsedTime);
+  updateMarsEngineer(playerRig, speed, elapsedTime, flightModeEnabled && canUseFlightMode(), keyState.has("Space"));
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
   updatePlayerContactShadow();
   updateHelmetLamp();
@@ -1182,6 +1228,32 @@ function playUiBeep() {
   oscillator.stop(now + 0.1);
 }
 
+function playDingDong() {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+
+  const playTone = (frequency: number, start: number, duration: number, volume: number) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  };
+
+  const now = context.currentTime;
+  playTone(1174.66, now, 0.15, 0.09);
+  playTone(783.99, now + 0.17, 0.22, 0.08);
+}
+
 function updateBackgroundMusicFade() {
   if (backgroundMusic.paused || !Number.isFinite(backgroundMusic.duration) || backgroundMusic.duration <= MUSIC_LOOP_FADE_SECONDS) {
     return;
@@ -1249,6 +1321,9 @@ function updatePlayer(delta: number) {
   if (ridingElevator) {
     return updateElevatorRide(delta, ridingElevator);
   }
+  if (flightModeEnabled && canUseFlightMode()) {
+    return updateFlightPlayer(delta);
+  }
 
   const surfaceNormal = playerNormal.clone();
   const { turnInput, forwardInput } = readMovementInput();
@@ -1282,6 +1357,37 @@ function updatePlayer(delta: number) {
   }
   placePlayerOnPlanet();
   return playerVelocity.length();
+}
+
+function updateFlightPlayer(delta: number) {
+  const surfaceNormal = playerNormal.clone();
+  const { turnInput, forwardInput } = readMovementInput();
+
+  const turnRate = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 2.15 : 1.65;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(surfaceNormal, turnInput * turnRate * delta).projectOnPlane(surfaceNormal).normalize();
+  }
+
+  const flightSpeed = keyState.has("ShiftLeft") || keyState.has("ShiftRight") ? 18 : 11.5;
+  const desired = playerForward.clone().multiplyScalar(flightSpeed * forwardInput);
+  playerVelocity.lerp(desired, 1 - Math.pow(0.035, delta));
+  playerVelocity.projectOnPlane(surfaceNormal);
+
+  const angularDistance = playerVelocity.length() * delta / Math.max(PLANET_RADIUS + playerAltitudeOffset, 1);
+  if (angularDistance > 0.00001) {
+    playerNormal.addScaledVector(playerVelocity.clone().normalize(), angularDistance).normalize();
+    playerForward.projectOnPlane(playerNormal).normalize();
+  }
+
+  if (keyState.has("Space")) {
+    playerAltitudeOffset = Math.min(FLIGHT_MAX_ALTITUDE, playerAltitudeOffset + FLIGHT_ASCEND_SPEED * delta);
+  } else {
+    playerAltitudeOffset = Math.max(FLIGHT_MIN_ALTITUDE, playerAltitudeOffset);
+  }
+  grounded = false;
+  verticalVelocity = 0;
+  placePlayerOnPlanet();
+  return playerVelocity.length() + (keyState.has("Space") ? FLIGHT_ASCEND_SPEED : 0);
 }
 
 function updateHabitatInterior(delta: number) {
