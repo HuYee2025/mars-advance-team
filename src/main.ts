@@ -45,10 +45,9 @@ const sceneRoot = must<HTMLDivElement>("#scene-root");
 const labelsRoot = must<HTMLDivElement>("#labels");
 const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
-const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
-const mobileInteractButton = must<HTMLButtonElement>("#mobile-interact");
-const mobileMapButton = must<HTMLButtonElement>("#mobile-map");
+const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
 const mobileLampButton = must<HTMLButtonElement>("#mobile-lamp");
+const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const enterButton = must<HTMLButtonElement>("#enter-base");
 const storySummaryButton = must<HTMLButtonElement>("#story-summary");
@@ -58,8 +57,6 @@ const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const missionText = must<HTMLDivElement>("#mission-text");
 const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
-const interactionChoiceA = must<HTMLElement>("#interaction-choice-a");
-const interactionChoiceB = must<HTMLElement>("#interaction-choice-b");
 const dialogueBox = must<HTMLDivElement>("#dialogue-box");
 const dialogueStage = must<HTMLElement>("#dialogue-stage");
 const dialogueLeftSlot = must<HTMLDivElement>(".dialogue-portrait-left");
@@ -562,6 +559,15 @@ function bindInput() {
     if (!button) return;
     chooseDialogue(Number(button.dataset.choiceIndex ?? 0));
   });
+  interactionChoice.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest<HTMLButtonElement>("button[data-choice-index]");
+    if (!button) return;
+    selectedInteractionIndex = Number(button.dataset.choiceIndex ?? 0);
+    renderInteractionChoice();
+    executeSelectedInteraction();
+  });
   exitResumeButton.addEventListener("click", closeExitConfirm);
   exitTitleButton.addEventListener("click", confirmExitToTitle);
   exitConfirmButtons.forEach((button, index) => {
@@ -585,9 +591,10 @@ function bindInput() {
       handleDialogueKey(event);
       return;
     }
-    if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight")) {
+    if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "ArrowUp" || event.code === "ArrowDown")) {
       event.preventDefault();
-      selectedInteractionIndex = event.code === "ArrowLeft" ? 0 : 1;
+      const direction = event.code === "ArrowLeft" || event.code === "ArrowUp" ? -1 : 1;
+      selectedInteractionIndex = (selectedInteractionIndex + direction + interactionActions.length) % interactionActions.length;
       renderInteractionChoice();
       return;
     }
@@ -696,19 +703,26 @@ function bindInput() {
   joystick.addEventListener("pointerup", resetStick);
   joystick.addEventListener("pointercancel", resetStick);
 
+  mobileBoostButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (!started || exitConfirmOpen || dialogueOpen) return;
+    keyState.add("ShiftLeft");
+    mobileBoostButton.setPointerCapture(event.pointerId);
+  });
+  mobileBoostButton.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    keyState.delete("ShiftLeft");
+  });
+  mobileBoostButton.addEventListener("pointercancel", (event) => {
+    event.preventDefault();
+    keyState.delete("ShiftLeft");
+  });
+  mobileBoostButton.addEventListener("lostpointercapture", () => {
+    keyState.delete("ShiftLeft");
+  });
   mobileJumpButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (!started || exitConfirmOpen) return;
-    if (dialogueOpen) advanceDialogue();
-    else interact();
-  });
-  mobileInteractButton.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
     if (started && !exitConfirmOpen && !dialogueOpen) jump();
-  });
-  mobileMapButton.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    if (started && !exitConfirmOpen && !dialogueOpen) toggleMap();
   });
   mobileLampButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
@@ -1853,11 +1867,12 @@ function buildInteractionActions() {
   if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
   if (pendingMotherCall) actions.push({ id: "motherCall", label: "接听 Mother 呼叫" });
-  return actions.slice(0, 2);
+  return actions;
 }
 
 function updateInteractionPrompts() {
-  if (interactionActions.length > 1) {
+  const touchMenu = isSmallScreenMapTouch();
+  if (interactionActions.length > 1 || (touchMenu && interactionActions.length > 0)) {
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
     interactionChoiceOpen = true;
@@ -1872,14 +1887,21 @@ function updateInteractionPrompts() {
 }
 
 function renderInteractionChoice() {
-  const [first, second] = interactionActions;
-  if (!first || !second) return;
-  interactionChoiceA.textContent = first.label;
-  interactionChoiceB.textContent = second.label;
+  interactionChoice.innerHTML = "";
+  if (interactionActions.length === 0) return;
+  for (const [index, action] of interactionActions.entries()) {
+    const button = document.createElement("button");
+    button.className = "interaction-option";
+    button.type = "button";
+    button.dataset.choiceIndex = String(index);
+    const label = document.createElement("strong");
+    label.textContent = action.label;
+    button.appendChild(label);
+    button.classList.toggle("is-selected", index === selectedInteractionIndex);
+    interactionChoice.appendChild(button);
+  }
   interactionChoice.classList.add("is-visible");
   interactionChoice.setAttribute("aria-hidden", "false");
-  const options = interactionChoice.querySelectorAll<HTMLElement>(".interaction-option");
-  options.forEach((option, index) => option.classList.toggle("is-selected", index === selectedInteractionIndex));
 }
 
 function interact() {

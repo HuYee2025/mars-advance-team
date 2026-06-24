@@ -803,7 +803,7 @@ h1 {
 #interaction-choice.is-visible {
   opacity: 1;
   visibility: visible;
-  pointer-events: none;
+  pointer-events: auto;
   transform: translateX(-50%) translateY(0);
 }
 
@@ -820,6 +820,8 @@ h1 {
   font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
   text-align: center;
   backdrop-filter: blur(12px);
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .interaction-option strong {
@@ -1115,8 +1117,9 @@ h1 {
   font-size: 13px;
   line-height: 1.35;
   text-align: left;
-  cursor: default;
-  pointer-events: none;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
   box-shadow: inset 0 0 18px rgba(95, 221, 255, 0.06);
 }
 
@@ -1277,8 +1280,8 @@ h1 {
   right: 20px;
   bottom: 22px;
   display: none;
-  width: 192px;
-  height: 180px;
+  width: 176px;
+  height: 176px;
 }
 
 .mobile-actions button {
@@ -1296,40 +1299,31 @@ h1 {
   box-shadow: 0 0 22px rgba(255, 132, 62, 0.22);
 }
 
-#mobile-interact {
+#mobile-boost {
   position: absolute;
   right: 112px;
   bottom: 24px;
-  width: 54px;
-  height: 54px;
-  font-size: 15px;
+  width: 58px;
+  height: 58px;
+  font-size: 14px;
+}
+
+#mobile-lamp {
+  position: absolute;
+  right: 28px;
+  bottom: 114px;
+  width: 58px;
+  height: 58px;
+  font-size: 14px;
 }
 
 #mobile-jump {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 92px;
-  height: 92px;
-  font-size: 18px;
-}
-
-.mobile-small-action {
-  position: absolute;
-  width: 54px;
-  height: 54px;
-  font-size: 15px;
-}
-
-#mobile-map {
-  display: none;
-  right: 78px;
-  bottom: 94px;
-}
-
-#mobile-lamp {
-  right: 18px;
-  bottom: 112px;
+  width: 104px;
+  height: 104px;
+  font-size: 20px;
 }
 
 .mobile-actions button:active {
@@ -1540,6 +1534,17 @@ h1 {
     bottom: 132px;
     max-width: calc(100vw - 150px);
     min-width: 0;
+  }
+
+  #interaction-choice {
+    bottom: 142px;
+    grid-template-columns: 1fr;
+    width: min(360px, calc(100vw - 32px));
+  }
+
+  .interaction-option {
+    min-height: 48px;
+    padding: 11px 14px;
   }
 
   #map-overlay {
