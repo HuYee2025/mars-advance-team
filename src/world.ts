@@ -257,7 +257,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   addLanderSite("01 飞船 登陆飞船", spread(29.5), spread(10.7), 0.18, true);
   addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
-  addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, false);
+  addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, true);
 
   const wreckNormal = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
   const wreckX = (wreckNormal.x / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
@@ -542,6 +542,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     if (interactive && lander.userData.elevator) {
       const elevator = lander.userData.elevator as ElevatorControl;
       elevator.label = shipId ? `${shipId} 飞船升降梯` : "飞船升降梯";
+      if (label.includes("返回飞船")) {
+        addElonAvatar(elevator.car.parent ?? elevator.car);
+        elevator.rocketInterior = undefined;
+        elevator.rocketInteriorLight = undefined;
+        elevator.rocketInteriorFillLight = undefined;
+      }
       elevators.push(elevator);
     }
     placeObjectOnPlanet(lander, x, z, LANDER_SURFACE_SETTLE, yaw);
@@ -618,6 +624,110 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       return "货运飞船运输备件、补给、工具和可展开设备。我负责货舱锁定、升降梯、电池包和外部固定点。";
     }
     return "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。";
+  }
+
+  function addElonAvatar(platform: THREE.Object3D) {
+    const elon = new THREE.Group();
+    elon.name = "Elon machine-dog astronaut avatar";
+
+    const suit = mat(0xd8d0c0, 0.58, 0.16);
+    const dark = mat(0x14181c, 0.72, 0.34);
+    const rubber = mat(0x202327, 0.86, 0.24);
+    const glow = mat(0x66d9ff, 0.16, 0.1, 0x66d9ff);
+    const amber = mat(0xff8f2d, 0.38, 0.12, 0xff8f2d);
+
+    const add = (object: THREE.Object3D, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1) => {
+      object.position.set(x, y, z);
+      object.scale.set(sx, sy, sz);
+      elon.add(object);
+      return object;
+    };
+    const capsule = (radius: number, length: number, material: THREE.Material) => {
+      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 10), material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+
+    const boots = [
+      add(box(0.36, 0.18, 0.64, dark), -0.22, 0.1, 0.02),
+      add(box(0.36, 0.18, 0.64, dark), 0.22, 0.1, 0.02),
+    ];
+    boots.forEach((boot) => (boot.rotation.x = 0.02));
+
+    const legL = add(capsule(0.13, 0.72, suit), -0.22, 0.56, 0, 0.85, 1, 0.85);
+    const legR = add(capsule(0.13, 0.72, suit), 0.22, 0.56, 0, 0.85, 1, 0.85);
+    legL.rotation.z = 0.05;
+    legR.rotation.z = -0.05;
+    add(box(0.24, 0.22, 0.08, dark), -0.22, 0.56, -0.13);
+    add(box(0.24, 0.22, 0.08, dark), 0.22, 0.56, -0.13);
+
+    add(box(0.72, 0.18, 0.32, dark), 0, 0.98, 0);
+    add(box(0.14, 0.2, 0.12, amber), 0, 1.0, -0.18);
+    const torso = add(capsule(0.33, 0.72, suit), 0, 1.46, 0, 1.05, 1, 0.82);
+    torso.rotation.x = Math.PI / 2;
+    const chest = add(box(0.46, 0.42, 0.12, suit), 0, 1.56, -0.3);
+    chest.rotation.x = -0.08;
+    add(box(0.2, 0.2, 0.04, glow), 0, 1.58, -0.37);
+    add(box(0.1, 0.08, 0.05, amber), 0.22, 1.71, -0.31);
+
+    const backpack = add(box(0.42, 0.78, 0.2, dark), 0, 1.58, 0.29);
+    backpack.rotation.x = 0.04;
+    const hose = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.025, 6, 18, Math.PI * 1.12), rubber);
+    hose.position.set(0.38, 1.78, 0.18);
+    hose.rotation.set(0.45, 1.15, 0.24);
+    hose.castShadow = true;
+    elon.add(hose);
+
+    for (const side of [-1, 1]) {
+      const shoulder = add(new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), suit), side * 0.48, 1.75, -0.02, 1.1, 0.82, 0.9);
+      shoulder.castShadow = true;
+      shoulder.receiveShadow = true;
+      const upperArm = add(capsule(0.1, 0.45, suit), side * 0.61, 1.36, -0.02, 0.8, 1, 0.8);
+      upperArm.rotation.z = side * 0.16;
+      const forearm = add(capsule(0.09, 0.4, suit), side * 0.66, 0.98, -0.03, 0.78, 1, 0.78);
+      forearm.rotation.z = side * -0.08;
+      add(box(0.18, 0.12, 0.16, dark), side * 0.66, 0.68, -0.02);
+      add(box(0.08, 0.08, 0.035, glow), side * 0.68, 1.08, -0.15);
+      add(box(0.12, 0.1, 0.06, amber), side * 0.39, 1.82, -0.22);
+    }
+
+    const neck = add(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.28, 12), dark), 0, 2.0, 0);
+    neck.castShadow = true;
+    add(new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.035, 6, 18), dark), 0, 1.88, 0).rotation.x = Math.PI / 2;
+
+    const head = add(new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 8), suit), 0, 2.28, -0.03, 1.08, 0.92, 0.82);
+    head.castShadow = true;
+    head.receiveShadow = true;
+    const muzzle = add(box(0.34, 0.2, 0.5, suit), 0, 2.22, -0.36);
+    muzzle.rotation.x = -0.06;
+    const nose = add(box(0.2, 0.11, 0.08, dark), 0, 2.18, -0.64);
+    nose.rotation.x = -0.02;
+    add(box(0.46, 0.08, 0.05, dark), 0, 2.32, -0.45);
+    add(box(0.1, 0.1, 0.035, glow), -0.12, 2.33, -0.49);
+    add(box(0.1, 0.1, 0.035, glow), 0.12, 2.33, -0.49);
+    add(box(0.18, 0.04, 0.035, glow), 0, 2.12, -0.66);
+
+    for (const side of [-1, 1]) {
+      const ear = add(new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.44, 4), dark), side * 0.2, 2.72, -0.02, 0.72, 1, 0.72);
+      ear.rotation.z = side * -0.16;
+      ear.castShadow = true;
+      add(box(0.035, 0.18, 0.025, glow), side * 0.2, 2.72, -0.08);
+      const audioDisc = add(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.06, 12), dark), side * 0.33, 2.29, 0.02);
+      audioDisc.rotation.z = Math.PI / 2;
+      audioDisc.castShadow = true;
+    }
+
+    const namePlate = createTextPlate("ELON", glow);
+    namePlate.position.set(0, 1.26, -0.34);
+    namePlate.scale.setScalar(0.16);
+    namePlate.rotation.x = -0.08;
+    elon.add(namePlate);
+
+    elon.scale.setScalar(0.72);
+    elon.position.set(2.26, 10.17, 0.03);
+    elon.rotation.y = 0.42;
+    platform.add(elon);
   }
 }
 
@@ -833,15 +943,6 @@ function createLander() {
   const rocketInterior = new THREE.Group();
   rocketInterior.visible = false;
   const rocketInteriorFloorY = hatchY - 1.15;
-  const interiorSteel = new THREE.MeshStandardMaterial({
-    color: 0x6b6f68,
-    roughness: 0.72,
-    metalness: 0.42,
-    emissive: 0x121715,
-    emissiveIntensity: 0.06,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
   const barrelMat = new THREE.MeshStandardMaterial({
     color: 0x4d524e,
     roughness: 0.82,
@@ -873,21 +974,8 @@ function createLander() {
   });
   const innerDeck = box(2.38, 0.12, 5.9, mat(0x282d2b, 0.76, 0.24));
   innerDeck.position.set(0, rocketInteriorFloorY, -0.34);
-  const innerBack = new THREE.Mesh(new THREE.CylinderGeometry(1.68, 1.68, 0.08, 18), interiorSteel);
-  innerBack.rotation.x = Math.PI / 2;
-  innerBack.position.set(0, barrelCenterY, 2.54);
-  const innerLightA = box(0.16, 1.42, 0.08, interiorPanel);
-  innerLightA.position.set(-0.92, rocketInteriorFloorY + 1.9, -2.76);
-  const innerLightB = innerLightA.clone();
-  innerLightB.position.x = 0.92;
   const ceilingStrip = box(1.65, 0.06, 0.1, interiorPanel);
   ceilingStrip.position.set(0, rocketInteriorFloorY + 3.34, 0.3);
-  const consolePanel = box(1.7, 0.48, 0.08, mat(0x5edcff, 0.2, 0.18, 0x238db1));
-  consolePanel.position.set(0, rocketInteriorFloorY + 1.35, 2.29);
-  const sideConsoleA = box(0.08, 0.52, 1.3, mat(0x36332e, 0.48, 0.44));
-  sideConsoleA.position.set(-1.22, rocketInteriorFloorY + 0.64, -0.1);
-  const sideConsoleB = sideConsoleA.clone();
-  sideConsoleB.position.x = 1.22;
   const rocketInteriorLight = new THREE.PointLight(0xffe6bf, 4.2, 14);
   rocketInteriorLight.position.set(0, rocketInteriorFloorY + 2.18, -0.18);
   rocketInteriorLight.visible = false;
@@ -900,13 +988,7 @@ function createLander() {
     barrelShell,
     ...barrelRibs,
     innerDeck,
-    innerBack,
-    innerLightA,
-    innerLightB,
     ceilingStrip,
-    consolePanel,
-    sideConsoleA,
-    sideConsoleB,
     rocketInteriorLight,
     rocketInteriorFillLight,
     rocketInteriorBackLight

@@ -84,6 +84,25 @@
 
 详见：`docs/lore/fufu.md`
 
+### Elon
+
+- 实验性 AI 智能体 / 工程顾问人格。
+- 游戏内本名就是 Elon，只是同名，不指向现实中的 Elon Musk 本人，也不是数字复活。
+- 位置放在 `03 飞船 返回飞船` 升降平台到达顶端后的固定高空廊道，靠近飞船舱门处；玩家需要先修复 3 号飞船升降梯才能见到它。
+- `03 飞船 返回飞船` 内舱不可进入，Elon 只在高空廊道靠近舱门处与玩家互动。
+- 当前已接入游戏：03 飞船升降梯修复支线、高空廊道处的 Elon、固定对白池。开放式 AI 后端暂未接入。
+- 核心用途：作为第一个“固定知识库 + 开放式 AI 问答”的测试角色。
+- 思维风格：第一性原理、流程删减、资源拆解、垂直整合、快速迭代、多行星文明尺度。
+- 叙事作用：和 Mother 形成原则互补，Mother 负责安全边界，Elon 负责挑战默认假设，Alex 做现场决策。
+- 第一阶段互动方式：固定知识库 + 大型固定对白池。玩家每次找它聊天，优先播放未读对白组，并通过选项表达立场。
+
+详见：
+
+- `docs/lore/elon.md`
+- `docs/ai/elon-agent-design.md`
+- `docs/tasks/elon-ship-03-elevator-sidequest.md`
+- `docs/dialogue/elon-fixed-dialogue-draft-v1.md`
+
 ## 5. 主线目标
 
 ## 5.0 核心故事母本
@@ -91,6 +110,7 @@
 项目的小说式核心故事底稿见：
 
 - `docs/story/core-story-v1.md`
+- `docs/story/core-story-v2-rational-wonder.md`
 
 该文件作为后续主线任务、支线任务、角色对白、结局气质和美术氛围的共同创意基础。
 
@@ -100,6 +120,12 @@
 - 轻松、善意、有人性。
 - 没有反派，冲突来自安全流程、现场判断、通信延迟、资源优先级和非效率生命价值。
 - 最终达成 Alex、Mother、机器人和福福之间的人性共鸣。
+
+机器人对白草案见：
+
+- `docs/dialogue/robot-dialogue-draft-v1.md`
+
+该文件已作为第一版机器人互动对白接入游戏代码。当前接入范围：3 艘飞船维护工、9 个建筑维修工、3 个太阳能阵列维修工；每组对白为 2-3 轮短对话。
 
 ## 5.1 主线目标
 
@@ -129,11 +155,16 @@ Mother 接受 Alex 作为共同决策者，并在结尾第一次称呼他为 `X`
 
 - `docs/tasks/mission-expansion-v2.md`
 
+特殊角色解锁支线见：
+
+- `docs/tasks/elon-ship-03-elevator-sidequest.md`
+
 任务扩展原则：
 
 - 不推翻当前 1.0 已实现内容，而是把现有氧气站、太阳能阵列 C、机器人车库扩成第一条主线任务的一部分。
 - 主线围绕生命支持、温室启动、通信延迟、风暴协议和 Mother 协作权展开。
 - 支线围绕福福、物资仓错位货箱、巡逻机器人外围异常展开。
+- Elon支线围绕 3 号飞船升降梯修复展开，是后续开放对话角色的解锁任务，不强制阻断主线。
 - 每个任务都要服务“人类进入机器先行建设的火星基地”这个主题。
 
 ### 序章：第一位居民
@@ -366,6 +397,15 @@ HUD 指标分为两组：
 - AI 只负责“角色怎么说”。
 - AI 不能随意改变主线、发明新设施、提前揭示隐藏剧情。
 
+Elon 是后续开放式 AI 问答的第一位测试角色。当前阶段先使用固定知识库和大型固定对白池，它和普通固定对白角色不同：
+
+- 固定对白仍由项目文件和游戏代码控制，用于剧情节点。
+- 每组固定对白有唯一 ID，优先播放未读内容，避免玩家每次聊天都重复。
+- 开放问答只回答玩家自由提问，不改变任务、数值、结局和设施状态。
+- 第一版返回的 `effects` 保持空数组，避免 AI 回答直接影响玩法。
+- Elon 必须明确：游戏内它本身叫 Elon，只是同名，不是现实人物本人，也不代表现实人物发言。
+- 详细接口和提示词边界见 `docs/ai/elon-agent-design.md`。
+
 ### DeepSeek 接入方式
 
 网页前端不能直接调用 DeepSeek，因为 API Key 会暴露。
@@ -421,6 +461,10 @@ docs/lore/robots.md
 docs/lore/ares-base-alpha.md
 docs/lore/mars-survival.md
 docs/lore/dialogue-rules.md
+docs/lore/elon.md
+docs/ai/elon-agent-design.md
+docs/tasks/elon-ship-03-elevator-sidequest.md
+docs/dialogue/elon-fixed-dialogue-draft-v1.md
 ```
 
 第一版不用向量数据库，直接把相关 Markdown 拼进 prompt 即可。

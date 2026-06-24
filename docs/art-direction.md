@@ -9,6 +9,9 @@
 - 角色概念图：`assets/concepts/mars-engineer-character.png`
 - 车辆/机器人概念图：`assets/concepts/mars-rover-robots.png`
 - 基地布局概念图：`assets/concepts/mars-base-layout.png`
+- Elon 概念图：`assets/concepts/elon-character-concept.png`
+- Elon 对话图：`assets/portraits/elon-dialogue-transparent.png`
+- Elon 绿幕源图：`assets/portraits/elon-dialogue-green.png`
 
 这些图用于方向确认，不直接作为游戏贴图。
 

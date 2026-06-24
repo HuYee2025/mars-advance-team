@@ -5,6 +5,7 @@ import { createMarsEngineer, updateMarsEngineer } from "./player";
 import {
   characters,
   dialogueNodes,
+  robotDialogueStartNodes,
   sceneStartNodes,
   type DialogueChoice,
   type DialogueEffect,
@@ -190,6 +191,7 @@ type MainMissionStep =
   | "complete";
 type SideMissionStep = "available" | "medical" | "habitat" | "cargoShip" | "garage" | "lab" | "storehouse" | "solarA" | "tower" | "complete";
 type SideMissionId = "fufu" | "cargo" | "patrol";
+type ElonMissionStep = "available" | "cargoShip" | "solarC" | "garage" | "storehouse" | "lab" | "complete";
 
 const mainMissionTargets: Partial<Record<MainMissionStep, Interactable["id"]>> = {
   m1_habitat: "habitatCheck",
@@ -226,6 +228,16 @@ const sideMissionTargets: Record<SideMissionId, Partial<Record<SideMissionStep, 
     lab: "lab",
   },
 };
+
+const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> = {
+  cargoShip: "cargoShip",
+  solarC: "solarC",
+  garage: "garage",
+  storehouse: "storehouse",
+  lab: "lab",
+};
+
+const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_mother_1", "elon_fufu_1", "elon_robots_1"];
 
 let yaw = Math.PI * 0.15;
 let pitch = 0.34;
@@ -265,6 +277,10 @@ let fufuRescued = false;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
+let elonSideStep: ElonMissionStep = "available";
+let elonElevatorRepaired = false;
+let elonMet = false;
+let elonDialogueIndex = 0;
 let fufuSpeed = 0;
 let fufuAlert = 0;
 let fufuWanderAngle = -2.25;
@@ -505,6 +521,14 @@ function bindInput() {
   });
   hudToggle.addEventListener("click", toggleHud);
   mapToggle.addEventListener("click", toggleMap);
+  dialogueContinue.addEventListener("click", advanceDialogue);
+  dialogueChoices.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest<HTMLButtonElement>("button[data-choice-index]");
+    if (!button) return;
+    chooseDialogue(Number(button.dataset.choiceIndex ?? 0));
+  });
   window.addEventListener("keydown", (event) => {
     if (event.code === "Backquote") {
       event.preventDefault();
@@ -602,7 +626,9 @@ function bindInput() {
   window.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return;
     orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - event.movementX * 0.0022, -0.85, 0.85);
-    pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.12, 0.92);
+    pitch = insideRocket
+      ? THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.02, 1.68)
+      : THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.12, 0.92);
   });
   window.addEventListener("wheel", (event) => {
     if (!started) return;
@@ -1146,7 +1172,7 @@ function updateElevatorRide(delta: number, elevator: ElevatorControl) {
 function updateRocketInteriorLook(delta: number, elevator: ElevatorControl) {
   const { turnInput, forwardInput } = readMovementInput();
   orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - turnInput * 1.45 * delta, -1.18, 1.18);
-  pitch = THREE.MathUtils.clamp(pitch + forwardInput * 0.65 * delta, 0.08, 1.12);
+  pitch = THREE.MathUtils.clamp(pitch + forwardInput * 0.65 * delta, 0.02, 1.68);
   playerVelocity.set(0, 0, 0);
   placePlayerInRocketInterior(elevator);
   return 0;
@@ -1208,7 +1234,7 @@ function updateCamera(delta: number) {
       .applyAxisAngle(normal, orbitYawOffset)
       .projectOnPlane(normal)
       .normalize();
-    const pitchOffset = insideRocket ? THREE.MathUtils.clamp(pitch - 0.24, -0.38, 0.5) : THREE.MathUtils.clamp(pitch - 0.34, -0.22, 0.36);
+    const pitchOffset = insideRocket ? THREE.MathUtils.clamp(pitch - 0.24, -0.46, 1.28) : THREE.MathUtils.clamp(pitch - 0.34, -0.22, 0.36);
     const lookDirection = lookForward.clone().multiplyScalar(Math.cos(pitchOffset)).addScaledVector(normal, Math.sin(pitchOffset)).normalize();
     const desired = eye
       .clone()
@@ -1570,11 +1596,19 @@ function executeSelectedInteraction() {
 
 function interactElevator() {
   if (activeElevator) {
+    if (isReturnShipElevator(activeElevator) && !elonElevatorRepaired) {
+      startElonElevatorRepairQuest();
+      return;
+    }
     if (insideRocket) {
       exitRocketInterior();
       return;
     }
     if (isAtRocketHatch()) {
+      if (isReturnShipElevator(activeElevator)) {
+        openElonDialogue();
+        return;
+      }
       enterRocketInterior();
       return;
     }
@@ -1590,12 +1624,16 @@ function openRobotBriefing(robot: THREE.Group) {
     typeof robot.userData.briefing === "string"
       ? robot.userData.briefing
       : "A-12 在线。当前服从 Mother 维修队列。可执行：管线检查、密封、阵列固定、低速搬运。";
+  characters.repairRobot.name = label;
+  characters.repairRobot.callsign = facilityLabel;
   dialogueNodes.robot_status.text = `${label} 在线。我负责 ${facilityLabel}。${briefing}`;
-  openDialogueScene("robot");
+  openDialogueScene("robot", robotDialogueStartNodes[label] ?? "robot_status");
 }
 
 function interactMission(interactable: Interactable) {
-  if (missionStep === "m1_oxygen" && interactable.id === "oxygen") {
+  if (isElonSideQuestTarget(interactable.id)) {
+    advanceSideQuest(interactable.id);
+  } else if (missionStep === "m1_oxygen" && interactable.id === "oxygen") {
     openDialogueScene("oxygen");
   } else if (missionStep === "m1_solarC" && interactable.id === "solarC") {
     openDialogueScene("solar");
@@ -1616,7 +1654,7 @@ function rescueFufu() {
   activeFufu = false;
   fufuForward.copy(playerForward);
   fufuSideStep = "medical";
-  showDialogue("福福", "喵。它从残骸阴影里钻出来，开始跟着你。Mother 标记：未登记生命体，请前往医疗舱扫描。", 5.2);
+  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。Mother 标记：未登记小型生命体，请先执行医疗舱隔离扫描。", 5.6);
   setCurrentMissionText();
 }
 
@@ -1902,7 +1940,8 @@ function findActiveElevator() {
 
 function elevatorPrompt(elevator: ElevatorControl) {
   if (insideRocket) return "按 E 离开飞船内舱";
-  if (isAtRocketHatch()) return "按 E 进入飞船内部观察";
+  if (isReturnShipElevator(elevator) && !elonElevatorRepaired) return "按 E 检查 03 飞船升降梯";
+  if (isAtRocketHatch()) return isReturnShipElevator(elevator) ? "按 E 与 Elon 通话" : "按 E 进入飞船内部观察";
   if (elevator.moving) return `${elevator.label}运行中`;
   return elevator.target === "top" ? "按 E 乘坐升降梯" : "按 E 启动飞船升降梯";
 }
@@ -1931,6 +1970,44 @@ function isAtRocketHatch() {
   return elevatorRideLocal.x >= ROCKET_PLATFORM_SPLIT_X;
 }
 
+function isReturnShipElevator(elevator: ElevatorControl | null) {
+  return Boolean(elevator?.label.includes("03 飞船"));
+}
+
+function startElonElevatorRepairQuest() {
+  if (elonSideStep === "available") {
+    elonSideStep = "cargoShip";
+    showDialogue("Mother", "03 飞船升降梯处于安全锁定。状态：机械锁止、电机离线、姿态传感器缺失。先去 02 飞船货运飞船寻找执行器驱动轴。", 6);
+    setCurrentMissionText();
+    return;
+  }
+  const target = elonMissionTargets[elonSideStep];
+  if (target) {
+    showDialogue("Mother", `03 飞船升降梯仍处于锁定。先完成维修清单当前项：${missionLabel(target)}。`, 4.6);
+    return;
+  }
+  if (elonSideStep === "complete" && !elonElevatorRepaired) {
+    elonElevatorRepaired = true;
+    showDialogue("Mother", "03 飞船升降梯校准完成。可上行至高空廊道。提示：03 飞船内舱仍不可进入。", 5.2);
+  }
+}
+
+function openElonDialogue() {
+  if (!elonMet) {
+    elonMet = true;
+    openDialogueScene("elon", "elon_intro_1");
+    return;
+  }
+  const node = elonDialogueCycle[elonDialogueIndex % elonDialogueCycle.length];
+  elonDialogueIndex += 1;
+  openDialogueScene("elon", node);
+}
+
+function missionLabel(id: Interactable["id"]) {
+  const item = world.interactables.find((interactable) => interactable.id === id);
+  return item?.label ?? id;
+}
+
 function openRocketDoor() {
   rocketDoorOpen = true;
   setRocketDoorVisual(true);
@@ -1939,6 +2016,10 @@ function openRocketDoor() {
 
 function enterRocketInterior() {
   if (!ridingElevator) return;
+  if (isReturnShipElevator(ridingElevator)) {
+    showDialogue("Mother", "03 飞船内舱保持封存。Elon 位于升降平台到达顶端后的高空廊道，靠近舱门处。", 4.6);
+    return;
+  }
   elevatorRideLocal.x = ROCKET_HATCH_STOP_X;
   elevatorRideLocal.z = 0;
   insideRocket = true;
@@ -2284,9 +2365,13 @@ function queueMotherCall(scene: DialogueSceneId, mission: string) {
   setMission(mission);
 }
 
-function openDialogueScene(scene: DialogueSceneId) {
+function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
   pendingMotherCall = null;
-  activeDialogueNode = sceneStartNodes[scene];
+  if (scene !== "robot") {
+    characters.repairRobot.name = "A-12";
+    characters.repairRobot.callsign = "维修执行单元";
+  }
+  activeDialogueNode = startNode;
   dialogueOpen = true;
   keyState.clear();
   resetStick();
@@ -2391,6 +2476,11 @@ function advanceDialogue() {
   if (!activeDialogueNode) return;
   const node = dialogueNodes[activeDialogueNode];
   if (node.choices?.length) return;
+  if (node.next) {
+    activeDialogueNode = node.next;
+    renderDialogueNode();
+    return;
+  }
   closeDialogue();
 }
 
@@ -2416,6 +2506,10 @@ function resetQuestState() {
   fufuSideStep = "available";
   cargoSideStep = "available";
   patrolSideStep = "available";
+  elonSideStep = "available";
+  elonElevatorRepaired = false;
+  elonMet = false;
+  elonDialogueIndex = 0;
   for (const item of world.interactables) item.completed = false;
   world.oxygenLight.color.set(0xff3d2f);
   world.solarLight.color.set(0xff3d2f);
@@ -2510,15 +2604,38 @@ function advanceWorldQuest(id: Interactable["id"]) {
 }
 
 function advanceSideQuest(id: Interactable["id"]) {
+  if (isElonSideQuestTarget(id)) {
+    if (elonSideStep === "cargoShip") {
+      elonSideStep = "solarC";
+      showDialogue("02 飞船 货运飞船", "发现备用执行器驱动轴。外壳有轻微沙尘磨损，结构完整。下一项：去太阳能阵列 C 处理高功率继电器。", 5.4);
+    } else if (elonSideStep === "solarC") {
+      elonSideStep = "garage";
+      showDialogue("12 机器人 阵列 C 维修工", "高功率继电器已复制为低风险替代件。阵列 C 风暴恢复冗余保留。下一项：去机器人车库取得姿态锁止传感器。", 5.8);
+    } else if (elonSideStep === "garage") {
+      elonSideStep = "storehouse";
+      showDialogue("机器人车库", "姿态锁止传感器可用。没有它，升降梯只能知道自己在移动，不能证明自己停在正确位置。下一项：去物资仓取低温润滑胶囊。", 6);
+    } else if (elonSideStep === "storehouse") {
+      elonSideStep = "lab";
+      showDialogue("08 建筑 物资仓", "低温润滑胶囊已取出。库存剩余两枚。下一项：去科研舱生成一次性校准密钥。", 5.2);
+    } else if (elonSideStep === "lab") {
+      elonSideStep = "complete";
+      elonElevatorRepaired = true;
+      dialogueState.baseIntegrity += 1;
+      showDialogue("科研舱", "校准密钥生成完成。03 飞船升降梯维修记录已写入 Mother 安全边界。可返回 03 飞船升降梯，上行至 Elon 所在高空廊道。", 6.4);
+    }
+    setCurrentMissionText();
+    return true;
+  }
+
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) {
     if (fufuSideStep === "medical") {
       fufuSideStep = "habitat";
       dialogueState.motherTrust += 1;
-      showDialogue("医疗舱", "扫描完成。福福没有污染风险。请把它带回居住舱观察。", 4.8);
+      showDialogue("医疗舱", "扫描完成。福福体温偏低，无污染风险。隔离不是拒绝，是确认安全前的保护。请带它回居住舱观察。", 5.6);
     } else if (fufuSideStep === "habitat") {
       fufuSideStep = "complete";
       dialogueState.humanAutonomy += 1;
-      showDialogue("Mother", "未登记生命体已进入观察名单。记录：人类会为小生命调整流程。", 5.2);
+      showDialogue("Mother", "未登记生命体已进入观察名单。记录：非效率陪伴对象可能提高长期任务稳定性。暂不构成基地风险，可继续观察。", 6);
     }
     setCurrentMissionText();
     return true;
@@ -2579,8 +2696,13 @@ function isPatrolAvailable() {
   return ["m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
 }
 
+function isElonSideQuestTarget(id: Interactable["id"]) {
+  return !elonElevatorRepaired && elonSideStep !== "available" && elonSideStep !== "complete" && elonMissionTargets[elonSideStep] === id;
+}
+
 function isActiveMissionInteractable(id: Interactable["id"]) {
   if (mainMissionTargets[missionStep] === id) return true;
+  if (isElonSideQuestTarget(id)) return true;
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) return true;
   if (isCargoAvailable() && cargoSideStep !== "complete") {
     const cargoStep = cargoSideStep === "available" ? "cargoShip" : cargoSideStep;
@@ -2617,6 +2739,11 @@ function setCurrentMissionText() {
   const sideHints: string[] = [];
   if (fufuSideStep === "medical") sideHints.push("支线：带福福去医疗舱扫描");
   if (fufuSideStep === "habitat") sideHints.push("支线：带福福回居住舱");
+  if (!elonElevatorRepaired && elonSideStep !== "available") {
+    const target = elonMissionTargets[elonSideStep];
+    sideHints.push(target ? `支线：修复 03 飞船升降梯，当前目标 ${missionLabel(target)}` : "支线：返回 03 飞船升降梯");
+  }
+  if (elonElevatorRepaired && !elonMet) sideHints.push("支线：乘坐 03 飞船升降梯，在高空廊道与 Elon 通话");
   if (isCargoAvailable() && cargoSideStep !== "complete") sideHints.push("支线：调查 A-01 的错位货箱");
   if (isPatrolAvailable() && patrolSideStep !== "complete") sideHints.push("支线：跟进 P-03 的外围异常");
   setMission(sideHints.length ? `${textByStep[missionStep]} ｜ ${sideHints.join("；")}` : textByStep[missionStep]);
