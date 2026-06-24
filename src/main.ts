@@ -1478,7 +1478,7 @@ function buildInteractionActions() {
   if (activeElevator) actions.push({ id: "elevator", label: elevatorPrompt(activeElevator).replace(/^按 E /, "") });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱" });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱" });
-  if (activeInteractable) actions.push({ id: "mission", label: activeInteractable.prompt.replace(/^按 E /, "") });
+  if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: activeInteractable.prompt.replace(/^按 E /, "") });
   if (activeFufu) actions.push({ id: "fufu", label: "安抚 福福" });
   if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
@@ -1780,7 +1780,15 @@ function enterHabitatInterior(door: HabitatDoorControl) {
   cameraDistance = Math.min(cameraDistance, 0.72);
   pitch = 0.34;
   orbitYawOffset = 0;
-  showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包已补满。", 4);
+  if (!maybeAdvanceHabitatQuestOnEntry()) {
+    showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包已补满。", 4);
+  }
+}
+
+function maybeAdvanceHabitatQuestOnEntry() {
+  if (!isActiveMissionInteractable("habitatCheck")) return false;
+  advanceWorldQuest("habitatCheck");
+  return true;
 }
 
 function setHabitatDoorExteriorOpen(door: HabitatDoorControl) {

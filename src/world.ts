@@ -26,7 +26,6 @@ export type Interactable = {
 type MaintenanceBotConfig = {
   centerX: number;
   centerZ: number;
-  patrolRadius: number;
   speed: number;
   offset: number;
   size: number;
@@ -34,6 +33,9 @@ type MaintenanceBotConfig = {
   label: string;
   facilityLabel: string;
   briefing: string;
+  patrolPoints: Array<{ x: number; z: number }>;
+  waitMin: number;
+  waitMax: number;
 };
 
 export type MarsWorld = {
@@ -584,18 +586,27 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     briefing: string
   ) {
     const point = offsetPoint(x, z, yaw, localX, localZ);
-    const isHabitatBot = facilityLabel.includes("居住舱");
+    const patrolSpread = facilityLabel.includes("太阳能阵列") ? 2.4 : 1.65;
+    const forwardSpread = facilityLabel.includes("太阳能阵列") ? 1.55 : 1.05;
     maintenanceBots.push({
       centerX: point.x,
       centerZ: point.z,
-      patrolRadius: isHabitatBot ? 1.35 : spread(4.2),
-      speed: isHabitatBot ? 0.035 : 0.09 + maintenanceBots.length * 0.004,
+      speed: 1.65 + (maintenanceBots.length % 4) * 0.12,
       offset: maintenanceBots.length * 0.74,
       size: 0.76,
       kind: "bot",
       label,
       facilityLabel,
       briefing,
+      patrolPoints: [
+        offsetPoint(point.x, point.z, yaw, 0, 0),
+        offsetPoint(point.x, point.z, yaw, -patrolSpread, 0.2),
+        offsetPoint(point.x, point.z, yaw, patrolSpread, -0.18),
+        offsetPoint(point.x, point.z, yaw, patrolSpread * 0.42, forwardSpread),
+        offsetPoint(point.x, point.z, yaw, -patrolSpread * 0.52, -forwardSpread * 0.72),
+      ],
+      waitMin: 1.7 + (maintenanceBots.length % 3) * 0.35,
+      waitMax: 4.2 + (maintenanceBots.length % 4) * 0.45,
     });
   }
 
@@ -1574,7 +1585,14 @@ function createRovers(
   ];
   configs.forEach((config) => {
     const rover = config.kind === "bot" ? createUtilityBot(config.size) : createRover(config.size);
-    rover.userData = { ...rover.userData, ...config, dynamicMap: true };
+    const userData: Record<string, unknown> = { ...config };
+    if (config.kind === "bot" && "patrolPoints" in config) {
+      const safePatrolPoints = buildSafeBotPatrolPoints(config.patrolPoints, colliders);
+      userData.patrolPoints = safePatrolPoints;
+      userData.centerX = safePatrolPoints[0]?.x ?? config.centerX;
+      userData.centerZ = safePatrolPoints[0]?.z ?? config.centerZ;
+    }
+    rover.userData = { ...rover.userData, ...userData, dynamicMap: true };
     rovers.push(rover);
     landmarks.push(landmark(config.label, rover, 0, 0, config.kind === "bot" ? 24 : 32, 140));
     colliders.push({
@@ -2011,6 +2029,10 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
     const previousRouteElapsed = typeof rover.userData.routeElapsed === "number" ? rover.userData.routeElapsed : elapsed;
     const delta = THREE.MathUtils.clamp(elapsed - previousRouteElapsed, 0, 0.05);
     rover.userData.routeElapsed = elapsed;
+    if (kind === "bot" && Array.isArray(rover.userData.patrolPoints)) {
+      updateMaintenanceBotPatrol(rover, elapsed, delta, colliders);
+      return;
+    }
     const angle = elapsed * speed + offset;
     if (route === "meridianLoop" || route === "latitudeLoop") {
       const directionSign = speed >= 0 ? 1 : -1;
@@ -2045,6 +2067,129 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
     if (kind === "bot") updateUtilityBotWalk(rover, elapsed, speed);
     if (route === "planetLoop") updateRoverWheelSpin(rover, elapsed, speed);
   });
+}
+
+function updateMaintenanceBotPatrol(rover: THREE.Group, elapsed: number, delta: number, colliders: CircleCollider[]) {
+  const data = rover.userData as {
+    patrolPoints: Array<{ x: number; z: number }>;
+    speed: number;
+    offset: number;
+    waitMin: number;
+    waitMax: number;
+    botTargetIndex?: number;
+    botWaitingUntil?: number;
+    botYaw?: number;
+    planetX?: number;
+    planetZ?: number;
+  };
+  const points = data.patrolPoints;
+  if (points.length === 0) return;
+
+  if (typeof data.botTargetIndex !== "number" || typeof data.planetX !== "number" || typeof data.planetZ !== "number") {
+    const startIndex = Math.abs(Math.floor(data.offset ?? 0)) % points.length;
+    const start = points[startIndex];
+    data.planetX = start.x;
+    data.planetZ = start.z;
+    data.botTargetIndex = (startIndex + 1) % points.length;
+    data.botWaitingUntil = elapsed + botWaitSeconds(data, startIndex);
+    data.botYaw = data.botYaw ?? 0;
+    placeObjectOnPlanet(rover, start.x, start.z, 0, data.botYaw);
+    updateUtilityBotWalk(rover, elapsed, 0);
+    return;
+  }
+
+  if ((data.botWaitingUntil ?? 0) > elapsed) {
+    placeObjectOnPlanet(rover, data.planetX, data.planetZ, 0, data.botYaw ?? 0);
+    updateUtilityBotWalk(rover, elapsed, 0);
+    return;
+  }
+
+  const targetIndex = data.botTargetIndex ?? 0;
+  const target = points[targetIndex];
+  const current = new THREE.Vector2(data.planetX, data.planetZ);
+  const toTarget = new THREE.Vector2(target.x - current.x, target.z - current.y);
+  const distance = toTarget.length();
+  const step = Math.max(0.02, data.speed * delta);
+
+  let nextX = target.x;
+  let nextZ = target.z;
+  if (distance > step) {
+    toTarget.multiplyScalar(step / distance);
+    nextX = current.x + toTarget.x;
+    nextZ = current.y + toTarget.y;
+  }
+  if (isBotPointInsideFixedCollider(nextX, nextZ, colliders)) {
+    data.botTargetIndex = chooseNextBotPatrolIndex(points.length, targetIndex, data.offset);
+    data.botWaitingUntil = elapsed + botWaitSeconds(data, targetIndex) * 0.55;
+    placeObjectOnPlanet(rover, data.planetX, data.planetZ, 0, data.botYaw ?? 0);
+    updateUtilityBotWalk(rover, elapsed, 0);
+    return;
+  }
+
+  data.planetX = nextX;
+  data.planetZ = nextZ;
+
+  const normal = planetNormal(nextX, nextZ, new THREE.Vector3());
+  const targetNormal = planetNormal(target.x, target.z, new THREE.Vector3());
+  const forward = targetNormal.addScaledVector(normal, -targetNormal.dot(normal));
+  if (forward.lengthSq() > 0.000001) data.botYaw = yawFromForward(normal, forward.normalize());
+
+  placeObjectOnPlanet(rover, nextX, nextZ, 0, data.botYaw ?? 0);
+  updateUtilityBotWalk(rover, elapsed, data.speed);
+
+  if (distance <= step + 0.05) {
+    data.botTargetIndex = chooseNextBotPatrolIndex(points.length, targetIndex, data.offset);
+    data.botWaitingUntil = elapsed + botWaitSeconds(data, targetIndex);
+  }
+}
+
+function buildSafeBotPatrolPoints(points: Array<{ x: number; z: number }>, colliders: CircleCollider[]) {
+  const safePoints = points.map((point) => keepBotPointOutsideFixedColliders(point.x, point.z, colliders));
+  const uniquePoints: Array<{ x: number; z: number }> = [];
+  for (const point of safePoints) {
+    if (uniquePoints.every((existing) => Math.hypot(existing.x - point.x, existing.z - point.z) > 0.45)) uniquePoints.push(point);
+  }
+  return uniquePoints.length > 1 ? uniquePoints : safePoints;
+}
+
+function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: CircleCollider[]) {
+  const point = new THREE.Vector2(x, z);
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const collider of colliders) {
+      if (collider.dynamicObject || collider.radius < 1.4) continue;
+      if (collider.enabled && !collider.enabled()) continue;
+      const away = point.clone().sub(collider.center);
+      let distance = away.length();
+      const minDistance = collider.radius + 1.15;
+      if (distance >= minDistance) continue;
+      if (distance < 0.0001) {
+        away.set(1, 0);
+        distance = 1;
+      }
+      point.copy(collider.center).add(away.multiplyScalar(minDistance / distance));
+    }
+  }
+  return { x: point.x, z: point.y };
+}
+
+function isBotPointInsideFixedCollider(x: number, z: number, colliders: CircleCollider[]) {
+  for (const collider of colliders) {
+    if (collider.dynamicObject || collider.radius < 1.4) continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 0.92) return true;
+  }
+  return false;
+}
+
+function chooseNextBotPatrolIndex(count: number, current: number, offset: number) {
+  if (count <= 1) return 0;
+  const stride = Math.abs(Math.floor(offset * 10)) % 2 === 0 ? 1 : 2;
+  return (current + stride) % count;
+}
+
+function botWaitSeconds(data: { waitMin: number; waitMax: number; offset: number }, index: number) {
+  const t = seededNoise(index + 1, data.offset * 19.17 + 3.4);
+  return THREE.MathUtils.lerp(data.waitMin, data.waitMax, t);
 }
 
 function vehicleRouteNormal(route: string, angle: number) {
