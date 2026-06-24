@@ -53,6 +53,7 @@ export type MarsWorld = {
   oxygenLight: THREE.PointLight;
   solarLight: THREE.PointLight;
   fufuRescueSite: FufuRescueSite;
+  monolith: MonolithSite;
 };
 
 export type FufuRescueSite = {
@@ -60,6 +61,13 @@ export type FufuRescueSite = {
   x: number;
   z: number;
   yaw: number;
+};
+
+export type MonolithSite = {
+  object: THREE.Object3D;
+  x: number;
+  z: number;
+  radius: number;
 };
 
 export type ElevatorControl = {
@@ -259,6 +267,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
   addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, true);
 
+  const monolithX = 260;
+  const monolithZ = -315;
+  const monolith = createBlackMonolith();
+  placeObjectOnPlanet(monolith, monolithX, monolithZ, 0.05, -0.38);
+  base.add(monolith);
+  landmarks.push(landmark("黑色石碑", monolith, monolithX, monolithZ, 42, 380));
+  colliders.push(circle(monolithX, monolithZ, 1.45, "黑色石碑"));
+
   const wreckNormal = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
   const wreckX = (wreckNormal.x / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
   const wreckZ = (wreckNormal.z / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
@@ -313,7 +329,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   placeObjectOnPlanet(greenhouse, greenhouseX, greenhouseZ, -0.86, greenhouseYaw);
   base.add(greenhouse);
   landmarks.push(landmark("02 建筑 温室生态舱", greenhouse, greenhouseX, greenhouseZ, 46, 260));
-  addMaintenanceBot("02 机器人 温室维修工", greenhouseX, greenhouseZ, greenhouseYaw, -7.8, -5.8, "02 建筑 温室生态舱", "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。");
+  addMaintenanceBot("02 机器人 温室维修工", greenhouseX, greenhouseZ, greenhouseYaw, -11.4, -6.8, "02 建筑 温室生态舱", "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。");
   interactables.push({
     id: "greenhouse",
     label: "02 建筑 温室生态舱",
@@ -465,7 +481,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const solarA = createSolarArray(solarAX, solarAZ, -0.36, base);
   solarArrays.push(solarA);
   landmarks.push(landmark("01 能源 太阳能阵列 A", solarA, solarAX, solarAZ, 30, 220));
-  addMaintenanceBot("10 机器人 阵列 A 维修工", solarAX, solarAZ, -0.36, 0, -7.6, "01 能源 太阳能阵列 A", "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。");
+  addMaintenanceBot("10 机器人 阵列 A 维修工", solarAX, solarAZ, -0.36, 0, -11.8, "01 能源 太阳能阵列 A", "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。");
   colliders.push(circle(solarAX, solarAZ, 8.6, "太阳能阵列 A"));
   interactables.push({
     id: "solarA",
@@ -480,7 +496,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const solarB = createSolarArray(solarBX, solarBZ, -0.36, base);
   solarArrays.push(solarB);
   landmarks.push(landmark("02 能源 太阳能阵列 B", solarB, solarBX, solarBZ, 30, 220));
-  addMaintenanceBot("11 机器人 阵列 B 维修工", solarBX, solarBZ, -0.36, 0, -7.6, "02 能源 太阳能阵列 B", "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。");
+  addMaintenanceBot("11 机器人 阵列 B 维修工", solarBX, solarBZ, -0.36, 0, -11.8, "02 能源 太阳能阵列 B", "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。");
   colliders.push(circle(solarBX, solarBZ, 8.6, "太阳能阵列 B"));
   interactables.push({
     id: "solarB",
@@ -495,7 +511,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const solarNode = createSolarArray(solarCX, solarCZ, 0.18, base);
   solarArrays.push(solarNode);
   landmarks.push(landmark("03 能源 太阳能阵列 C", solarNode, solarCX, solarCZ, 30, 220));
-  addMaintenanceBot("12 机器人 阵列 C 维修工", solarCX, solarCZ, 0.18, 0, -7.6, "03 能源 太阳能阵列 C", "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。");
+  addMaintenanceBot("12 机器人 阵列 C 维修工", solarCX, solarCZ, 0.18, 0, -11.8, "03 能源 太阳能阵列 C", "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。");
   colliders.push(circle(solarCX, solarCZ, 8.8, "太阳能阵列 C"));
   const solarLight = new THREE.PointLight(0xff3d2f, 1.8, 11);
   solarLight.position.copy(planetSurfacePoint(solarCX, solarCZ, 3.4));
@@ -533,6 +549,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       z: fufuRescueZ,
       yaw: wreckYaw + Math.PI * 0.62,
     },
+    monolith: {
+      object: monolith,
+      x: monolithX,
+      z: monolithZ,
+      radius: 24,
+    },
   };
 
   function addLanderSite(label: string, x: number, z: number, yaw: number, interactive: boolean) {
@@ -553,7 +575,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     placeObjectOnPlanet(lander, x, z, LANDER_SURFACE_SETTLE, yaw);
     base.add(lander);
     landmarks.push(landmark(label, lander, x, z, 42, 260));
-    addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -7.8, -8.4, label, shipBriefing(label));
+    addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -12.4, -10.9, label, shipBriefing(label));
     if (label.includes("货运飞船")) {
       interactables.push({
         id: "cargoShip",
@@ -592,8 +614,20 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     briefing: string
   ) {
     const point = offsetPoint(x, z, yaw, localX, localZ);
-    const patrolSpread = facilityLabel.includes("太阳能阵列") ? 2.4 : 1.65;
-    const forwardSpread = facilityLabel.includes("太阳能阵列") ? 1.55 : 1.05;
+    const patrolSpread = facilityLabel.includes("太阳能阵列") ? 2.25 : 1.55;
+    const outwardSpread = facilityLabel.includes("太阳能阵列") ? 0.75 : 0.55;
+    const radialLength = Math.hypot(localX, localZ) || 1;
+    const radialX = localX / radialLength;
+    const radialZ = localZ / radialLength;
+    const tangentX = -radialZ;
+    const tangentZ = radialX;
+    const localPatrolPoints = [
+      [localX, localZ],
+      [localX + tangentX * patrolSpread, localZ + tangentZ * patrolSpread],
+      [localX - tangentX * patrolSpread, localZ - tangentZ * patrolSpread],
+      [localX + radialX * outwardSpread + tangentX * patrolSpread * 0.42, localZ + radialZ * outwardSpread + tangentZ * patrolSpread * 0.42],
+      [localX + radialX * outwardSpread - tangentX * patrolSpread * 0.42, localZ + radialZ * outwardSpread - tangentZ * patrolSpread * 0.42],
+    ] as Array<[number, number]>;
     maintenanceBots.push({
       centerX: point.x,
       centerZ: point.z,
@@ -604,13 +638,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       label,
       facilityLabel,
       briefing,
-      patrolPoints: [
-        offsetPoint(point.x, point.z, yaw, 0, 0),
-        offsetPoint(point.x, point.z, yaw, -patrolSpread, 0.2),
-        offsetPoint(point.x, point.z, yaw, patrolSpread, -0.18),
-        offsetPoint(point.x, point.z, yaw, patrolSpread * 0.42, forwardSpread),
-        offsetPoint(point.x, point.z, yaw, -patrolSpread * 0.52, -forwardSpread * 0.72),
-      ],
+      patrolPoints: localPatrolPoints.map(([px, pz]) => offsetPoint(x, z, yaw, px, pz)),
       waitMin: 1.7 + (maintenanceBots.length % 3) * 0.35,
       waitMax: 4.2 + (maintenanceBots.length % 4) * 0.45,
     });
@@ -1386,6 +1414,51 @@ function createTextPlate(text: string, material: THREE.Material) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.68), new THREE.MeshBasicMaterial({ map: texture }));
+}
+
+function createBlackMonolith() {
+  const group = new THREE.Group();
+  group.name = "Black monolith";
+
+  const monolithMat = new THREE.MeshStandardMaterial({
+    color: 0x010101,
+    roughness: 0.42,
+    metalness: 0.36,
+    emissive: 0x000000,
+    flatShading: true,
+  });
+  const edgeMat = new THREE.MeshStandardMaterial({
+    color: 0x111315,
+    roughness: 0.38,
+    metalness: 0.48,
+    emissive: 0x02080a,
+    emissiveIntensity: 0.08,
+    flatShading: true,
+  });
+  const dustMat = new THREE.MeshBasicMaterial({
+    color: 0x050607,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+  });
+
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(1.08, 5.9, 0.42), monolithMat);
+  slab.position.y = 2.95;
+  slab.castShadow = true;
+  slab.receiveShadow = true;
+  const bevelLineA = box(0.035, 5.82, 0.045, edgeMat);
+  bevelLineA.position.set(-0.56, 2.96, -0.23);
+  const bevelLineB = bevelLineA.clone();
+  bevelLineB.position.x = 0.56;
+  const baseStone = box(1.72, 0.16, 0.94, edgeMat);
+  baseStone.position.y = 0.08;
+  const darkContact = new THREE.Mesh(new THREE.CircleGeometry(4.4, 36), dustMat);
+  darkContact.rotation.x = -Math.PI / 2;
+  darkContact.position.y = 0.012;
+  darkContact.renderOrder = 1;
+
+  group.add(darkContact, baseStone, slab, bevelLineA, bevelLineB);
+  return group;
 }
 
 function createGarage() {

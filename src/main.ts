@@ -51,6 +51,7 @@ const mobileMapButton = must<HTMLButtonElement>("#mobile-map");
 const mobileLampButton = must<HTMLButtonElement>("#mobile-lamp");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const enterButton = must<HTMLButtonElement>("#enter-base");
+const storySummaryButton = must<HTMLButtonElement>("#story-summary");
 const hudToggle = must<HTMLButtonElement>("#hud-toggle");
 const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const missionText = must<HTMLDivElement>("#mission-text");
@@ -315,6 +316,9 @@ const greenhouseLocal = new THREE.Vector3(0, 0.62, -2.65);
 const fufuNormal = new THREE.Vector3();
 const fufuForward = new THREE.Vector3();
 const fufuRestForward = new THREE.Vector3();
+let monolithAudioContext: AudioContext | null = null;
+let nextMonolithBeepAt = 0;
+let uiAudioContext: AudioContext | null = null;
 
 declare global {
   interface Window {
@@ -513,6 +517,12 @@ function bindInput() {
     event.preventDefault();
     event.stopPropagation();
     startGame();
+  });
+  storySummaryButton.addEventListener("click", () => {
+    playUiBeep();
+    window.setTimeout(() => {
+      window.location.href = "/story-overview.html";
+    }, 110);
   });
   titleScreen.addEventListener("pointerup", (event) => {
     if (started) return;
@@ -817,6 +827,7 @@ function jump() {
 
 function startGame() {
   if (started) return;
+  playUiBeep();
   started = true;
   resetQuestState();
   resetDialogueState();
@@ -948,6 +959,7 @@ function animate() {
   updatePlayerContactShadow();
   updateHelmetLamp();
   updateBackgroundMusicFade();
+  updateMonolithSignal();
 
   world.flickerLights.forEach((light, index) => {
     const base = light === world.oxygenLight && missionStep === "m1_oxygen" ? 2.3 : 1.25;
@@ -966,6 +978,64 @@ function startBackgroundMusic() {
   backgroundMusic.play().catch(() => {
     // Browser audio policies can still block playback in unusual cases.
   });
+}
+
+function updateMonolithSignal() {
+  if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket) return;
+  const monolithWorldPosition = new THREE.Vector3();
+  world.monolith.object.getWorldPosition(monolithWorldPosition);
+  const distance = player.position.distanceTo(monolithWorldPosition);
+  if (distance > world.monolith.radius) return;
+
+  const proximity = 1 - THREE.MathUtils.clamp(distance / world.monolith.radius, 0, 1);
+  const interval = THREE.MathUtils.lerp(1.35, 0.38, proximity);
+  if (elapsedTime < nextMonolithBeepAt) return;
+  nextMonolithBeepAt = elapsedTime + interval;
+  playMonolithBeep(THREE.MathUtils.lerp(0.035, 0.12, proximity));
+}
+
+function playMonolithBeep(volume: number) {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  monolithAudioContext ??= new AudioContextClass();
+  const context = monolithAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+
+  const now = context.currentTime;
+  for (const offset of [0, 0.13]) {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now + offset);
+    gain.gain.setValueAtTime(0.0001, now + offset);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), now + offset + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.075);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now + offset);
+    oscillator.stop(now + offset + 0.09);
+  }
+}
+
+function playUiBeep() {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(1040, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.075, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.1);
 }
 
 function updateBackgroundMusicFade() {
