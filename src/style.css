@@ -92,7 +92,13 @@ body {
   line-height: 1.6;
 }
 
-#enter-base {
+.title-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.title-action {
   --corner-cut: 8px;
   position: relative;
   width: fit-content;
@@ -112,7 +118,7 @@ body {
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
 }
 
-#enter-base::before {
+.title-action::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -121,7 +127,22 @@ body {
   pointer-events: none;
 }
 
-#enter-base:focus-visible {
+.title-action-primary {
+  background: #d98236;
+  color: #1d0d08;
+}
+
+.title-action-secondary {
+  background: rgba(15, 20, 22, 0.82);
+  color: #f7efe3;
+  border: 1px solid rgba(247, 239, 227, 0.24);
+}
+
+.title-action-secondary::before {
+  border-color: rgba(102, 217, 255, 0.42);
+}
+
+.title-action:focus-visible {
   outline: 2px solid #ffe0ac;
   outline-offset: 4px;
 }

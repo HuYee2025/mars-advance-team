@@ -111,6 +111,7 @@
 
 - `docs/story/core-story-v1.md`
 - `docs/story/core-story-v2-rational-wonder.md`
+- `docs/story/core-story-v2-visual.html`
 
 该文件作为后续主线任务、支线任务、角色对白、结局气质和美术氛围的共同创意基础。
 

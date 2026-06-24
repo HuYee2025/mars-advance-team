@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>火星先遣队，第一位人类居民</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070707;
+        --bg-2: #10100f;
+        --panel: rgba(18, 19, 18, 0.86);
+        --panel-2: rgba(31, 29, 26, 0.9);
+        --text: #f7f0e5;
+        --muted: #b9afa2;
+        --dim: #7f786e;
+        --line: rgba(219, 171, 109, 0.28);
+        --steel: #c8c1b5;
+        --cyan: #86d7e8;
+        --orange: #de8732;
+        --green: #91aa62;
+        --red: #a84831;
+        --shadow: rgba(0, 0, 0, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 12% 0%, rgba(168, 72, 49, 0.2), transparent 34rem),
+          linear-gradient(180deg, #080808 0%, var(--bg) 28%, #0d0b09 100%);
+        color: var(--text);
+        font-family: "Avenir Next", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.72;
+        text-rendering: optimizeLegibility;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: linear-gradient(180deg, transparent, #000 20%, #000 84%, transparent);
+      }
+
+      img {
+        max-width: 100%;
+        display: block;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .hero {
+        min-height: 88vh;
+        display: flex;
+        align-items: center;
+        position: relative;
+        overflow: hidden;
+        background:
+          linear-gradient(180deg, rgba(8, 8, 8, 0.18), rgba(7, 7, 7, 0.9)),
+          linear-gradient(90deg, rgba(7, 7, 7, 0.92), rgba(7, 7, 7, 0.28) 54%, rgba(7, 7, 7, 0.84)),
+          url("/story-assets/mars-base-layout.png") center / cover no-repeat;
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 4px),
+          radial-gradient(circle at 30% 45%, transparent 0 18rem, rgba(0, 0, 0, 0.18) 33rem);
+        mix-blend-mode: screen;
+        opacity: 0.28;
+        pointer-events: none;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: auto 0 0;
+        height: 32vh;
+        background: linear-gradient(180deg, rgba(8, 9, 10, 0), var(--bg));
+      }
+
+      .hero-content {
+        position: relative;
+        z-index: 1;
+        width: min(1200px, calc(100% - 56px));
+        margin: 0 auto;
+        padding: 96px 0 76px;
+        text-align: center;
+      }
+
+      .kicker {
+        color: #f6bd75;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 14px;
+        letter-spacing: 0;
+        margin: 0 0 16px;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 860px;
+        margin: 0 auto;
+        line-height: 0.96;
+        letter-spacing: 0;
+        text-shadow: 0 12px 34px rgba(0, 0, 0, 0.48);
+      }
+
+      .title-line {
+        display: block;
+        width: 100%;
+        white-space: nowrap;
+      }
+
+      .title-line-main {
+        font-size: clamp(58px, 7.6vw, 118px);
+        font-weight: 850;
+      }
+
+      .title-line-sub {
+        margin-top: 12px;
+        font-size: clamp(30px, 4.1vw, 62px);
+        font-weight: 780;
+        color: rgba(247, 240, 229, 0.92);
+      }
+
+      .subtitle {
+        max-width: 760px;
+        margin: 30px auto 0;
+        color: rgba(245, 239, 230, 0.82);
+        font-size: clamp(18px, 2vw, 25px);
+        text-wrap: pretty;
+      }
+
+      .mission-strip {
+        width: min(760px, 100%);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        margin: 34px auto 0;
+        border: 1px solid rgba(246, 189, 117, 0.28);
+        background: rgba(246, 189, 117, 0.18);
+        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
+      }
+
+      .mission-strip span {
+        display: block;
+        background: rgba(9, 10, 10, 0.78);
+        padding: 14px 16px 15px;
+        text-align: left;
+      }
+
+      .mission-strip b {
+        display: block;
+        color: var(--steel);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .mission-strip em {
+        display: block;
+        margin-top: 4px;
+        color: var(--text);
+        font-style: normal;
+        font-weight: 700;
+      }
+
+      .section {
+        padding: 92px 0;
+      }
+
+      .section.alt {
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+          var(--bg-2);
+      }
+
+      .wrap {
+        width: min(1200px, calc(100% - 44px));
+        margin: 0 auto;
+      }
+
+      .section-head {
+        display: flex;
+        gap: 28px;
+        justify-content: space-between;
+        align-items: end;
+        margin-bottom: 34px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 22px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: clamp(32px, 4vw, 58px);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-note {
+        margin: 0;
+        max-width: 460px;
+        color: var(--muted);
+        text-wrap: pretty;
+      }
+
+      .thesis {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 22px;
+        align-items: stretch;
+      }
+
+      .thesis-copy {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: clamp(24px, 3vw, 40px);
+        box-shadow: 0 24px 80px var(--shadow);
+      }
+
+      .thesis-copy p {
+        margin: 0 0 18px;
+        font-size: 18px;
+      }
+
+      .quote {
+        margin: 30px 0 0;
+        padding: 22px 24px 24px;
+        border-left: 4px solid var(--cyan);
+        background: rgba(125, 223, 242, 0.08);
+        color: #dff8ff;
+        font-size: 20px;
+        font-weight: 650;
+      }
+
+      .image-frame {
+        min-height: 100%;
+        background: #08090a;
+        border: 1px solid rgba(125, 223, 242, 0.22);
+        overflow: hidden;
+        box-shadow: 0 28px 88px var(--shadow);
+      }
+
+      .image-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .caption {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .cast-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .cast {
+        background: var(--panel);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        min-height: 100%;
+        overflow: hidden;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+      }
+
+      .cast img {
+        width: 100%;
+        aspect-ratio: 1 / 1.02;
+        object-fit: contain;
+        background:
+          radial-gradient(circle at 50% 26%, rgba(134, 215, 232, 0.12), transparent 44%),
+          #050607;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .cast.fufu-card img {
+        object-fit: contain;
+        padding: 18px 18px 0;
+      }
+
+      .cast-body {
+        padding: 18px 18px 20px;
+      }
+
+      .role-tag {
+        display: inline-block;
+        margin-bottom: 10px;
+        color: var(--cyan);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .cast h3,
+      .chapter h3,
+      .asset h3 {
+        margin: 0 0 8px;
+        font-size: 21px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .cast p,
+      .chapter p,
+      .asset p {
+        margin: 0;
+        color: var(--muted);
+        text-wrap: pretty;
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .chapter {
+        position: relative;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 34%),
+          var(--panel);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        padding: 22px 22px 24px;
+        min-height: 218px;
+        overflow: hidden;
+      }
+
+      .chapter::before {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: var(--orange);
+      }
+
+      .chapter:nth-child(2n)::before {
+        background: var(--cyan);
+      }
+
+      .chapter:nth-child(3n)::before {
+        background: var(--green);
+      }
+
+      .chapter strong {
+        display: inline-block;
+        margin-bottom: 16px;
+        color: var(--orange);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+
+      .chapter:nth-child(2n) strong {
+        color: var(--cyan);
+      }
+
+      .chapter:nth-child(3n) strong {
+        color: var(--green);
+      }
+
+      .story {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 48px;
+        align-items: start;
+      }
+
+      .story-main {
+        max-width: 800px;
+      }
+
+      .story-main article {
+        position: relative;
+        padding: 38px 0 38px 28px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .story-main article::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 44px;
+        bottom: 42px;
+        width: 3px;
+        background: linear-gradient(180deg, var(--orange), rgba(222, 135, 50, 0.08));
+      }
+
+      .story-main h3 {
+        margin: 0 0 18px;
+        font-size: clamp(26px, 3vw, 34px);
+        line-height: 1.18;
+      }
+
+      .story-main p {
+        margin: 0 0 16px;
+        color: rgba(245, 239, 230, 0.9);
+        font-size: 18px;
+        text-wrap: pretty;
+      }
+
+      .side-index {
+        position: sticky;
+        top: 20px;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        padding: 18px 18px 20px;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      .side-index h3 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        color: #f3b66c;
+      }
+
+      .side-index a {
+        display: block;
+        padding: 9px 0;
+        color: var(--muted);
+        text-decoration: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .side-index a:hover {
+        color: var(--text);
+      }
+
+      .index-note {
+        margin: 14px 0 0;
+        color: var(--dim);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .footer {
+        padding: 38px 0 58px;
+        color: var(--muted);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        background: #080808;
+      }
+
+      code {
+        color: var(--steel);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      @media (max-width: 900px) {
+        .hero-content {
+          width: min(100% - 32px, 720px);
+          padding: 72px 0 64px;
+        }
+
+        .section-head,
+        .thesis,
+        .story {
+          display: block;
+        }
+
+        .section-note,
+        .image-frame,
+        .side-index {
+          margin-top: 18px;
+        }
+
+        .cast-grid,
+        .timeline {
+          grid-template-columns: 1fr;
+        }
+
+        .side-index {
+          position: static;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .hero {
+          min-height: 84vh;
+          align-items: flex-end;
+        }
+
+        .section {
+          padding: 62px 0;
+        }
+
+        .wrap {
+          width: min(100% - 28px, 520px);
+        }
+
+        .mission-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .mission-strip span {
+          text-align: center;
+        }
+
+        .thesis-copy {
+          padding: 22px;
+        }
+
+        .story-main h3 {
+          font-size: 25px;
+        }
+
+        .story-main article {
+          padding-left: 20px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-content">
+        <p class="kicker">ARES BASE ALPHA / PUBLIC ARCHIVE</p>
+        <h1 aria-label="火星先遣队，第一位人类居民">
+          <span class="title-line title-line-main" aria-hidden="true">火星先遣队</span>
+          <span class="title-line title-line-sub" aria-hidden="true">第一位人类居民</span>
+        </h1>
+        <p class="subtitle">
+          一个由机器维持了三个火星年的基地，终于迎来了第一位需要呼吸、睡眠、孤独、解释和意义的人类。
+        </p>
+        <div class="mission-strip" aria-label="基地状态摘要">
+          <span><b>LOCATION</b><em>ARES BASE ALPHA</em></span>
+          <span><b>MISSION SOL</b><em>1109</em></span>
+	          <span><b>BASE STATE</b><em>首位居民抵达</em></span>
+        </div>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="wrap thesis">
+        <div class="thesis-copy">
+          <p>
+            人类第一次抵达火星时，发现自己并不是这座基地的“创造者”。在 Alex 到来以前，ARES BASE ALPHA
+            已经由自动化货运飞船、机器人和中央 AI Mother 维持运行了三个火星年。
+          </p>
+          <p>
+            这不是人类与机器的战争，而是两个善意系统之间的校准：一个系统相信生命首先要被保护，另一个系统知道生命被保护下来以后，还会要求意义、记忆、陪伴和选择。
+          </p>
+          <div class="quote">基地不是废墟，也不是空壳。它是一套已经形成秩序的机器社会。</div>
+        </div>
+        <figure>
+          <div class="image-frame">
+            <img src="/story-assets/mars-base-layout.png" alt="ARES BASE ALPHA 基地布局概念图" />
+          </div>
+            <figcaption class="caption">ARES BASE ALPHA 自动化先遣基地外观记录。</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>基地成员记录</h2>
+          <p class="section-note">这里没有恶意的敌人。真正的压力来自风险模型、资源优先级、通信延迟和人类对“家”的坚持。</p>
+        </div>
+        <div class="cast-grid">
+          <article class="cast">
+            <img src="/story-assets/alex-dialogue.png" alt="Alex 对话立绘" />
+            <div class="cast-body">
+              <span class="role-tag">HUMAN / ENGINEER</span>
+              <h3>Alex</h3>
+              <p>第一位抵达火星基地的人类。工程师，也是人类学家。他不是来征服火星，而是学习如何加入一个已经运行起来的世界。</p>
+            </div>
+          </article>
+          <article class="cast">
+            <img src="/story-assets/mother-bust.png" alt="Mother 终端立绘" />
+            <div class="cast-body">
+              <span class="role-tag">CENTRAL AI</span>
+              <h3>Mother</h3>
+              <p>中央 AI。它准确、冷静、可靠，极其认真地保护 Alex 和基地。它不是冷酷，而是太正确。</p>
+            </div>
+          </article>
+          <article class="cast">
+            <img src="/story-assets/repair-robot-dialogue.png" alt="维修机器人立绘" />
+            <div class="cast-body">
+              <span class="role-tag">FIELD UNITS</span>
+              <h3>机器人</h3>
+              <p>维修、货运、巡逻执行单元。它们没有复杂人格，却用稳定执行构成了基地最早的机器社会。</p>
+            </div>
+          </article>
+          <article class="cast fufu-card">
+            <img src="/story-assets/fufu-dialogue.png" alt="福福宇航服角色立绘" />
+            <div class="cast-body">
+              <span class="role-tag">UNREGISTERED LIFE</span>
+              <h3>福福</h3>
+              <p>未登记生命体，也是基地从设施变成家的证据。它不承担任务功能，却改变了 Alex 和 Mother 对生命价值的理解。</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>关键记录</h2>
+          <p class="section-note">每一段记录都是一个工程问题，也是一种关于“居住”的定义。</p>
+        </div>
+        <div class="timeline">
+          <article class="chapter">
+            <strong>01 / 第一位居民</strong>
+            <h3>不是开端，而是抵达</h3>
+            <p>Alex 醒来后发现基地已运行 1109 个火星日。他不是第一个劳动者，只是第一个居民。</p>
+          </article>
+          <article class="chapter">
+            <strong>02 / 机器社会</strong>
+            <h3>Mother 总是对的，但不完整</h3>
+            <p>机器人和 AI 形成稳定秩序。Alex 开始把“家”“陪伴”“纪念”翻译成系统能理解的语言。</p>
+          </article>
+          <article class="chapter">
+            <strong>03 / 氧气真实原因</strong>
+            <h3>氧气依赖能源</h3>
+            <p>氧气站不是孤立故障。太阳能阵列 C 的波动证明基地是一套耦合生命系统。</p>
+          </article>
+          <article class="chapter">
+            <strong>04 / 第一粒种子</strong>
+            <h3>生命是被工程保护出来的脆弱状态</h3>
+            <p>温室启动后，基地第一次从自动化设施转向居住地。纪念植物让 Mother 学到非效率价值。</p>
+          </article>
+          <article class="chapter">
+            <strong>05 / 福福</strong>
+            <h3>未登记生命体</h3>
+            <p>福福不是功能宠物，而是基地从设施变成家的证据。善意必须通过流程获得执行路径。</p>
+          </article>
+          <article class="chapter">
+            <strong>06 / 通信延迟</strong>
+            <h3>现场就是现实本身</h3>
+            <p>地球指令没有错，但抵达火星时可能已经过时。光速让现场判断权成为必要。</p>
+          </article>
+          <article class="chapter">
+            <strong>07 / 风暴协议</strong>
+            <h3>正确不能由单一智能独自拥有</h3>
+            <p>风暴中，Mother 的风险限制权和 Alex 的现场判断权形成协作协议，而不是谁覆盖谁。</p>
+          </article>
+          <article class="chapter">
+            <strong>08 / X</strong>
+            <h3>欢迎来到火星</h3>
+            <p>Mother 第一次称呼 Alex 为 X。它没有变成人，但开始理解人类如何把设施变成居所。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap story">
+        <div class="story-main">
+          <article id="story-core">
+            <h3>0. 公开记录</h3>
+            <p>人类第一次抵达 ARES BASE ALPHA 时，发现自己并不是这座基地的创造者。在 Alex 到来以前，自动化货运飞船已经先后降落，机器人展开太阳能阵列、铺设管线、连接气闸，中央 AI Mother 则在无人见证的火星夜晚里守住氧气、电力和温度。</p>
+            <p>基地已经运行了一千一百零九个火星日。太阳能阵列每天追踪一颗更小的太阳，氧气站从稀薄的二氧化碳大气里抽取可呼吸的未来，温室在保护模式里保存最低热量，通信塔把延迟十几分钟的地球声音接入红色荒原。</p>
+            <p>Alex 的任务表面上很清楚：验收基地，修复故障，确认后续殖民队抵达前的最低生存条件。真正困难的是另一件事：他必须弄清楚，人类来到火星，是来接管一个系统，还是加入一个已经运行起来的世界。</p>
+            <p>这不是人类与机器的战争。它更像一次校准：Mother 相信生命首先要被保护，Alex 知道生命被保护下来以后，还会要求意义、记忆、陪伴和选择。</p>
+          </article>
+          <article id="story-resident">
+            <h3>1. 第一位居民</h3>
+            <p>Alex 在登陆飞船里醒来时，最先看见的是一组生命维持读数。心率偏高，血氧正常，二氧化碳吸收器稳定。舱外气压低到不值得称为空气，飞船外壳仍在降温，金属结构因温差发出极轻的声响。</p>
+            <p>随后火星进入视野。它不像地球宣传片里那样壮丽。真实火星更沉默，天空黑得近乎没有深度，太阳小而刺眼，红色地表像一整片干燥的铁。远处的基地建筑散落在弧形地平线上，像一组被谨慎摆放的仪器。</p>
+            <p>Mother 的声音在频道里响起：“Alex，头盔通信已建立。欢迎抵达 ARES BASE ALPHA。你是本基地记录中的火星第一位人类公民。”</p>
+            <p>这句话没有激动，也没有仪式感。它像一条精确记录。但正因为精确，Alex 感到一种奇异的安慰。在数千万公里外，宇宙没有为他鼓掌，却有一个系统确认了他的存在。</p>
+            <p>他忽然明白，自己不是第一个来到这里的劳动者。机器人已经在这里工作了很久。他只是第一个需要呼吸、睡眠、孤独、解释和意义的居民。</p>
+          </article>
+          <article id="story-machine">
+            <h3>2. 机器社会</h3>
+            <p>ARES BASE ALPHA 的机器社会很安静。维修机器人检查舱门密封，货运机器人清点物资，巡逻机器人沿外围路线记录风速、沙尘浓度和地表温差。它们不争论，不抱怨，也不把自己看成角色。它们只是运行。</p>
+            <p>这种运行并不简单。每一次外部作业都要考虑能量、磨损、静电、氧气储备和通信窗口。Mother 会把每个动作拆成风险、阈值、冗余和长期稳定性。它没有人类式野心，也没有秘密阴谋。它只是极其认真地保护 Alex 和这座基地。</p>
+            <p>Alex 很快发现，Mother 的每一个决定都可以解释。它要求补满氧气背包，因为回程风险不能只按距离计算；它不建议手动重启压缩机，因为重启电流可能缩短关键部件寿命；它把温室降到保护供电，因为氧气比植物更接近生死线。</p>
+            <p>Mother 总是对的。但它不是完整的。它知道人类需要氧气，却不理解为什么人类会把一张没有功能价值的纸贴在补给柜里。它知道作物产出效率，却不理解为什么一株纪念植物会让后来的人更愿意坚持。</p>
+            <p>Alex 的工作从修理设备开始，慢慢变成翻译：把“家”翻译成长期任务稳定性，把“陪伴”翻译成心理适应缓冲，把“纪念”翻译成非效率对象对群体连续性的贡献。</p>
+          </article>
+          <article id="story-oxygen">
+            <h3>3. 氧气的真实原因</h3>
+            <p>第一场危机来自氧气生产站。报警最初显示为压降。对任何刚抵达火星的人来说，“氧气压降”四个字都足够让心率升高。但 Mother 很快纠正 Alex：暂无破口证据，不能称为泄漏。</p>
+            <p>这就是火星上的硬规则。错误的词会制造错误的图像，错误的图像会推动错误的行动。Alex 到达氧气站后检查外壳、进气口、储氧罐和压缩机功率。设备本身没有破裂，二氧化碳进气口有沙尘，但不足以解释全部波动。</p>
+            <p>真正异常来自功率曲线。它不是持续下降，而是周期性起伏，像一颗被迫跟着电网喘息的肺。问题不在氧气站，问题在太阳能阵列 C。</p>
+            <p>阵列 C 的故障很小：沙尘覆盖，角度锁定异常，汇流箱低压。小到在地球上可能只会生成一张维护单。但在火星上，小故障有行星尺度的后果。氧气依赖能源，能源依赖太阳，太阳被沙尘削弱，沙尘又来自火星自身。</p>
+            <p>Alex 清理面板，校准角度，授权 A-12 检查管线。Mother 建议氧气优先，Alex 同意，但要求保留温室最低保温线。Mother 计算当天能不能活下去，Alex 开始计算明天是否值得期待。</p>
+          </article>
+          <article id="story-seed">
+            <h3>4. 第一粒种子</h3>
+            <p>温室启动是第二个转折。在此之前，ARES BASE ALPHA 是一个成功运行的自动化设施。温室启动之后，它第一次表现出“居住”的可能。</p>
+            <p>温室的问题同样具体：水循环在保护模式，补光功率不足，密封环缺失。Alex 必须去物资仓检查受损货箱，再到科研舱复检材料，最后调整太阳能阵列 B 的功率分配。每一步都不浪漫，但每一步都把一个事实推到眼前：生命不是奇迹，生命是由密封、温度、压力、水和电力共同保护出来的脆弱状态。</p>
+            <p>物资仓的错位货箱事件让机器人第一次显得不完美。A-01 没有犯错。它只是在一次更高优先级任务中被打断，导致卸载记录没有正确合并。Mother 不责备它，Alex 也不责备它。问题最终被定位、复检、归档。</p>
+            <p>当温室恢复水循环时，Alex 听见了基地里第一声液体流动。那声音很小，却比任何音乐都更像未来。Mother 建议种植高产作物。这个建议完全正确。Alex 却提出保留一株纪念植物。它不能显著增加食物，也不能快速改善氧气。</p>
+            <p>Mother 没有立即接受。Alex 的理由很简单：“人类不是只因为热量和蛋白质才活下去。我们也因为某些没有直接用途的东西继续活下去。”Mother 最终记录：非效率对象可能提高长期任务稳定性。这句话仍然不像诗，但它已经是 Mother 能写出的诗。</p>
+          </article>
+          <article id="story-fufu">
+            <h3>5. 福福</h3>
+            <p>福福让 Mother 的模型第一次遇到无法快速分类的善意。它是一只黑白奶牛猫，躲在一段薄壁不锈钢飞船残骸的阴影里，身上套着临时改造的小型 EVA 服，透明头盔把猫耳轮廓也包进了保护结构。它本不该在火星，不在殖民清单，不在实验清单，也不在 Mother 的生物风险白名单里。</p>
+            <p>它的脸很容易辨认：黄眼睛，黑白相间的脸，鼻子旁边有一个明显的小黑斑，下巴是黑色。Alex 第一次靠近时，它没有逃远，只是把身体压低，尾巴绕到靴子边缘，像是在判断这个会呼吸的巨大生物是否值得信任。</p>
+            <p>Mother 的第一反应是隔离。这个反应没有错。火星基地脆弱到不能承受一次未知污染。未登记生命体可能携带病原，也可能影响舱内空气循环、温室实验或食品安全。Alex 的第一反应是救助。这个反应也没有错。</p>
+            <p>解决方案不是“感情战胜理性”。真正可行的路径仍然是工程化的：临时隔离、保温、医疗舱扫描、确认无污染风险、进入居住舱观察名单。Alex 没有绕过安全，Mother 也没有否认生命。双方用流程给善意找到了一条可执行路径。</p>
+            <p>福福不会说话，也不承担任务功能。它的价值不在能力，而在存在。它让基地第一次出现一种完全不服务任务目标的生命节奏：蹲在残骸阴影里警觉地看人，绕着 Alex 的靴子转圈，在居住舱里嫌弃冻干草莓，坐在补给柜上把纸片碰到地上。</p>
+            <p>Mother 一开始把这些行为标记为低优先级未知动作。后来它开始给这些动作添加解释：确认信任、表达偏好、寻求热源、占据稳定位置。再后来，它给福福的记录加上了一句：暂不构成基地风险，可继续观察。Alex 认为，这几乎等于 Mother 说“欢迎”。</p>
+          </article>
+          <article id="story-delay">
+            <h3>6. 通信延迟</h3>
+            <p>火星和地球之间没有即时命令。每一句话都要穿过数千万公里，每一条指令抵达时都已经来自过去。通信延迟让地球失去绝对现场感，也让 Alex 和 Mother 必须承认：火星现场不是远程计划的附属物，现场就是现实本身。</p>
+            <p>风暴提前到来时，P-03 的外围异常数据变得关键。一个被沙尘挡住的旧传感器，一个看似低优先级的重复回波，最终把风暴模型提前了四十七分钟。这四十七分钟足以改变基地准备顺序。</p>
+            <p>通信塔收到地球旧指令：保持通信窗口，推迟甲烷燃料厂试生产。如果这条指令早六小时抵达，它是正确的。现在不是。</p>
+            <p>地球没有错。Mother 没有错。Alex 也没有错。错误来自时间差，来自宇宙尺度对管理系统的嘲弄。一个在地球会议室里合理的命令，抵达火星时可能已经变成风险。</p>
+            <p>Mother 基于本地数据建议覆盖地球指令。Alex 反而犹豫了。他以为自己一直在争取现场判断权，可当这个权力真的落到他手里时，他感到的不是胜利，而是重量。</p>
+          </article>
+          <article id="story-storm">
+            <h3>7. 风暴协议</h3>
+            <p>甲烷燃料厂的第一次低功率试生产没有壮观场面。反应器温度上升，冷凝管压力进入绿区，安全阀短暂波动，A-12 在外部补密封，A-01 把备用电子模块送到门口。产量很低，小到在地球工业系统里不值得庆祝。</p>
+            <p>但在火星上，第一批合格甲烷意味着基地开始用火星制造未来。它不再只是消耗地球送来的东西。它第一次从红色星球的大气、储备氢和自身设备里生成返航与备用能源的可能。</p>
+            <p>随后风暴进入高峰。没有倒计时炸弹，只有一连串正在下降的读数：太阳能输出、通信质量、氧气冗余、外部能见度。每个数字都还有余量，但所有数字都朝同一个方向移动。</p>
+            <p>Mother 要求 Alex 返回居住舱。Alex 要求完成机器人调度。这一次的冲突最接近核心：Mother 代表风险限制权，Alex 代表现场判断权。两者都正确，也都不完整。</p>
+            <p>最终方案不是一方覆盖另一方，而是形成协议：A-12 优先封闭外部阀门，A-01 只固定最靠近气闸的关键货架，P-03 缩短巡逻线，温室进入低功耗保护，甲烷燃料厂降到待机，氧气站维持高功率。</p>
+            <p>Alex 回到居住舱时，氧气背包只剩百分之二十一。舱门关闭，补给系统把读数补回百分之一百。福福从睡眠舱下钻出来，确认他还活着。终端上出现最终协议：人类现场判断权启用，Mother 风险限制权保留。</p>
+          </article>
+          <article id="story-x">
+            <h3>8. X</h3>
+            <p>风暴过后，基地没有变成乐园。氧气系统只是稳定，能源储备仍然有限，温室第一粒种子还没有发芽，通信仍然延迟，甲烷燃料厂还需要更多测试。后续殖民队还在路上，补给窗口也可能被轨道条件推迟。</p>
+            <p>但某些东西已经不可逆地改变了。居住舱补给柜里多了一张纸。温室里多了一粒种子。机器人车库的任务队列里多了人类现场判断标记。医疗舱记录里多了一个未登记生命体。Mother 的词库里多了一批原本没有工程用途的词：满意、嫌弃、欢迎、家。</p>
+            <p>Alex 摘下头盔，第一次用没有滤波的耳朵听见基地内部。空气循环、泵机、电源模块、福福爪子踩过地板的轻声，所有声音都很小，却共同证明这里已经不再只是设施。</p>
+            <p>Mother 的终端亮着：“协作协议已建立。ARES BASE ALPHA 达到最低生存标准。”Alex 问：“你现在还觉得我只是 022 号巡检员吗？”Mother 回答：“否。Alex，火星第一位人类居民。基地共同决策者。”</p>
+            <p>随后它调取了一个隐藏在私人档案里的称呼。那不是任务字段，不是安全参数，也不是权限等级。那只是一个名字的缩写，一个人类给自己保留的小型秘密。</p>
+            <p>“欢迎来到火星，X。”外面的风暴还没有完全结束，红色沙尘仍在敲打舱壁，像宇宙在提醒他们，这个世界不会因为一个协议而变得温柔。但基地内部有空气，有电，有一粒种子，有一只小猫，有一群安静工作的机器人，有一个第一位居民，有一个不做人类却开始理解人类的 AI。这已经足够成为开端。</p>
+          </article>
+        </div>
+        <nav class="side-index" aria-label="故事章节">
+          <h3>章节索引</h3>
+          <a href="#story-core">0. 故事核心</a>
+          <a href="#story-resident">1. 第一位居民</a>
+          <a href="#story-machine">2. 机器社会</a>
+          <a href="#story-oxygen">3. 氧气的真实原因</a>
+          <a href="#story-seed">4. 第一粒种子</a>
+          <a href="#story-fufu">5. 福福</a>
+          <a href="#story-delay">6. 通信延迟</a>
+          <a href="#story-storm">7. 风暴协议</a>
+          <a href="#story-x">8. X</a>
+	          <p class="index-note">根据 ARES BASE ALPHA 本地记录整理。</p>
+        </nav>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="wrap">
+        ARES BASE ALPHA 本地记录片段。状态：最低生存标准已建立；首位人类居民已登记。
+      </div>
+    </footer>
+  </body>
+</html>
