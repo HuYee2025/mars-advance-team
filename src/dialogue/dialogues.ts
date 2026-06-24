@@ -3,9 +3,9 @@ import motherPortraitUrl from "../../assets/portraits/mother-bust.webp";
 import repairRobotPortraitUrl from "../../assets/portraits/repair-robot-dialogue.webp";
 import elonPortraitUrl from "../../assets/portraits/elon-dialogue-transparent.webp";
 import scaleGunPortraitUrl from "../../assets/concepts/scale-gun-concept.webp";
-import monolithPortraitUrl from "../../assets/portraits/monolith-dialogue-green.webp";
+import monolithPortraitUrl from "../../assets/portraits/monolith-dialogue-transparent.webp";
 
-export type CharacterId = "alex" | "mother" | "repairRobot" | "elon" | "scaleGun" | "monolith";
+export type CharacterId = "alex" | "mother" | "repairRobot" | "elon" | "monolith";
 export type DialogueSceneId = "intro" | "oxygen" | "solar" | "garage" | "robot" | "elon" | "monolith";
 export type DialogueNodeId = string;
 
@@ -63,15 +63,9 @@ export const characters: Record<CharacterId, { name: string; callsign: string; p
     portrait: elonPortraitUrl,
     side: "right",
   },
-  scaleGun: {
-    name: "放大缩小枪",
-    callsign: "黑色方碑赠予工具",
-    portrait: scaleGunPortraitUrl,
-    side: "right",
-  },
   monolith: {
     name: "黑色方碑",
-    callsign: "无声异常物",
+    callsign: "神秘石碑",
     portrait: monolithPortraitUrl,
     side: "right",
   },
@@ -94,7 +88,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     speaker: "monolith",
     listener: "alex",
     image: scaleGunPortraitUrl,
-    text: "黑色方碑没有发出任何声音。你的头盔界面自动展开一张装备图纸：放大缩小枪。获得后装备在右手；后续按 R 进入瞄准模式，准星对准目标后选择“放大”或“缩小”。效果持续 1 分钟后自动还原，最大 3 倍，最小约三分之一。",
+    text: "这是一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 R 举起缩放枪，锁定目标后选择“放大”或“缩小”。",
     choices: [{ label: "获取", next: "monolith_scale_gun_acquired", effects: ["acquireScaleGun"] }],
   },
   monolith_scale_gun_acquired: {
@@ -103,7 +97,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     speaker: "monolith",
     listener: "alex",
     image: scaleGunPortraitUrl,
-    text: "装备已绑定。黑色方碑仍然沉默。",
+    text: "缩放枪已加入装备。需要时按 R 举起它。",
     end: true,
   },
   intro_start: {

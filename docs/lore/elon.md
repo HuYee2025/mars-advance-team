@@ -10,8 +10,8 @@
 - 场景边界：03 飞船内舱不可进入，Elon 只在高空廊道靠近舱门处与玩家互动
 - 形象：站立的人形机器狗，机器狗头部 + 人形宇航服身体
 - 游戏内模型：约 2 米高，略高于 Alex；站在升降平台到达顶端后的高空廊道上，身体朝向火星基地，像是在观察整座基地的工程系统
-- 概念图：`assets/concepts/elon-character-concept.png`
-- 对话图：`assets/portraits/elon-dialogue-transparent.png`
+- 概念图：`assets/concepts/elon-character-concept.webp`
+- 对话图：`assets/portraits/elon-dialogue-transparent.webp`
 - 绿幕源图：`assets/portraits/elon-dialogue-green.png`
 - 核心用途：作为开放式 AI 对话功能的测试角色
 

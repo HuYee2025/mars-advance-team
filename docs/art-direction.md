@@ -6,21 +6,20 @@
 
 ## 参考资产
 
-- 角色概念图：`assets/concepts/mars-engineer-character.png`
-- 车辆/机器人概念图：`assets/concepts/mars-rover-robots.png`
-- 基地布局概念图：`assets/concepts/mars-base-layout.png`
-- 故事页首屏火星地表背景：`assets/story/mars-surface-hero.png`
-- 福福宇航服概念图：`assets/concepts/fufu/fufu-astronaut-concept.png`
-- 福福深色角色立绘：`assets/portraits/fufu-dialogue.png`
-- Elon 概念图：`assets/concepts/elon-character-concept.png`
-- Elon 对话图：`assets/portraits/elon-dialogue-transparent.png`
+- 角色概念图：`assets/concepts/mars-engineer-character.webp`
+- 车辆/机器人概念图：`assets/concepts/mars-rover-robots.webp`
+- 基地布局概念图：`assets/concepts/mars-base-layout.webp`
+- 故事页首屏火星地表背景：`assets/story/mars-surface-hero.webp`
+- 福福宇航服概念图：`assets/concepts/fufu/fufu-astronaut-concept.webp`
+- 福福深色角色立绘：`assets/portraits/fufu-dialogue.webp`
+- Elon 概念图：`assets/concepts/elon-character-concept.webp`
+- Elon 对话图：`assets/portraits/elon-dialogue-transparent.webp`
 - Elon 绿幕源图：`assets/portraits/elon-dialogue-green.png`
-- 放大缩小枪概念图：`assets/concepts/scale-gun-concept.png`
+- 放大缩小枪概念图：`assets/concepts/scale-gun-concept.webp`
 - 黑色方碑绿幕源图：`assets/portraits/monolith-dialogue-green.png`
-- 黑色方碑压缩参考图：`assets/portraits/monolith-dialogue-green.webp`
+- 黑色方碑透明对话立绘：`assets/portraits/monolith-dialogue-transparent.webp`
 
-这些图用于方向确认，不直接作为游戏贴图。
-网页和游戏运行时优先使用同名 WebP 压缩版本；PNG 原图主要作为后续再处理的源文件。
+这些图主要用于方向确认；默认预览和网页引用使用 WebP 压缩版本，PNG 原图只作为后续再处理的源文件。
 
 ## 可落地规则
 
@@ -30,6 +29,7 @@
 - 所有模型先用 Three.js 几何体拼装，不要求用户使用 Blender。
 - 颜色控制在少数几类：火星红、暖白舱体、石墨黑结构、橙色安全件、蓝色状态灯、温室绿色。
 - 远端异常物可以更克制：黑色方碑使用宽直立矩形、纯黑表面、极少边线和暗色接触阴影，不设底座，作为背光区域里的沉默地标。
+- 黑色方碑对话立绘采用 45 度视角；绿色背景只用于抠图源，运行时必须使用透明背景版本。缩放枪只能作为对话框内物品图出现，不能替代方碑成为对话对象。
 - 福福相关飞船遗骸背景应偏 SpaceX Starship 式薄壁不锈钢工业感：圆筒壳体、环形接缝、锐利破口、尘土和少量结构梁即可；不要厚重装甲感，也不要湿漉漉、粘稠、滴落或有机感破损物。
 - 手持工具优先做成低多边形、清晰剪影的小道具；颜色沿用暖白外壳、石墨黑结构、橙色安全件和蓝色发光镜头，避免过度写实或武器化。
 
