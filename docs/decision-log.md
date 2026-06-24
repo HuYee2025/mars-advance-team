@@ -10,13 +10,13 @@
 
 决策：
 
-- GitHub 仓库保持私有。
+- GitHub 仓库保持公开，方便部署服务拉取和更新。
 - 这个对话作为发布同步入口。
 - 每次发布前检查 `git status`、本地分支、远端分支和 GitHub 仓库可见性。
 - 如有未提交改动，先审查、构建验证，再提交。
 - 如有未合并分支，确认后合并到 `main`。
 - 最终推送到 GitHub `main`，供后续部署网站使用。
-- 当前账号的私有仓库不能使用 GitHub repository rulesets，因此暂不依赖 ruleset 做保护。
+- 仓库公开后可用于常见静态部署平台；后续如需分支保护，再单独配置 GitHub ruleset 或 branch protection。
 
 ### 任务扩展采用 3 条主线任务包 + 3 条支线任务包
 
