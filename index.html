@@ -104,6 +104,19 @@
       </section>
       <div id="interaction-prompt" aria-live="polite"></div>
       <div id="interaction-choice" aria-live="polite" aria-hidden="true"></div>
+      <section id="scale-gun-overlay" aria-label="缩放枪瞄准界面" aria-hidden="true">
+        <div class="scale-reticle" aria-hidden="true">
+          <span></span>
+        </div>
+        <div class="scale-readout">
+          <strong id="scale-gun-target">未锁定目标</strong>
+          <span>U 收起 / - 缩小 / = 放大</span>
+        </div>
+        <div class="scale-actions">
+          <button id="scale-gun-shrink" type="button">缩小</button>
+          <button id="scale-gun-grow" type="button">放大</button>
+        </div>
+      </section>
       <div id="dialogue-box" aria-live="polite"></div>
       <section id="dialogue-stage" aria-label="角色对话" aria-hidden="true">
         <div class="dialogue-scrim" aria-hidden="true"></div>
@@ -178,7 +191,8 @@
               <div class="guide-key wide"><b>E</b><span>互动</span></div>
               <div class="guide-key wide"><b>M</b><span>地图</span></div>
               <div class="guide-key wide"><b>长按 M</b><span>全屏地图</span></div>
-              <div class="guide-key wide"><b>+ / -</b><span>缩放</span></div>
+              <div class="guide-key wide"><b>U</b><span>缩放枪</span></div>
+              <div class="guide-key wide"><b>= / -</b><span>枪缩放</span></div>
               <div class="guide-key wide"><b>Enter</b><span>确认 / 开始</span></div>
             </div>
           </div>
