@@ -2148,7 +2148,11 @@ function renderTouchInteractionChoice() {
     entryButton.dataset.openInteractions = "true";
     const actionCount = interactionActions.length;
     const label = actionCount === 1 ? interactionActions[0].label : `${actionCount} 个可互动项`;
-    entryButton.innerHTML = `<strong>互动</strong><span>${label}</span>`;
+    const title = document.createElement("strong");
+    title.textContent = "互动";
+    const detail = document.createElement("span");
+    detail.textContent = label;
+    entryButton.append(title, detail);
     interactionChoice.appendChild(entryButton);
   } else {
     const header = document.createElement("div");
