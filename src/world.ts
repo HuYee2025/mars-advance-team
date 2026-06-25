@@ -501,20 +501,20 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     completed: false,
   });
 
-  const med06 = createNumberedFacility("06", 0x9ff28b, "clinic");
-  med06.scale.setScalar(NUMBERED_FACILITY_SCALE);
-  const med06X = spread(95);
-  const med06Z = spread(-79.8);
-  placeObjectOnPlanet(med06, med06X, med06Z, 0, -0.86);
-  base.add(med06);
-  landmarks.push(landmark("09 建筑 医疗舱", med06, med06X, med06Z, 34, 230));
-  addMaintenanceBot("09 机器人 医疗舱维修工", med06X, med06Z, -0.86, 5.6, -5.2, "09 建筑 医疗舱", "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。");
-  colliders.push(circle(med06X, med06Z, 6.0, "06 医疗舱"));
+  const med09 = createNumberedFacility("09", 0x9ff28b, "clinic");
+  med09.scale.setScalar(NUMBERED_FACILITY_SCALE);
+  const med09X = spread(95);
+  const med09Z = spread(-79.8);
+  placeObjectOnPlanet(med09, med09X, med09Z, 0, -0.86);
+  base.add(med09);
+  landmarks.push(landmark("09 建筑 医疗舱", med09, med09X, med09Z, 34, 230));
+  addMaintenanceBot("09 机器人 医疗舱维修工", med09X, med09Z, -0.86, -2.6, -8.8, "09 建筑 医疗舱", "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。");
+  colliders.push(circle(med09X, med09Z, 6.0, "09 医疗舱"));
   interactables.push({
     id: "medical",
     label: "09 建筑 医疗舱",
     prompt: "按 E 使用 09 建筑 医疗舱",
-    object: med06,
+    object: med09,
     radius: 10.5,
     completed: false,
   });

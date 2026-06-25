@@ -176,9 +176,12 @@ const JUMP_FORWARD_BOOST = 2.2;
 const SUIT_OXYGEN_MAX = 100;
 const SUIT_OXYGEN_DRAIN_PER_SECOND = 0.42;
 const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.35;
+const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
 const STAMINA_MAX = 100;
-const STAMINA_DRAIN_PER_SECOND = 8;
-const STAMINA_RECOVER_PER_SECOND = 7;
+const STAMINA_MOVE_DRAIN_PER_SECOND = 0.18;
+const STAMINA_SPRINT_DRAIN_PER_SECOND = 1.2;
+const STAMINA_JUMP_COST = 4;
+const STAMINA_LOW_THRESHOLD = 20;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
@@ -186,8 +189,8 @@ const FLIGHT_MIN_ALTITUDE = 1.2;
 const FLIGHT_MAX_ALTITUDE = 96;
 const SCALE_GUN_RANGE = 96;
 const SCALE_GUN_DURATION_SECONDS = 60;
-const SCALE_GUN_MIN_FACTOR = 1 / 3;
-const SCALE_GUN_MAX_FACTOR = 3;
+const SCALE_GUN_MIN_FACTOR = 1 / 4;
+const SCALE_GUN_MAX_FACTOR = 4;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
 
 type ScaleGunTarget = {
@@ -267,12 +270,20 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
   lab: "lab",
 };
 
+const oxygenSupplyPoints = [
+  { label: "居住舱补给柜", x: 11, z: 62, radius: 12, mapRange: 240 },
+  { label: "氧气生产站", x: -48.2, z: 40.4, radius: 15, mapRange: 260 },
+  { label: "登陆飞船补给舱", x: 59, z: 21.4, radius: 14, mapRange: 240 },
+];
+
 const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_mother_1", "elon_fufu_1", "elon_robots_1"];
 
 let yaw = Math.PI * 0.15;
 let pitch = 0.34;
 let orbitYawOffset = 0;
-let cameraDistance = 10;
+const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE = 10;
+let cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number } | null = null;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
 let lastFrameTime = performance.now();
@@ -306,13 +317,14 @@ let activeOxygenSupply: string | null = null;
 let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
+let staminaWarningShown = false;
 let fufuRescued = false;
 let mysteryCodeProgress = "";
 let flightModeEnabled = false;
 let hasScaleGun = false;
 let scaleGunAiming = false;
 let scaleGunTarget: ScaleGunTarget | null = null;
-let scaleGunCameraDistanceBefore = 10;
+let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
@@ -685,7 +697,12 @@ function bindInput() {
     }
     if (event.code === "KeyC") {
       event.preventDefault();
-      setFirstPersonCamera();
+      toggleFirstThirdPersonCamera();
+      return;
+    }
+    if (event.code === "Digit0" || event.code === "Numpad0") {
+      event.preventDefault();
+      resetDefaultThirdPersonCamera();
       return;
     }
     if ((event.code === "Enter" || event.code === "NumpadEnter") && interactionChoiceOpen && interactionActions.length > 1) {
@@ -1241,6 +1258,26 @@ function setFirstPersonCamera() {
   pitch = 0.34;
 }
 
+function toggleFirstThirdPersonCamera() {
+  if (!started || exitConfirmOpen || dialogueOpen) return;
+  if (scaleGunAiming) return;
+  if (cameraDistance <= 0.9) {
+    resetDefaultThirdPersonCamera();
+    return;
+  }
+  setFirstPersonCamera();
+}
+
+function resetDefaultThirdPersonCamera() {
+  if (!started || exitConfirmOpen || dialogueOpen) return;
+  if (scaleGunAiming) return;
+  cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+  orbitYawOffset = 0;
+  pitch = 0.34;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+}
+
 function adjustMapZoom(direction: number) {
   const factor = direction > 0 ? 1.18 : 1 / 1.18;
   mapZoom = THREE.MathUtils.clamp(mapZoom * factor, 0.65, 3.2);
@@ -1249,6 +1286,11 @@ function adjustMapZoom(direction: number) {
 
 function jump() {
   if (!grounded) return;
+  stamina = Math.max(0, stamina - STAMINA_JUMP_COST);
+  if (stamina <= 0) {
+    respawnAfterStaminaDepleted();
+    return;
+  }
   grounded = false;
   verticalVelocity = SUITED_JUMP_SPEED;
   playerVelocity.addScaledVector(playerForward, JUMP_FORWARD_BOOST);
@@ -1262,11 +1304,12 @@ function startGame() {
   resetDialogueState();
   gameStartElapsed = elapsedTime;
   introCallQueued = false;
-  cameraDistance = 10;
+  cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
   camera.fov = 54;
   camera.updateProjectionMatrix();
   pitch = 0.34;
   orbitYawOffset = 0;
+  exitFrontCamera = null;
   mapOpen = false;
   exitConfirmOpen = false;
   helmetLampOn = false;
@@ -1294,7 +1337,7 @@ function startGame() {
   playerAltitudeOffset = 0;
   verticalVelocity = 0;
   grounded = true;
-  resetSuitOxygen();
+  resetVitals();
   setScaleGunOwned(false);
   clearScaleGunEffects();
   resetPlayerToSpawn();
@@ -1313,6 +1356,7 @@ function returnToTitle() {
   hudCollapsed = false;
   mapOpen = false;
   mapExpanded = false;
+  exitFrontCamera = null;
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
   helmetLampOn = false;
@@ -1320,7 +1364,7 @@ function returnToTitle() {
   introCallQueued = false;
   controlsGuideOpen = false;
   messageUntil = 0;
-  resetSuitOxygen();
+  resetVitals();
   setScaleGunOwned(false);
   clearScaleGunEffects();
   closeDialogue();
@@ -1829,6 +1873,24 @@ function updateCamera(delta: number) {
     return;
   }
 
+  if (exitFrontCamera) {
+    const exitDistance = player.position.distanceTo(exitFrontCamera.origin);
+    if (exitDistance >= exitFrontCamera.releaseDistance) {
+      exitFrontCamera = null;
+    } else {
+      const distance = Math.max(cameraDistance, 8);
+      const target = player.position.clone().addScaledVector(normal, 1.45);
+      const frontDirection = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
+      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, 2.2);
+      camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
+      camera.up.copy(normal);
+      camera.lookAt(target);
+      playerRig.visual.visible = true;
+      orbitYawOffset *= Math.pow(0.03, delta);
+      return;
+    }
+  }
+
   const closeT = 1 - THREE.MathUtils.smoothstep(cameraDistance, 0.08, 2.2);
   const targetHeight = THREE.MathUtils.lerp(1.35, 1.55, closeT);
   const target = player.position.clone().addScaledVector(normal, targetHeight);
@@ -1850,7 +1912,14 @@ function placePlayerOnPlanet() {
   placeObjectOnPlanetNormal(player, playerNormal, PLAYER_ALTITUDE + playerAltitudeOffset, headingFromForward(playerNormal, playerForward));
 }
 
+function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number) {
+  exitFrontCamera = { origin: origin.clone(), releaseDistance };
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
+  orbitYawOffset = 0;
+}
+
 function resetPlayerToSpawn() {
+  exitFrontCamera = null;
   ridingElevator = null;
   activeElevator = null;
   activeHabitatDoor = null;
@@ -1876,6 +1945,47 @@ function resetPlayerToSpawn() {
   camera.fov = 54;
   camera.updateProjectionMatrix();
   placePlayerOnPlanet();
+}
+
+function respawnInsideHabitat() {
+  exitFrontCamera = null;
+  ridingElevator = null;
+  activeElevator = null;
+  activeHabitatDoor = null;
+  activeGreenhouseDoor = null;
+  insideGreenhouse = false;
+  world.greenhouseDoor.occupied = false;
+  world.greenhouseDoor.doorPanels.visible = true;
+  greenhouseLocal.set(0, 0.62, -2.65);
+  insideRocket = false;
+  rocketDoorOpen = false;
+  setRocketDoorVisual(false);
+
+  const door = world.habitatDoor;
+  door.occupied = true;
+  door.open = false;
+  door.doorPanels.visible = true;
+  door.exteriorMask.visible = true;
+  door.interiorPortal.visible = false;
+  door.interiorDoor.visible = true;
+  door.interiorScene.visible = true;
+  door.interiorLight.visible = true;
+  setHabitatInteriorMode(true);
+  habitatLocal.set(0, -0.76, -1.46);
+  player.position.copy(door.root.localToWorld(habitatLocal.clone()));
+  playerNormal.copy(new THREE.Vector3(0, 1, 0).transformDirection(door.root.matrixWorld).normalize());
+  const inward = door.root.localToWorld(new THREE.Vector3(0, -0.76, -0.4)).sub(player.position).projectOnPlane(playerNormal);
+  if (inward.lengthSq() > 0.0001) playerForward.copy(inward.normalize());
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  playerRig.visual.visible = false;
+  cameraDistance = Math.min(cameraDistance, 0.72);
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
 }
 
 function resetFufu() {
@@ -2346,15 +2456,10 @@ function findActiveOxygenSupply() {
   if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
   if (suitOxygen >= 99) return null;
   const coordinate = playerMapCoordinate();
-  const supplyPoints = [
-    { label: "居住舱补给柜", x: 11, z: 62, radius: 12 },
-    { label: "氧气生产站", x: -48.2, z: 40.4, radius: 15 },
-    { label: "登陆飞船补给舱", x: 59, z: 21.4, radius: 14 },
-  ];
 
   let nearest: string | null = null;
   let nearestDistance = Infinity;
-  for (const point of supplyPoints) {
+  for (const point of oxygenSupplyPoints) {
     const distance = Math.hypot(coordinate.x - point.x, coordinate.z - point.z);
     if (distance < point.radius && distance < nearestDistance) {
       nearest = point.label;
@@ -2366,8 +2471,17 @@ function findActiveOxygenSupply() {
 
 function resetSuitOxygen() {
   suitOxygen = SUIT_OXYGEN_MAX;
-  stamina = STAMINA_MAX;
   oxygenWarningShown = false;
+}
+
+function resetStamina() {
+  stamina = STAMINA_MAX;
+  staminaWarningShown = false;
+}
+
+function resetVitals() {
+  resetSuitOxygen();
+  resetStamina();
 }
 
 function resetRunUiAfterRespawn() {
@@ -2417,20 +2531,34 @@ function updateSuitOxygen(delta: number) {
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
   const drain = SUIT_OXYGEN_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
   suitOxygen = Math.max(0, suitOxygen - drain * delta);
-  if (sprinting) stamina = Math.max(0, stamina - STAMINA_DRAIN_PER_SECOND * delta);
-  else stamina = Math.min(STAMINA_MAX, stamina + STAMINA_RECOVER_PER_SECOND * delta);
+  if (moving) {
+    const staminaDrain = sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_MOVE_DRAIN_PER_SECOND;
+    stamina = Math.max(0, stamina - staminaDrain * delta);
+  }
   if (suitOxygen <= 20 && !oxygenWarningShown) {
     oxygenWarningShown = true;
     showDialogue("生命维持", "氧气背包低于 20%。寻找补给点更换。", 4);
   }
+  if (stamina <= STAMINA_LOW_THRESHOLD && !staminaWarningShown) {
+    staminaWarningShown = true;
+    showDialogue("生命维持", "体能低于 20%。回到居住舱休整即可恢复。", 4);
+  }
   if (suitOxygen <= 0) respawnAfterOxygenDepleted();
+  else if (stamina <= 0) respawnAfterStaminaDepleted();
 }
 
 function respawnAfterOxygenDepleted() {
-  resetSuitOxygen();
+  resetVitals();
   resetPlayerToSpawn();
   resetRunUiAfterRespawn();
   showDialogue("生命维持", "氧气耗尽。已从出发点重新同步。", 4);
+}
+
+function respawnAfterStaminaDepleted() {
+  resetVitals();
+  respawnInsideHabitat();
+  resetRunUiAfterRespawn();
+  showDialogue("生命维持", "体能耗尽。已在居住舱内重新同步，体能和氧气已恢复。", 4);
 }
 
 function findActiveHabitatDoor() {
@@ -2488,6 +2616,7 @@ function updateHabitatOccupancy() {
 }
 
 function enterHabitatInterior(door: HabitatDoorControl) {
+  exitFrontCamera = null;
   door.occupied = true;
   door.open = false;
   door.doorPanels.visible = true;
@@ -2499,12 +2628,12 @@ function enterHabitatInterior(door: HabitatDoorControl) {
   setHabitatInteriorMode(true);
   habitatLocal.set(0, -0.76, -1.46);
   player.position.copy(door.root.localToWorld(habitatLocal.clone()));
-  resetSuitOxygen();
+  resetVitals();
   cameraDistance = Math.min(cameraDistance, 0.72);
   pitch = 0.34;
   orbitYawOffset = 0;
   if (!maybeAdvanceHabitatQuestOnEntry()) {
-    showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包已补满。", 4);
+    showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包和体能已恢复。", 4);
   }
 }
 
@@ -2535,18 +2664,20 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   door.interiorScene.visible = false;
   door.interiorLight.visible = false;
   setHabitatInteriorMode(false);
-  resetSuitOxygen();
+  resetVitals();
   const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -1.18, -3.15));
   playerNormal.copy(exitWorld.normalize());
   const faceAway = door.root.localToWorld(new THREE.Vector3(0, -1.18, -4.3)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
   if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
-  cameraDistance = Math.max(cameraDistance, 10);
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
-  showDialogue("居住舱", "外舱门已打开。氧气背包 100%。", 2.8);
+  startExitFrontCamera(exitWorld, 16);
+  showDialogue("居住舱", "外舱门已打开。氧气背包与体能 100%。", 2.8);
 }
 
 function enterGreenhouse(door: GreenhouseDoorControl) {
+  exitFrontCamera = null;
   insideGreenhouse = true;
   door.occupied = true;
   door.doorPanels.visible = true;
@@ -2570,9 +2701,10 @@ function exitGreenhouse(door: GreenhouseDoorControl) {
   playerNormal.copy(exitWorld.normalize());
   const faceAway = door.root.localToWorld(new THREE.Vector3(0, 0.28, -6.0)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
   if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
-  cameraDistance = Math.max(cameraDistance, 10);
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
+  startExitFrontCamera(exitWorld, 16);
   showDialogue("Mother", "022号巡检员，温室外舱门已重新密封。", 3.2);
 }
 
@@ -2707,6 +2839,7 @@ function enterRocketInterior() {
   }
   elevatorRideLocal.x = ROCKET_HATCH_STOP_X;
   elevatorRideLocal.z = 0;
+  exitFrontCamera = null;
   insideRocket = true;
   rocketDoorOpen = true;
   setRocketDoorVisual(true, true);
@@ -2730,8 +2863,10 @@ function exitRocketInterior() {
     elevatorRideLocal.z = 0;
     alignPlayerWithElevator(ridingElevator, -1);
     placePlayerOnElevator(ridingElevator);
+    const hatchWorld = ridingElevator.car.localToWorld(elevatorRideLocal.clone());
+    startExitFrontCamera(hatchWorld, 12);
   }
-  cameraDistance = Math.max(cameraDistance, 10);
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   camera.fov = 54;
   camera.updateProjectionMatrix();
   pitch = 0.34;
@@ -2886,6 +3021,7 @@ function updateMap() {
   const radarSize = mapRadar.clientWidth || 280;
   const radarRadius = radarSize * 0.42;
   const right = playerForward.clone().cross(playerNormal).normalize();
+  const showOxygenSupplyTargets = suitOxygen <= OXYGEN_SUPPLY_RADAR_THRESHOLD;
 
   const mapItems = [
     ...world.landmarks.map((landmark) => {
@@ -2899,6 +3035,7 @@ function updateMap() {
         type,
         unknown: type === "unknown",
         missionTarget: isMissionTargetLabel(landmark.label),
+        oxygenSupplyTarget: false,
       };
     }),
     ...world.unnumberedObjects.map((item) => ({
@@ -2910,7 +3047,21 @@ function updateMap() {
       type: "unknown",
       unknown: true,
       missionTarget: false,
+      oxygenSupplyTarget: false,
     })),
+    ...(showOxygenSupplyTargets
+      ? oxygenSupplyPoints.map((point) => ({
+          label: point.label,
+          object: null,
+          x: point.x,
+          z: point.z,
+          mapRange: point.mapRange,
+          type: "oxygen",
+          unknown: false,
+          missionTarget: false,
+          oxygenSupplyTarget: true,
+        }))
+      : []),
   ];
 
   if (!fufuRescued) {
@@ -2923,6 +3074,7 @@ function updateMap() {
       type: "unknown",
       unknown: true,
       missionTarget: false,
+      oxygenSupplyTarget: false,
     });
   }
 
@@ -2939,8 +3091,8 @@ function updateMap() {
       const forward = tangent.dot(playerForward);
       return { item, distance, lateral, forward };
     })
-    .filter((entry) => entry.item.missionTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
-    .sort((a, b) => Number(b.item.missionTarget) - Number(a.item.missionTarget) || a.distance - b.distance)
+    .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
+    .sort((a, b) => Number(b.item.missionTarget) - Number(a.item.missionTarget) || Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) || a.distance - b.distance)
     .slice(0, mapExpanded ? 80 : 24);
 
   nearby.forEach((entry, index) => {
@@ -2952,6 +3104,7 @@ function updateMap() {
     const marker = document.createElement("div");
     marker.className = `map-marker type-${entry.item.type}`;
     marker.classList.toggle("is-mission-target", entry.item.missionTarget);
+    marker.classList.toggle("is-oxygen-supply-target", entry.item.oxygenSupplyTarget);
     if (entry.item.unknown) marker.textContent = "?";
     if (mapExpanded && shouldShowExpandedMapLabel(entry.item, index)) {
       const label = document.createElement("span");
@@ -2969,8 +3122,9 @@ function mapRangeForItem(itemRange: number) {
   return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 : Math.min(itemRange, 320 / mapZoom);
 }
 
-function shouldShowExpandedMapLabel(item: { missionTarget: boolean; unknown: boolean }, index: number) {
+function shouldShowExpandedMapLabel(item: { missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean }, index: number) {
   if (item.missionTarget) return true;
+  if (item.oxygenSupplyTarget) return true;
   if (item.unknown) return index < 12;
   return index < 14 && index % 2 === 0;
 }
