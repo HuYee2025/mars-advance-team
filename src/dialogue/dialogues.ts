@@ -2,7 +2,6 @@ import alexPortraitUrl from "../../assets/portraits/alex-dialogue.webp";
 import motherPortraitUrl from "../../assets/portraits/mother-bust.webp";
 import repairRobotPortraitUrl from "../../assets/portraits/repair-robot-dialogue.webp";
 import elonPortraitUrl from "../../assets/portraits/elon-dialogue-transparent.webp";
-import scaleGunPortraitUrl from "../../assets/concepts/scale-gun-concept.webp";
 import monolithPortraitUrl from "../../assets/portraits/monolith-dialogue-transparent.webp";
 
 export type CharacterId = "alex" | "mother" | "repairRobot" | "elon" | "monolith";
@@ -87,8 +86,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "monolith",
     speaker: "monolith",
     listener: "alex",
-    image: scaleGunPortraitUrl,
-    text: "这是一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 U 举起缩放枪，锁定目标后选择“放大”或“缩小”。",
+    text: "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 U 举起缩放枪，锁定目标后选择“放大”或“缩小”。",
     choices: [{ label: "获取", next: "monolith_scale_gun_acquired", effects: ["acquireScaleGun"] }],
   },
   monolith_scale_gun_acquired: {
@@ -96,7 +94,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "monolith",
     speaker: "monolith",
     listener: "alex",
-    image: scaleGunPortraitUrl,
     text: "缩放枪已加入装备。需要时按 U 举起它。",
     end: true,
   },

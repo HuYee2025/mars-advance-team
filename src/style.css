@@ -1005,6 +1005,9 @@ h1 {
 }
 
 #dialogue-stage {
+  --dialogue-panel-bottom: clamp(18px, 4vh, 34px);
+  --dialogue-panel-height: clamp(254px, 32vh, 316px);
+  --dialogue-portrait-peek: clamp(76px, 10vh, 112px);
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -1033,7 +1036,7 @@ h1 {
 
 .dialogue-portrait {
   position: absolute;
-  bottom: clamp(150px, 24vh, 238px);
+  bottom: calc(var(--dialogue-panel-bottom) + var(--dialogue-portrait-peek));
   width: min(28vw, 360px);
   height: min(58vh, 660px);
   display: flex;
@@ -1041,27 +1044,28 @@ h1 {
   justify-content: center;
   pointer-events: none;
   filter: drop-shadow(0 28px 44px rgba(0, 0, 0, 0.5));
-  opacity: 0.72;
+  opacity: 0;
+  visibility: hidden;
   z-index: 1;
-  transform: scale(0.7);
+  transform: scale(0.9);
   transform-origin: bottom center;
   transition:
-    transform 260ms ease,
     opacity 260ms ease,
-    filter 260ms ease;
-  will-change: transform, opacity;
+    visibility 260ms ease;
+  will-change: opacity;
 }
 
 .dialogue-portrait.is-speaking {
   opacity: 1;
-  transform: scale(0.91);
+  visibility: visible;
   filter:
     drop-shadow(0 30px 54px rgba(0, 0, 0, 0.58))
     drop-shadow(0 0 18px rgba(93, 222, 255, 0.18));
 }
 
 .dialogue-portrait.is-listening {
-  z-index: 1;
+  opacity: 0;
+  visibility: hidden;
 }
 
 .dialogue-portrait-left {
@@ -1100,9 +1104,16 @@ h1 {
   align-items: baseline;
   gap: 7px;
   white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
   box-shadow: 0 0 22px rgba(74, 211, 255, 0.12);
   backdrop-filter: blur(10px);
   pointer-events: none;
+}
+
+.dialogue-character-tag.is-speaking {
+  opacity: 1;
+  visibility: visible;
 }
 
 .dialogue-character-tag-left {
@@ -1137,10 +1148,14 @@ h1 {
   position: absolute;
   z-index: 4;
   left: 50%;
-  bottom: clamp(18px, 4vh, 34px);
+  bottom: var(--dialogue-panel-bottom);
   width: min(980px, calc(100vw - 36px));
-  min-height: 190px;
+  height: var(--dialogue-panel-height);
   transform: translateX(-50%);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 18px 20px 18px;
   border: 1px solid rgba(120, 224, 255, 0.44);
   background:
@@ -1207,15 +1222,18 @@ h1 {
 }
 
 #dialogue-text {
-  min-height: 50px;
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   color: #f2fdff;
   font-size: clamp(15px, 1.7vw, 18px);
   line-height: 1.62;
   text-shadow: 0 0 18px rgba(82, 213, 255, 0.12);
+  overflow-y: auto;
 }
 
 .dialogue-choices {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
@@ -1258,6 +1276,7 @@ h1 {
 }
 
 #dialogue-continue {
+  flex: 0 0 auto;
   display: block;
   width: fit-content;
   min-width: 112px;
@@ -1549,6 +1568,12 @@ h1 {
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 700px) {
+  #dialogue-stage {
+    --dialogue-panel-bottom: 14px;
+    --dialogue-panel-height: 206px;
+    --dialogue-portrait-peek: 92px;
+  }
+
   .is-playing #joystick {
     display: grid;
   }
@@ -1563,38 +1588,33 @@ h1 {
   }
 
   .dialogue-portrait {
-    bottom: clamp(206px, 36vh, 280px);
-    width: 36vw;
-    height: 48vh;
+    width: min(48vw, 270px);
+    height: min(48vh, 430px);
+    transform: scale(0.9);
+  }
+
+  .dialogue-portrait.is-speaking {
+    transform: scale(0.9);
   }
 
   .dialogue-portrait-left {
     left: 2vw;
+    right: auto;
   }
 
   .dialogue-portrait-right {
+    left: auto;
     right: 2vw;
   }
 
   .dialogue-portrait img,
   .dialogue-portrait-right img {
-    height: 46vh;
-    transform: translateY(12%);
+    height: min(48vh, 430px);
+    transform: translateY(11%);
   }
 
   .dialogue-character-tag {
-    top: -29px;
-    max-width: calc(50% - 5px);
-    padding: 4px 6px;
-    gap: 5px;
-  }
-
-  .dialogue-character-tag-left {
-    left: 0;
-  }
-
-  .dialogue-character-tag-right {
-    right: 0;
+    display: none;
   }
 
   .dialogue-character-tag strong {
@@ -1606,8 +1626,6 @@ h1 {
   }
 
   .dialogue-panel {
-    bottom: 14px;
-    min-height: 230px;
     padding: 14px;
   }
 
@@ -1619,6 +1637,10 @@ h1 {
 
   #dialogue-stats {
     white-space: normal;
+  }
+
+  #dialogue-item-image {
+    display: none;
   }
 
   .dialogue-choices {
@@ -1675,28 +1697,23 @@ h1 {
   }
 
   .dialogue-portrait {
-    bottom: 252px;
-    width: 43vw;
+    width: min(54vw, 250px);
+    height: min(44vh, 380px);
   }
 
   .dialogue-portrait-left {
     left: -4vw;
+    right: auto;
   }
 
   .dialogue-portrait-right {
+    left: auto;
     right: -4vw;
   }
 
-  .dialogue-character-tag {
-    top: -29px;
-  }
-
-  .dialogue-character-tag-left {
-    left: 0;
-  }
-
-  .dialogue-character-tag-right {
-    right: 0;
+  .dialogue-portrait img,
+  .dialogue-portrait-right img {
+    height: min(44vh, 380px);
   }
 
   #dialogue-text {
