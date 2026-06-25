@@ -460,6 +460,7 @@ function updateSolarLighting() {
   const occluded = isSunOccludedByPlanet(sunBody.position);
   sunBody.visible = !occluded;
   setVisibleSunOpacity(sunBody, THREE.MathUtils.lerp(1, 0.28, stormStrength));
+  updateVisibleSunFire(sunBody);
 }
 
 function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
@@ -475,38 +476,193 @@ function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
 
 function createVisibleSun(direction: THREE.Vector3) {
   const group = new THREE.Group();
+  const surfaceTexture = createSunSurfaceTexture();
+  const coronaTexture = createSunCoronaTexture();
+  const haloTexture = createSunHaloTexture();
   const sunCore = new THREE.Mesh(
-    new THREE.SphereGeometry(8.6, 36, 18),
+    new THREE.SphereGeometry(9.2, 48, 24),
     new THREE.MeshBasicMaterial({
-      color: 0xfff2a8,
+      map: surfaceTexture,
+      color: 0xfff0a0,
       transparent: true,
       toneMapped: false,
     })
   );
   const sunShell = new THREE.Mesh(
-    new THREE.SphereGeometry(9.8, 36, 18),
+    new THREE.SphereGeometry(10.6, 48, 24),
     new THREE.MeshBasicMaterial({
-      color: 0xffb15d,
+      color: 0xff5f18,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.42,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
     })
   );
+  const corona = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: coronaTexture,
+    transparent: true,
+    opacity: 0.84,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }));
+  corona.scale.setScalar(32);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: haloTexture,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }));
+  halo.scale.setScalar(58);
   sunCore.userData.baseOpacity = 1;
-  sunShell.userData.baseOpacity = 0.22;
-  group.add(sunShell, sunCore);
+  sunCore.userData.sunPart = "core";
+  sunShell.userData.baseOpacity = 0.42;
+  sunShell.userData.sunPart = "shell";
+  corona.userData.baseOpacity = 0.84;
+  corona.userData.sunPart = "corona";
+  corona.userData.baseScale = 32;
+  halo.userData.baseOpacity = 0.42;
+  halo.userData.sunPart = "halo";
+  halo.userData.baseScale = 58;
+  group.add(halo, corona, sunShell, sunCore);
   group.position.copy(direction.clone().normalize().multiplyScalar(540));
   return group;
 }
 
+function updateVisibleSunFire(sun: THREE.Group) {
+  const pulse = 1 + Math.sin(elapsedTime * 2.8) * 0.035 + Math.sin(elapsedTime * 5.7) * 0.018;
+  sun.traverse((object) => {
+    if (object.userData.sunPart === "core") {
+      object.rotation.y = elapsedTime * 0.035;
+      object.rotation.x = Math.sin(elapsedTime * 0.21) * 0.04;
+      return;
+    }
+    if (object.userData.sunPart === "shell") {
+      object.rotation.y = -elapsedTime * 0.052;
+      return;
+    }
+    if (object.userData.sunPart === "corona" || object.userData.sunPart === "halo") {
+      const baseScale = object.userData.baseScale ?? 1;
+      object.scale.setScalar(baseScale * pulse);
+      const material = object instanceof THREE.Sprite ? object.material : null;
+      if (material instanceof THREE.SpriteMaterial) material.rotation = elapsedTime * (object.userData.sunPart === "corona" ? 0.018 : -0.006);
+    }
+  });
+}
+
+function createSunSurfaceTexture() {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Unable to create sun texture");
+  const center = size / 2;
+  const base = ctx.createRadialGradient(center * 0.72, center * 0.68, size * 0.08, center, center, size * 0.54);
+  base.addColorStop(0, "#fff8bd");
+  base.addColorStop(0.24, "#ffd660");
+  base.addColorStop(0.56, "#ff8b21");
+  base.addColorStop(0.82, "#d93608");
+  base.addColorStop(1, "#6f1603");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+  ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 34; i += 1) {
+    const angle = i * 1.97;
+    const radius = size * (0.08 + ((i * 37) % 100) / 100 * 0.36);
+    const x = center + Math.cos(angle) * radius;
+    const y = center + Math.sin(angle * 1.23) * radius;
+    const spot = ctx.createRadialGradient(x, y, 2, x, y, size * (0.035 + (i % 5) * 0.008));
+    spot.addColorStop(0, i % 3 === 0 ? "rgba(255, 255, 215, 0.92)" : "rgba(255, 167, 34, 0.72)");
+    spot.addColorStop(1, "rgba(255, 76, 0, 0)");
+    ctx.fillStyle = spot;
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.strokeStyle = "rgba(128, 20, 0, 0.24)";
+  ctx.lineWidth = 7;
+  for (let i = 0; i < 9; i += 1) {
+    ctx.beginPath();
+    const y = size * (0.16 + i * 0.09);
+    ctx.moveTo(-20, y);
+    ctx.bezierCurveTo(size * 0.24, y - 28, size * 0.68, y + 30, size + 20, y - 10);
+    ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createSunCoronaTexture() {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Unable to create sun corona texture");
+  const center = size / 2;
+  ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 44; i += 1) {
+    const angle = (i / 44) * Math.PI * 2;
+    const inner = size * (0.25 + (i % 4) * 0.012);
+    const outer = size * (0.37 + ((i * 19) % 17) / 100);
+    const width = size * (0.016 + (i % 3) * 0.004);
+    ctx.beginPath();
+    ctx.moveTo(center + Math.cos(angle - width) * inner, center + Math.sin(angle - width) * inner);
+    ctx.lineTo(center + Math.cos(angle) * outer, center + Math.sin(angle) * outer);
+    ctx.lineTo(center + Math.cos(angle + width) * inner, center + Math.sin(angle + width) * inner);
+    ctx.closePath();
+    ctx.fillStyle = i % 2 === 0 ? "rgba(255, 107, 10, 0.28)" : "rgba(255, 210, 72, 0.2)";
+    ctx.fill();
+  }
+  const glow = ctx.createRadialGradient(center, center, size * 0.21, center, center, size * 0.5);
+  glow.addColorStop(0, "rgba(255, 250, 196, 0.94)");
+  glow.addColorStop(0.28, "rgba(255, 144, 22, 0.62)");
+  glow.addColorStop(0.58, "rgba(255, 56, 0, 0.28)");
+  glow.addColorStop(1, "rgba(255, 48, 0, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createSunHaloTexture() {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Unable to create sun halo texture");
+  const center = size / 2;
+  const glow = ctx.createRadialGradient(center, center, size * 0.16, center, center, size * 0.5);
+  glow.addColorStop(0, "rgba(255, 239, 172, 0.72)");
+  glow.addColorStop(0.38, "rgba(255, 126, 18, 0.28)");
+  glow.addColorStop(0.74, "rgba(255, 70, 0, 0.12)");
+  glow.addColorStop(1, "rgba(255, 70, 0, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function setVisibleSunOpacity(sun: THREE.Group, opacity: number) {
   sun.traverse((object) => {
-    if (!(object instanceof THREE.Mesh)) return;
-    const material = object.material;
-    if (!(material instanceof THREE.Material)) return;
-    material.opacity = (object.userData.baseOpacity ?? 1) * opacity;
+    if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Sprite)) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!(material instanceof THREE.Material)) continue;
+      material.opacity = (object.userData.baseOpacity ?? 1) * opacity;
+    }
   });
 }
 
