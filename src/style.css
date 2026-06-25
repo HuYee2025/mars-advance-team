@@ -646,6 +646,11 @@ h1 {
   text-shadow: 0 0 8px rgba(255, 217, 90, 0.92);
 }
 
+.map-marker.type-oxygen {
+  color: #ff9f36;
+  background: #ff9f36;
+}
+
 .map-marker.is-mission-target {
   z-index: 2;
   width: 13px;
@@ -657,6 +662,19 @@ h1 {
     0 0 0 6px rgba(118, 255, 110, 0.14),
     0 0 22px rgba(118, 255, 110, 0.9);
   animation: mission-target-glow 1.15s ease-in-out infinite alternate;
+}
+
+.map-marker.is-oxygen-supply-target {
+  z-index: 2;
+  width: 13px;
+  height: 13px;
+  border-color: rgba(255, 211, 143, 0.96);
+  background: #ff9f36;
+  color: #ff9f36;
+  box-shadow:
+    0 0 0 6px rgba(255, 159, 54, 0.14),
+    0 0 22px rgba(255, 159, 54, 0.9);
+  animation: oxygen-supply-glow 1.15s ease-in-out infinite alternate;
 }
 
 @keyframes mission-target-glow {
@@ -673,6 +691,20 @@ h1 {
   }
 }
 
+@keyframes oxygen-supply-glow {
+  from {
+    box-shadow:
+      0 0 0 4px rgba(255, 159, 54, 0.12),
+      0 0 14px rgba(255, 159, 54, 0.65);
+  }
+
+  to {
+    box-shadow:
+      0 0 0 8px rgba(255, 159, 54, 0.2),
+      0 0 28px rgba(255, 159, 54, 1);
+  }
+}
+
 .map-marker span {
   display: none;
 }
@@ -684,6 +716,11 @@ h1 {
 }
 
 .map-expanded .map-marker.is-mission-target {
+  width: 13px;
+  height: 13px;
+}
+
+.map-expanded .map-marker.is-oxygen-supply-target {
   width: 13px;
   height: 13px;
 }
