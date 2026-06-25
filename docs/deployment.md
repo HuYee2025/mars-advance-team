@@ -2,14 +2,15 @@
 
 ## 当前部署形态
 
-当前版本是纯前端静态网页游戏：
+当前单人体验是纯前端静态网页游戏：
 
 - 构建工具：Vite
 - 运行技术：TypeScript + Three.js
 - 构建产物：`dist/`
-- 当前不需要后端、不需要数据库、不需要常驻 Node 服务
+- 单人体验不需要后端、不需要数据库
+- 多人 v1 需要额外运行一个常驻 Node WebSocket 服务
 
-因此上线时只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。
+因此如果只上线单人版，只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。如果要启用多人可见，需要同时部署 WebSocket 服务，并把 `/ws` 代理到该服务。
 
 后续如果接入 DeepSeek 对话，不能在前端直接放 API Key，需要新增后端接口，例如 `/api/dialogue`。
 
@@ -19,6 +20,28 @@
 
 ```bash
 /Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm build
+```
+
+## 本地多人开发
+
+启动前端和 WebSocket 服务：
+
+```bash
+/Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm dev:multi
+```
+
+也可以分开启动：
+
+```bash
+/Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm dev
+/Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm dev:server
+```
+
+默认地址：
+
+```txt
+前端：http://127.0.0.1:5173/
+WebSocket：ws://127.0.0.1:8787/ws
 ```
 
 构建成功后会生成：
@@ -89,6 +112,14 @@ server {
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8787/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
 }
 ```
 
@@ -149,5 +180,6 @@ rsync -avz --delete dist/ root@你的服务器IP:/var/www/mars-advance-team/
 - 本地 `pnpm build` 必须通过。
 - `dist/index.html` 和 `dist/assets/` 必须存在。
 - 背景音乐使用原 MP3 的 64kbps 压缩版，部署包内音频约 2.5MB，不再上传 10MB 源 MP3。
-- 当前版本没有后端 API，不能把 DeepSeek、OpenAI 或其他 API Key 写进前端代码。
+- 多人 WebSocket 服务不需要数据库，也不需要 API Key。
+- 不能把 DeepSeek、OpenAI 或其他 API Key 写进前端代码。
 - 如果部署在子路径，例如 `https://example.com/mars/`，需要额外配置 Vite `base`，当前默认更适合部署在独立域名或根路径。

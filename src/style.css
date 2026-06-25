@@ -445,6 +445,14 @@ h1 {
   opacity: 1;
 }
 
+.multiplayer-label {
+  min-width: 74px;
+  border-color: rgba(102, 217, 255, 0.48);
+  background: rgba(7, 18, 24, 0.74);
+  color: #bfefff;
+  box-shadow: 0 0 18px rgba(102, 217, 255, 0.16);
+}
+
 #map-overlay {
   position: absolute;
   right: clamp(14px, 3vw, 34px);
