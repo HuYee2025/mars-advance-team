@@ -73,6 +73,10 @@
         <button id="hud-toggle" type="button" aria-label="隐藏界面信息" aria-pressed="false">V</button>
         <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false">M</button>
       </div>
+      <section id="mission-banner" aria-label="当前任务">
+        <span>当前任务</span>
+        <p id="mission-text"></p>
+      </section>
       <div id="labels" aria-hidden="true"></div>
       <section id="map-overlay" aria-label="基地地图" aria-live="polite" aria-hidden="true">
         <div class="map-card">
@@ -88,14 +92,6 @@
             <div class="map-player" aria-hidden="true"></div>
           </div>
           <div class="map-coordinates" id="map-coordinates">X 000 / Z 000</div>
-          <div class="mission-panel" aria-label="当前任务">
-            <span>当前任务</span>
-            <p id="mission-text"></p>
-          </div>
-          <div class="mission-panel control-guide-panel" id="control-guide-hint" aria-label="操作指南">
-            <span>操作指南</span>
-            <p>按住键盘左上角 ESC 下方的 <b>~ / ·</b> 键，打开快捷键和按键操作指南。</p>
-          </div>
           <div class="map-list" id="map-list"></div>
         </div>
       </section>

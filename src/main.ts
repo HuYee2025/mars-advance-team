@@ -84,7 +84,6 @@ const exitResumeButton = must<HTMLButtonElement>("#exit-resume");
 const exitTitleButton = must<HTMLButtonElement>("#exit-title");
 const exitConfirmButtons = [exitResumeButton, exitTitleButton] as const;
 const controlsGuide = must<HTMLElement>("#controls-guide");
-const controlsGuideHint = must<HTMLElement>("#control-guide-hint");
 const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
@@ -589,6 +588,28 @@ function bindInput() {
   interactionChoice.addEventListener("pointerdown", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (target.closest("[data-close-interactions]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTouchInteractionDrawer();
+      return;
+    }
+    if (target.closest("[data-open-interactions]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      interactionChoiceOpen = true;
+      selectedInteractionIndex = 0;
+      resetStick();
+      keyState.delete("ShiftLeft");
+      renderInteractionChoice();
+      return;
+    }
+    if (target === interactionChoice && interactionChoiceOpen && isSmallScreenMapTouch()) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTouchInteractionDrawer();
+      return;
+    }
     const button = target.closest<HTMLButtonElement>("button[data-choice-index]");
     if (!button) return;
     event.preventDefault();
@@ -952,10 +973,7 @@ function toggleHud() {
 
 function showControlsGuide(visible: boolean) {
   controlsGuideOpen = visible;
-  if (visible && !controlsGuideUsed) {
-    controlsGuideUsed = true;
-    controlsGuideHint.hidden = true;
-  }
+  if (visible && !controlsGuideUsed) controlsGuideUsed = true;
   controlsGuide.classList.toggle("is-visible", controlsGuideOpen);
   controlsGuide.setAttribute("aria-hidden", String(!controlsGuideOpen));
 }
@@ -2014,8 +2032,9 @@ function updateMissionState() {
     interactionChoiceSignature = "";
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
-    interactionChoice.classList.remove("is-visible");
+    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
     interactionChoice.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("interaction-drawer-open");
     dialogueBox.classList.remove("is-visible");
     return;
   }
@@ -2061,7 +2080,14 @@ function buildInteractionActions() {
 
 function updateInteractionPrompts() {
   const touchMenu = isSmallScreenMapTouch();
-  if (interactionActions.length > 1 || (touchMenu && interactionActions.length > 0)) {
+  if (touchMenu && interactionActions.length > 0) {
+    promptBox.textContent = "";
+    promptBox.classList.remove("is-visible");
+    const nextSignature = getInteractionChoiceSignature();
+    if (nextSignature !== interactionChoiceSignature) renderInteractionChoice();
+    return;
+  }
+  if (interactionActions.length > 1) {
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
     interactionChoiceOpen = true;
@@ -2071,8 +2097,9 @@ function updateInteractionPrompts() {
   }
   interactionChoiceOpen = false;
   interactionChoiceSignature = "";
-  interactionChoice.classList.remove("is-visible");
+  interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
   interactionChoice.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("interaction-drawer-open");
   promptBox.textContent = interactionActions.length === 1 ? `E ${interactionActions[0].label}` : "";
   promptBox.classList.toggle("is-visible", interactionActions.length === 1);
 }
@@ -2081,8 +2108,18 @@ function renderInteractionChoice() {
   interactionChoice.innerHTML = "";
   if (interactionActions.length === 0) {
     interactionChoiceSignature = "";
+    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+    interactionChoice.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("interaction-drawer-open");
     return;
   }
+  const touchMenu = isSmallScreenMapTouch();
+  if (touchMenu) {
+    renderTouchInteractionChoice();
+    return;
+  }
+  document.body.classList.remove("interaction-drawer-open");
+  interactionChoice.classList.remove("is-touch-entry", "is-drawer-open");
   for (const [index, action] of interactionActions.entries()) {
     const button = document.createElement("button");
     button.className = "interaction-option";
@@ -2099,8 +2136,61 @@ function renderInteractionChoice() {
   interactionChoice.setAttribute("aria-hidden", "false");
 }
 
+function renderTouchInteractionChoice() {
+  interactionChoice.classList.toggle("is-touch-entry", !interactionChoiceOpen);
+  interactionChoice.classList.toggle("is-drawer-open", interactionChoiceOpen);
+  document.body.classList.toggle("interaction-drawer-open", interactionChoiceOpen);
+
+  if (!interactionChoiceOpen) {
+    const entryButton = document.createElement("button");
+    entryButton.className = "interaction-entry-button";
+    entryButton.type = "button";
+    entryButton.dataset.openInteractions = "true";
+    const actionCount = interactionActions.length;
+    const label = actionCount === 1 ? interactionActions[0].label : `${actionCount} 个可互动项`;
+    entryButton.innerHTML = `<strong>互动</strong><span>${label}</span>`;
+    interactionChoice.appendChild(entryButton);
+  } else {
+    const header = document.createElement("div");
+    header.className = "interaction-sheet-head";
+    const title = document.createElement("span");
+    title.textContent = "选择互动";
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.dataset.closeInteractions = "true";
+    closeButton.textContent = "收起";
+    header.append(title, closeButton);
+    interactionChoice.appendChild(header);
+
+    const list = document.createElement("div");
+    list.className = "interaction-sheet-list";
+    for (const [index, action] of interactionActions.entries()) {
+      const button = document.createElement("button");
+      button.className = "interaction-option";
+      button.type = "button";
+      button.dataset.choiceIndex = String(index);
+      const label = document.createElement("strong");
+      label.textContent = action.label;
+      button.appendChild(label);
+      button.classList.toggle("is-selected", index === selectedInteractionIndex);
+      list.appendChild(button);
+    }
+    interactionChoice.appendChild(list);
+  }
+  interactionChoiceSignature = getInteractionChoiceSignature();
+  interactionChoice.classList.add("is-visible");
+  interactionChoice.setAttribute("aria-hidden", "false");
+}
+
+function closeTouchInteractionDrawer() {
+  if (!isSmallScreenMapTouch()) return;
+  interactionChoiceOpen = false;
+  renderInteractionChoice();
+}
+
 function getInteractionChoiceSignature() {
-  return interactionActions.map((action, index) => `${index === selectedInteractionIndex ? "*" : ""}${action.id}:${action.label}`).join("|");
+  const menuState = isSmallScreenMapTouch() ? (interactionChoiceOpen ? "drawer" : "entry") : "desktop";
+  return `${menuState}|${interactionActions.map((action, index) => `${index === selectedInteractionIndex ? "*" : ""}${action.id}:${action.label}`).join("|")}`;
 }
 
 function interact() {
@@ -2122,6 +2212,11 @@ function interact() {
 function executeSelectedInteraction() {
   const action = interactionActions[Math.min(selectedInteractionIndex, interactionActions.length - 1)];
   if (!action) return;
+  if (isSmallScreenMapTouch()) {
+    interactionChoiceOpen = false;
+    document.body.classList.remove("interaction-drawer-open");
+    interactionChoice.classList.remove("is-drawer-open");
+  }
   if (action.id === "elevator") {
     interactElevator();
     return;
@@ -2265,6 +2360,7 @@ function resetRunUiAfterRespawn() {
   interactionChoiceOpen = false;
   interactionActions = [];
   interactionChoiceSignature = "";
+  document.body.classList.remove("interaction-drawer-open");
   activeInteractable = null;
   activeElevator = null;
   activeHabitatDoor = null;
