@@ -65,6 +65,8 @@ const dialogueBox = must<HTMLDivElement>("#dialogue-box");
 const dialogueStage = must<HTMLElement>("#dialogue-stage");
 const dialogueLeftSlot = must<HTMLDivElement>(".dialogue-portrait-left");
 const dialogueRightSlot = must<HTMLDivElement>(".dialogue-portrait-right");
+const dialogueLeftTag = must<HTMLDivElement>(".dialogue-character-tag-left");
+const dialogueRightTag = must<HTMLDivElement>(".dialogue-character-tag-right");
 const dialogueLeftPortrait = must<HTMLImageElement>("#dialogue-left-portrait");
 const dialogueRightPortrait = must<HTMLImageElement>("#dialogue-right-portrait");
 const dialogueLeftName = must<HTMLElement>("#dialogue-left-name");
@@ -338,6 +340,7 @@ let introCallQueued = false;
 let interactionActions: InteractionAction[] = [];
 let selectedInteractionIndex = 0;
 let interactionChoiceOpen = false;
+let interactionChoiceSignature = "";
 let selectedDialogueChoiceIndex = 0;
 const dialogueState = {
   motherTrust: 0,
@@ -583,11 +586,13 @@ function bindInput() {
     if (!button) return;
     chooseDialogue(Number(button.dataset.choiceIndex ?? 0));
   });
-  interactionChoice.addEventListener("click", (event) => {
+  interactionChoice.addEventListener("pointerdown", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     const button = target.closest<HTMLButtonElement>("button[data-choice-index]");
     if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
     selectedInteractionIndex = Number(button.dataset.choiceIndex ?? 0);
     renderInteractionChoice();
     executeSelectedInteraction();
@@ -2006,6 +2011,7 @@ function updateMissionState() {
     activeOxygenSupply = null;
     interactionActions = [];
     interactionChoiceOpen = false;
+    interactionChoiceSignature = "";
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
     interactionChoice.classList.remove("is-visible");
@@ -2059,10 +2065,12 @@ function updateInteractionPrompts() {
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
     interactionChoiceOpen = true;
-    renderInteractionChoice();
+    const nextSignature = getInteractionChoiceSignature();
+    if (nextSignature !== interactionChoiceSignature) renderInteractionChoice();
     return;
   }
   interactionChoiceOpen = false;
+  interactionChoiceSignature = "";
   interactionChoice.classList.remove("is-visible");
   interactionChoice.setAttribute("aria-hidden", "true");
   promptBox.textContent = interactionActions.length === 1 ? `E ${interactionActions[0].label}` : "";
@@ -2071,7 +2079,10 @@ function updateInteractionPrompts() {
 
 function renderInteractionChoice() {
   interactionChoice.innerHTML = "";
-  if (interactionActions.length === 0) return;
+  if (interactionActions.length === 0) {
+    interactionChoiceSignature = "";
+    return;
+  }
   for (const [index, action] of interactionActions.entries()) {
     const button = document.createElement("button");
     button.className = "interaction-option";
@@ -2083,8 +2094,13 @@ function renderInteractionChoice() {
     button.classList.toggle("is-selected", index === selectedInteractionIndex);
     interactionChoice.appendChild(button);
   }
+  interactionChoiceSignature = getInteractionChoiceSignature();
   interactionChoice.classList.add("is-visible");
   interactionChoice.setAttribute("aria-hidden", "false");
+}
+
+function getInteractionChoiceSignature() {
+  return interactionActions.map((action, index) => `${index === selectedInteractionIndex ? "*" : ""}${action.id}:${action.label}`).join("|");
 }
 
 function interact() {
@@ -2248,6 +2264,7 @@ function resetRunUiAfterRespawn() {
   selectedInteractionIndex = 0;
   interactionChoiceOpen = false;
   interactionActions = [];
+  interactionChoiceSignature = "";
   activeInteractable = null;
   activeElevator = null;
   activeHabitatDoor = null;
@@ -2966,6 +2983,10 @@ function renderDialogueNode() {
   dialogueLeftSlot.classList.toggle("is-listening", !leftIsSpeaking);
   dialogueRightSlot.classList.toggle("is-speaking", !leftIsSpeaking);
   dialogueRightSlot.classList.toggle("is-listening", leftIsSpeaking);
+  dialogueLeftTag.classList.toggle("is-speaking", leftIsSpeaking);
+  dialogueLeftTag.classList.toggle("is-listening", !leftIsSpeaking);
+  dialogueRightTag.classList.toggle("is-speaking", !leftIsSpeaking);
+  dialogueRightTag.classList.toggle("is-listening", leftIsSpeaking);
 
   dialogueSpeaker.textContent = `${speaker.name} / ${speaker.callsign}`;
   dialogueStats.textContent = `信任 ${dialogueState.motherTrust} · 基地 ${dialogueState.baseIntegrity} · 自主 ${dialogueState.humanAutonomy}`;
