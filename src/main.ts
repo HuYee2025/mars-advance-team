@@ -191,10 +191,14 @@ const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
 const FLIGHT_MAX_ALTITUDE = 96;
-const SCALE_GUN_RANGE = 96;
+const SCALE_GUN_RANGE = 620;
 const SCALE_GUN_DURATION_SECONDS = 60;
 const SCALE_GUN_MIN_FACTOR = 1 / 4;
 const SCALE_GUN_MAX_FACTOR = 4;
+const SCALE_GUN_AIM_YAW_SPEED = 1.75;
+const SCALE_GUN_AIM_PITCH_SPEED = 1.18;
+const SCALE_GUN_AIM_PITCH_MIN = -1.05;
+const SCALE_GUN_AIM_PITCH_MAX = 1.18;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
 
 type ScaleGunTarget = {
@@ -663,6 +667,11 @@ function bindInput() {
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
       return;
     }
+    if (scaleGunAiming && isScaleGunAimControlKey(event.code)) {
+      event.preventDefault();
+      keyState.add(event.code);
+      return;
+    }
     if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       if (interactionActions.length === 2) {
@@ -716,6 +725,7 @@ function bindInput() {
     }
     if (event.code === "Space") {
       event.preventDefault();
+      if (scaleGunAiming) return;
       if (flightModeEnabled && canUseFlightMode()) keyState.add(event.code);
       else jump();
       return;
@@ -774,6 +784,11 @@ function bindInput() {
   });
   window.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return;
+    if (scaleGunAiming) {
+      orbitYawOffset = wrapSignedAngle(orbitYawOffset - event.movementX * 0.0026);
+      pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0018, 0.34 + SCALE_GUN_AIM_PITCH_MIN, 0.34 + SCALE_GUN_AIM_PITCH_MAX);
+      return;
+    }
     orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - event.movementX * 0.0022, -0.85, 0.85);
     pitch = insideRocket
       ? THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.02, 1.68)
@@ -1111,11 +1126,19 @@ function toggleScaleGunAiming(force?: boolean) {
   if (scaleGunAiming) {
     scaleGunCameraDistanceBefore = cameraDistance;
     cameraDistance = CAMERA_MIN_DISTANCE;
+    pitch = 0.34;
+    orbitYawOffset = 0;
+    exitFrontCamera = null;
+    clearMovementInputState();
+    resetStick();
+    playerVelocity.set(0, 0, 0);
     camera.fov = 46;
     showControlsGuide(false);
     closeMapUi();
   } else {
     cameraDistance = Math.max(scaleGunCameraDistanceBefore, 1.2);
+    pitch = 0.34;
+    orbitYawOffset = 0;
     camera.fov = 54;
     scaleGunTarget = null;
   }
@@ -1125,6 +1148,51 @@ function toggleScaleGunAiming(force?: boolean) {
 
 function canUseScaleGun() {
   return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+}
+
+function isScaleGunAimControlKey(code: string) {
+  return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD" || code === "ArrowUp" || code === "ArrowLeft" || code === "ArrowDown" || code === "ArrowRight";
+}
+
+function clearMovementInputState() {
+  keyState.delete("KeyW");
+  keyState.delete("KeyA");
+  keyState.delete("KeyS");
+  keyState.delete("KeyD");
+  keyState.delete("ArrowUp");
+  keyState.delete("ArrowLeft");
+  keyState.delete("ArrowDown");
+  keyState.delete("ArrowRight");
+  keyState.delete("ShiftLeft");
+  keyState.delete("ShiftRight");
+  keyState.delete("Space");
+}
+
+function wrapSignedAngle(angle: number) {
+  return THREE.MathUtils.euclideanModulo(angle + Math.PI, Math.PI * 2) - Math.PI;
+}
+
+function updateScaleGunAimInput(delta: number) {
+  let yawInput = 0;
+  let pitchInput = 0;
+  if (keyState.has("KeyA") || keyState.has("ArrowLeft")) yawInput += 1;
+  if (keyState.has("KeyD") || keyState.has("ArrowRight")) yawInput -= 1;
+  if (keyState.has("KeyW") || keyState.has("ArrowUp")) pitchInput += 1;
+  if (keyState.has("KeyS") || keyState.has("ArrowDown")) pitchInput -= 1;
+
+  yawInput -= mobileStick.x;
+  pitchInput += -mobileStick.y;
+
+  if (Math.abs(yawInput) > 0.001) {
+    orbitYawOffset = wrapSignedAngle(orbitYawOffset + THREE.MathUtils.clamp(yawInput, -1, 1) * SCALE_GUN_AIM_YAW_SPEED * delta);
+  }
+  if (Math.abs(pitchInput) > 0.001) {
+    pitch = THREE.MathUtils.clamp(
+      pitch + THREE.MathUtils.clamp(pitchInput, -1, 1) * SCALE_GUN_AIM_PITCH_SPEED * delta,
+      0.34 + SCALE_GUN_AIM_PITCH_MIN,
+      0.34 + SCALE_GUN_AIM_PITCH_MAX
+    );
+  }
 }
 
 function updateScaleGun() {
@@ -1174,6 +1242,7 @@ function getScaleGunTargets() {
 
   for (const landmark of world.landmarks) addTarget(landmark.label, landmark.object);
   for (const object of world.unnumberedObjects) addTarget("未知物体", object.object);
+  if (sunBody) addTarget("太阳", sunBody);
   if (fufu.visible) addTarget("福福", fufu);
   return targets;
 }
@@ -1640,6 +1709,9 @@ function updatePlayer(delta: number) {
   if (ridingElevator) {
     return updateElevatorRide(delta, ridingElevator);
   }
+  if (scaleGunAiming) {
+    return updateScaleGunAimingPlayer(delta);
+  }
   if (flightModeEnabled && canUseFlightMode()) {
     return updateFlightPlayer(delta);
   }
@@ -1676,6 +1748,23 @@ function updatePlayer(delta: number) {
   }
   placePlayerOnPlanet();
   return playerVelocity.length();
+}
+
+function updateScaleGunAimingPlayer(delta: number) {
+  updateScaleGunAimInput(delta);
+  playerVelocity.set(0, 0, 0);
+  playerForward.projectOnPlane(playerNormal).normalize();
+  if (!grounded || playerAltitudeOffset > 0) {
+    verticalVelocity -= MARS_GRAVITY * delta;
+    playerAltitudeOffset += verticalVelocity * delta;
+    if (playerAltitudeOffset <= 0) {
+      playerAltitudeOffset = 0;
+      verticalVelocity = 0;
+      grounded = true;
+    }
+  }
+  placePlayerOnPlanet();
+  return 0;
 }
 
 function updateFlightPlayer(delta: number) {
@@ -1884,7 +1973,11 @@ function updateCamera(delta: number) {
       .applyAxisAngle(normal, orbitYawOffset)
       .projectOnPlane(normal)
       .normalize();
-    const pitchOffset = insideRocket ? THREE.MathUtils.clamp(pitch - 0.24, -0.46, 1.28) : THREE.MathUtils.clamp(pitch - 0.34, -0.22, 0.36);
+    const pitchOffset = scaleGunAiming
+      ? THREE.MathUtils.clamp(pitch - 0.34, SCALE_GUN_AIM_PITCH_MIN, SCALE_GUN_AIM_PITCH_MAX)
+      : insideRocket
+        ? THREE.MathUtils.clamp(pitch - 0.24, -0.46, 1.28)
+        : THREE.MathUtils.clamp(pitch - 0.34, -0.22, 0.36);
     const lookDirection = lookForward.clone().multiplyScalar(Math.cos(pitchOffset)).addScaledVector(normal, Math.sin(pitchOffset)).normalize();
     const desired = eye
       .clone()
@@ -1894,7 +1987,7 @@ function updateCamera(delta: number) {
     camera.up.copy(normal);
     camera.lookAt(eye.clone().addScaledVector(lookDirection, 24));
     playerRig.visual.visible = false;
-    orbitYawOffset *= Math.pow(0.03, delta);
+    if (!scaleGunAiming) orbitYawOffset *= Math.pow(0.03, delta);
     return;
   }
 

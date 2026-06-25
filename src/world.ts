@@ -1495,13 +1495,6 @@ function createBlackMonolith() {
     emissiveIntensity: 0.08,
     flatShading: true,
   });
-  const dustMat = new THREE.MeshBasicMaterial({
-    color: 0x050607,
-    transparent: true,
-    opacity: 0.42,
-    depthWrite: false,
-  });
-
   const slab = new THREE.Mesh(new THREE.BoxGeometry(2.18, 5.9, 0.36), monolithMat);
   slab.position.y = 2.95;
   slab.castShadow = true;
@@ -1510,12 +1503,8 @@ function createBlackMonolith() {
   bevelLineA.position.set(-1.11, 2.96, -0.2);
   const bevelLineB = bevelLineA.clone();
   bevelLineB.position.x = 1.11;
-  const darkContact = new THREE.Mesh(new THREE.CircleGeometry(4.4, 36), dustMat);
-  darkContact.rotation.x = -Math.PI / 2;
-  darkContact.position.y = 0.012;
-  darkContact.renderOrder = 1;
 
-  group.add(darkContact, slab, bevelLineA, bevelLineB);
+  group.add(slab, bevelLineA, bevelLineB);
   return group;
 }
 
