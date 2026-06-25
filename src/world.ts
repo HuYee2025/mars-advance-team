@@ -615,7 +615,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     placeObjectOnPlanet(lander, x, z, LANDER_SURFACE_SETTLE, yaw);
     base.add(lander);
     landmarks.push(landmark(label, lander, x, z, 42, 260));
-    addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -18.2, -15.4, label, shipBriefing(label));
+    addShipMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, label, shipBriefing(label));
     if (label.includes("货运飞船")) {
       interactables.push({
         id: "cargoShip",
@@ -641,6 +641,14 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
         )
       );
     }
+  }
+
+  function addShipMaintenanceBot(label: string, x: number, z: number, yaw: number, facilityLabel: string, briefing: string) {
+    const radial = new THREE.Vector2(x, z);
+    if (radial.lengthSq() < 0.0001) radial.set(Math.cos(yaw), Math.sin(yaw));
+    radial.normalize().multiplyScalar(34);
+    const local = worldOffsetToLocal(yaw, radial.x, radial.y);
+    addMaintenanceBot(label, x, z, yaw, local.x, local.z, facilityLabel, briefing);
   }
 
   function addMaintenanceBot(
@@ -812,6 +820,15 @@ function offsetPoint(x: number, z: number, yaw: number, localX: number, localZ: 
   return {
     x: x + localX * c - localZ * s,
     z: z + localX * s + localZ * c,
+  };
+}
+
+function worldOffsetToLocal(yaw: number, worldX: number, worldZ: number) {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return {
+    x: worldX * c + worldZ * s,
+    z: -worldX * s + worldZ * c,
   };
 }
 
