@@ -193,6 +193,8 @@ const INDUSTRIAL_SCALE = 2.05;
 const GARAGE_SCALE = 1.95;
 const TOWER_SCALE = 1.55;
 const NUMBERED_FACILITY_SCALE = 1.55;
+const VEHICLE_LOOP_SPEED = 0.052;
+const VEHICLE_LOOP_HEADING = THREE.MathUtils.degToRad(50);
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
@@ -1788,8 +1790,8 @@ function createRovers(
   maintenanceBots: MaintenanceBotConfig[]
 ) {
   const configs = [
-    { centerX: 0, centerZ: 0, patrolRadius: spread(174), speed: 0.058, offset: 0.25, size: 1.08, kind: "rover", route: "meridianLoop", label: "01 车辆 电动巡检车" },
-    { centerX: -18, centerZ: -92, patrolRadius: 22, speed: -0.044, offset: 2.6, size: 1.08, kind: "cargo", route: "garageLoop", label: "02 车辆 运输车" },
+    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 0.25, size: 1.08, kind: "rover", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "01 车辆 电动巡检车" },
+    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 1.25, size: 1.08, kind: "cargo", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "02 车辆 运输车" },
     ...maintenanceBots,
   ];
   configs.forEach((config) => {
@@ -2224,7 +2226,7 @@ function addRockField(scene: THREE.Scene, colliders: CircleCollider[]) {
 
 export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: CircleCollider[] = []) {
   rovers.forEach((rover) => {
-    const { centerX, centerZ, patrolRadius, speed, offset, kind, route } = rover.userData as {
+    const { centerX, centerZ, patrolRadius, speed, offset, kind, route, routeHeading } = rover.userData as {
       centerX: number;
       centerZ: number;
       patrolRadius: number;
@@ -2232,6 +2234,7 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       offset: number;
       kind?: string;
       route?: string;
+      routeHeading?: number;
       pauseUntil?: number;
     };
     if (kind === "bot" && (rover.userData.pauseUntil ?? -Infinity) > elapsed) return;
@@ -2243,20 +2246,23 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       return;
     }
     const angle = elapsed * speed + offset;
-    if (route === "meridianLoop" || route === "latitudeLoop") {
+    if (route === "meridianLoop" || route === "latitudeLoop" || route === "greatCircleLoop") {
       const directionSign = speed >= 0 ? 1 : -1;
       const vehicleRadius = kind === "cargo" ? 3.6 : 3.2;
-      const targetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle), colliders, vehicleRadius);
+      const targetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle, routeHeading), colliders, vehicleRadius);
       const storedNormal = rover.userData.routeNormal as THREE.Vector3 | undefined;
       let normal = storedNormal
         ? steerNormalAtConstantRate(storedNormal, targetNormal, Math.max(Math.abs(speed) * delta * 2.4, 0.0016))
         : targetNormal.clone();
       normal = keepVehicleNormalOutsideFixedColliders(normal, colliders, vehicleRadius);
       rover.userData.routeNormal = normal.clone();
-      const nextTargetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle + directionSign * 0.035), colliders, vehicleRadius);
+      const nextTargetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle + directionSign * 0.035, routeHeading), colliders, vehicleRadius);
       const nextNormal = steerNormalAtConstantRate(normal, nextTargetNormal, Math.max(Math.abs(speed) * 0.035 * 2.4, 0.002));
       let forward = nextNormal.clone().addScaledVector(normal, -normal.dot(nextNormal));
-      if (forward.lengthSq() < 0.000001) forward = vehicleRouteNormal(route, angle + directionSign * 0.035).addScaledVector(normal, -normal.dot(vehicleRouteNormal(route, angle + directionSign * 0.035)));
+      if (forward.lengthSq() < 0.000001) {
+        const fallbackNormal = vehicleRouteNormal(route, angle + directionSign * 0.035, routeHeading);
+        forward = fallbackNormal.addScaledVector(normal, -normal.dot(fallbackNormal));
+      }
       forward.normalize();
       const yaw = yawFromForward(normal, forward);
       placeObjectOnPlanetNormal(rover, normal, 0.08, yaw);
@@ -2411,7 +2417,11 @@ function botWaitSeconds(data: { waitMin: number; waitMax: number; offset: number
   return THREE.MathUtils.lerp(data.waitMin, data.waitMax, t);
 }
 
-function vehicleRouteNormal(route: string, angle: number) {
+function vehicleRouteNormal(route: string, angle: number, routeHeading = 0) {
+  if (route === "greatCircleLoop") {
+    const direction = new THREE.Vector3(Math.cos(routeHeading), 0, Math.sin(routeHeading));
+    return direction.multiplyScalar(Math.sin(angle)).addScaledVector(WORLD_UP, Math.cos(angle)).normalize();
+  }
   if (route === "meridianLoop") {
     return new THREE.Vector3(Math.sin(angle) * 0.92, Math.cos(angle), Math.sin(angle) * 0.38).normalize();
   }
