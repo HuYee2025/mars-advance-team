@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
 import { createFufuCat, updateFufuCat } from "./cat";
+import { MultiplayerClient } from "./multiplayer";
+import type { PlayerInsideState } from "./multiplayer-protocol";
 import { createMarsEngineer, updateMarsEngineer } from "./player";
 import {
   characters,
@@ -123,7 +125,7 @@ const STORM_PERIOD_SECONDS = 4 * 60 * 60;
 const STORM_DURATION_SECONDS = 1500;
 const STORM_FADE_SECONDS = 260;
 let sunLight: THREE.DirectionalLight | null = null;
-let sunSprite: THREE.Sprite | null = null;
+let sunBody: THREE.Group | null = null;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -154,6 +156,7 @@ helmetLamp.target = helmetLampTarget;
 scene.add(helmetLamp, helmetLampTarget, helmetLampSpot);
 
 const world = createMarsWorld(scene);
+const multiplayer = new MultiplayerClient({ scene, camera, labelsRoot });
 const fufuRig = createFufuCat();
 const fufu = fufuRig.group;
 scene.add(fufu);
@@ -179,8 +182,8 @@ const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.35;
 const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
 const STAMINA_MAX = 100;
 const STAMINA_MOVE_DRAIN_PER_SECOND = 0.18;
-const STAMINA_SPRINT_DRAIN_PER_SECOND = 1.2;
 const STAMINA_JUMP_COST = 4;
+const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_JUMP_COST;
 const STAMINA_LOW_THRESHOLD = 20;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
@@ -428,8 +431,8 @@ function buildLighting() {
   sun.shadow.camera.bottom = -80;
   scene.add(sun);
   sunLight = sun;
-  sunSprite = createVisibleSun(sun.position);
-  scene.add(sunSprite);
+  sunBody = createVisibleSun(sun.position);
+  scene.add(sunBody);
 
   const rim = new THREE.DirectionalLight(0x8fc7ff, 0.48);
   rim.position.set(28, 16, -44);
@@ -437,7 +440,7 @@ function buildLighting() {
 }
 
 function updateSolarLighting() {
-  if (!sunLight || !sunSprite) return;
+  if (!sunLight || !sunBody) return;
   const marsSolAngle = (elapsedTime * MARS_TIME_SCALE / MARS_SOL_SECONDS) * Math.PI * 2 + 2.26;
   const elevation = 0.42 + Math.sin(marsSolAngle * 0.37) * 0.08;
   const direction = new THREE.Vector3(
@@ -448,11 +451,10 @@ function updateSolarLighting() {
   sunLight.position.copy(direction).multiplyScalar(72);
   sunLight.intensity =
     EARTHLIKE_KEY_LIGHT * MARS_SUNLIGHT_RATIO * THREE.MathUtils.lerp(0.74, 1.08, Math.max(0, direction.y)) * THREE.MathUtils.lerp(1, 0.42, stormStrength);
-  sunSprite.position.copy(direction).multiplyScalar(540);
-  const sunMaterial = sunSprite.material as THREE.SpriteMaterial;
-  const occluded = isSunOccludedByPlanet(sunSprite.position);
-  sunSprite.visible = !occluded;
-  sunMaterial.opacity = THREE.MathUtils.lerp(0.96, 0.2, stormStrength);
+  sunBody.position.copy(direction).multiplyScalar(540);
+  const occluded = isSunOccludedByPlanet(sunBody.position);
+  sunBody.visible = !occluded;
+  setVisibleSunOpacity(sunBody, THREE.MathUtils.lerp(1, 0.28, stormStrength));
 }
 
 function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
@@ -467,39 +469,40 @@ function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
 }
 
 function createVisibleSun(direction: THREE.Vector3) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const gradient = ctx.createRadialGradient(128, 128, 2, 128, 128, 124);
-    gradient.addColorStop(0, "rgba(255, 255, 246, 1)");
-    gradient.addColorStop(0.08, "rgba(255, 252, 220, 1)");
-    gradient.addColorStop(0.2, "rgba(255, 224, 138, 0.9)");
-    gradient.addColorStop(0.46, "rgba(255, 172, 78, 0.44)");
-    gradient.addColorStop(1, "rgba(255, 164, 84, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 256, 256);
-    ctx.beginPath();
-    ctx.arc(128, 128, 9, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255, 255, 248, 0.98)";
-    ctx.fill();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: texture,
-      color: 0xffffff,
+  const group = new THREE.Group();
+  const sunCore = new THREE.Mesh(
+    new THREE.SphereGeometry(8.6, 36, 18),
+    new THREE.MeshBasicMaterial({
+      color: 0xfff2a8,
       transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
+      toneMapped: false,
     })
   );
-  sprite.position.copy(direction.clone().normalize().multiplyScalar(540));
-  sprite.scale.set(46, 46, 1);
-  return sprite;
+  const sunShell = new THREE.Mesh(
+    new THREE.SphereGeometry(9.8, 36, 18),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb15d,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    })
+  );
+  sunCore.userData.baseOpacity = 1;
+  sunShell.userData.baseOpacity = 0.22;
+  group.add(sunShell, sunCore);
+  group.position.copy(direction.clone().normalize().multiplyScalar(540));
+  return group;
+}
+
+function setVisibleSunOpacity(sun: THREE.Group, opacity: number) {
+  sun.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const material = object.material;
+    if (!(material instanceof THREE.Material)) return;
+    material.opacity = (object.userData.baseOpacity ?? 1) * opacity;
+  });
 }
 
 function createPlayerContactShadow() {
@@ -873,6 +876,14 @@ function setFlightModeEnabled(enabled: boolean) {
 
 function canUseFlightMode() {
   return started && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+}
+
+function currentPlayerInsideState(): PlayerInsideState {
+  if (world.habitatDoor.occupied) return "habitat";
+  if (insideGreenhouse) return "greenhouse";
+  if (insideRocket) return "rocket";
+  if (ridingElevator) return "elevator";
+  return "surface";
 }
 
 function handleTitleScreenKey(event: KeyboardEvent) {
@@ -1343,6 +1354,7 @@ function startGame() {
   resetPlayerToSpawn();
   resetFufu();
   resetStick();
+  multiplayer.connect();
   startBackgroundMusic();
   titleScreen.classList.add("is-hidden");
   document.body.classList.add("is-playing");
@@ -1352,6 +1364,7 @@ function startGame() {
 function returnToTitle() {
   if (!started) return;
   started = false;
+  multiplayer.disconnect();
   resetQuestState();
   hudCollapsed = false;
   mapOpen = false;
@@ -1437,8 +1450,19 @@ function animate() {
   updateMap();
   updateMissionState();
   updateReadouts();
-  updateMarsEngineer(playerRig, speed, elapsedTime, flightModeEnabled && canUseFlightMode(), isFlightAscending() || isFlightDescending());
+  const playerFlying = flightModeEnabled && canUseFlightMode();
+  updateMarsEngineer(playerRig, speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
+  if (started) {
+    multiplayer.update(delta, elapsedTime, {
+      position: player.position,
+      quaternion: player.quaternion,
+      speed,
+      flying: playerFlying,
+      lampOn: helmetLampOn,
+      insideState: currentPlayerInsideState(),
+    });
+  }
   updateScaleGun();
   updatePlayerContactShadow();
   updateHelmetLamp();
