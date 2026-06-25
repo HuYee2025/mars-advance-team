@@ -807,6 +807,126 @@ h1 {
   transform: translateX(-50%) translateY(0);
 }
 
+#scale-gun-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: none;
+  pointer-events: none;
+}
+
+#scale-gun-overlay.is-visible {
+  display: block;
+}
+
+.scale-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 82px;
+  height: 82px;
+  border: 1px solid rgba(116, 231, 255, 0.82);
+  border-radius: 50%;
+  box-shadow:
+    0 0 18px rgba(102, 217, 255, 0.42),
+    inset 0 0 16px rgba(102, 217, 255, 0.16);
+  transform: translate(-50%, -50%);
+}
+
+.scale-reticle::before,
+.scale-reticle::after,
+.scale-reticle span::before,
+.scale-reticle span::after {
+  content: "";
+  position: absolute;
+  background: rgba(116, 231, 255, 0.86);
+  box-shadow: 0 0 8px rgba(102, 217, 255, 0.72);
+}
+
+.scale-reticle::before,
+.scale-reticle::after {
+  left: 50%;
+  width: 1px;
+  height: 18px;
+  transform: translateX(-50%);
+}
+
+.scale-reticle::before {
+  top: -24px;
+}
+
+.scale-reticle::after {
+  bottom: -24px;
+}
+
+.scale-reticle span::before,
+.scale-reticle span::after {
+  top: 50%;
+  width: 18px;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.scale-reticle span::before {
+  left: -24px;
+}
+
+.scale-reticle span::after {
+  right: -24px;
+}
+
+.scale-readout {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 66px);
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  padding: 10px 14px;
+  border: 1px solid rgba(116, 231, 255, 0.34);
+  background: rgba(8, 16, 22, 0.72);
+  color: #e8fbff;
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  text-align: center;
+  text-shadow: 0 0 10px rgba(102, 217, 255, 0.45);
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.scale-readout strong {
+  font-size: 13px;
+}
+
+.scale-readout span {
+  color: rgba(221, 248, 255, 0.72);
+  font-size: 11px;
+}
+
+.scale-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  display: flex;
+  gap: 10px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.scale-actions button {
+  min-width: 82px;
+  height: 40px;
+  border: 1px solid rgba(116, 231, 255, 0.42);
+  background: rgba(9, 20, 28, 0.74);
+  color: #e8fbff;
+  font-weight: 800;
+  letter-spacing: 0;
+  box-shadow: 0 0 18px rgba(102, 217, 255, 0.12);
+}
+
+.scale-actions button:active {
+  transform: translateY(1px);
+}
+
 .interaction-option {
   display: grid;
   grid-template-columns: 1fr;

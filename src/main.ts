@@ -57,6 +57,10 @@ const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const missionText = must<HTMLDivElement>("#mission-text");
 const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
+const scaleGunOverlay = must<HTMLElement>("#scale-gun-overlay");
+const scaleGunTargetLabel = must<HTMLElement>("#scale-gun-target");
+const scaleGunShrinkButton = must<HTMLButtonElement>("#scale-gun-shrink");
+const scaleGunGrowButton = must<HTMLButtonElement>("#scale-gun-grow");
 const dialogueBox = must<HTMLDivElement>("#dialogue-box");
 const dialogueStage = must<HTMLElement>("#dialogue-stage");
 const dialogueLeftSlot = must<HTMLDivElement>(".dialogue-portrait-left");
@@ -179,7 +183,22 @@ const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
 const FLIGHT_MAX_ALTITUDE = 96;
+const SCALE_GUN_RANGE = 96;
+const SCALE_GUN_DURATION_SECONDS = 60;
+const SCALE_GUN_MIN_FACTOR = 1 / 3;
+const SCALE_GUN_MAX_FACTOR = 3;
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
+
+type ScaleGunTarget = {
+  label: string;
+  object: THREE.Object3D;
+};
+
+type ScaleGunEffect = {
+  baseScale: THREE.Vector3;
+  factor: number;
+  expiresAt: number;
+};
 
 type MainMissionStep =
   | "intro"
@@ -290,6 +309,9 @@ let fufuRescued = false;
 let mysteryCodeProgress = "";
 let flightModeEnabled = false;
 let hasScaleGun = false;
+let scaleGunAiming = false;
+let scaleGunTarget: ScaleGunTarget | null = null;
+let scaleGunCameraDistanceBefore = 10;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
@@ -335,6 +357,8 @@ const fufuRestForward = new THREE.Vector3();
 let monolithAudioContext: AudioContext | null = null;
 let nextMonolithBeepAt = 0;
 let uiAudioContext: AudioContext | null = null;
+const scaleGunRaycaster = new THREE.Raycaster();
+const scaleGunEffects = new Map<string, ScaleGunEffect>();
 
 declare global {
   interface Window {
@@ -574,6 +598,8 @@ function bindInput() {
     button.addEventListener("pointerenter", () => selectExitConfirmAction(index, false, true));
     button.addEventListener("focus", () => selectExitConfirmAction(index, false, false));
   });
+  scaleGunShrinkButton.addEventListener("click", () => fireScaleGun("shrink"));
+  scaleGunGrowButton.addEventListener("click", () => fireScaleGun("grow"));
   window.addEventListener("keydown", (event) => {
     if (handleMysteryCodeKey(event)) return;
     if (started && exitConfirmOpen) {
@@ -614,6 +640,11 @@ function bindInput() {
       toggleHelmetLamp();
       return;
     }
+    if (event.code === "KeyU") {
+      event.preventDefault();
+      toggleScaleGunAiming();
+      return;
+    }
     if (event.code === "KeyO" && mapOpen) {
       showUnnumberedOnMap = !showUnnumberedOnMap;
       updateMap();
@@ -631,6 +662,11 @@ function bindInput() {
       return;
     }
     if (event.code === "Equal" || event.code === "NumpadAdd") {
+      if (scaleGunAiming) {
+        event.preventDefault();
+        fireScaleGun("grow");
+        return;
+      }
       if (mapOpen) {
         adjustMapZoom(1);
         return;
@@ -639,6 +675,11 @@ function bindInput() {
       return;
     }
     if (event.code === "Minus" || event.code === "NumpadSubtract") {
+      if (scaleGunAiming) {
+        event.preventDefault();
+        fireScaleGun("shrink");
+        return;
+      }
       if (mapOpen) {
         adjustMapZoom(-1);
         return;
@@ -990,6 +1031,145 @@ function toggleHelmetLamp() {
   helmetLampOn = !helmetLampOn;
 }
 
+function toggleScaleGunAiming(force?: boolean) {
+  if (!started) return;
+  if (!hasScaleGun) {
+    showDialogue("缩放枪", "尚未获得。去黑色方碑处取得它。", 2.4);
+    return;
+  }
+  if (!canUseScaleGun()) {
+    showDialogue("缩放枪", "当前空间太窄，无法展开瞄准镜。", 2.4);
+    return;
+  }
+  const next = force ?? !scaleGunAiming;
+  if (next === scaleGunAiming) return;
+  scaleGunAiming = next;
+  if (scaleGunAiming) {
+    scaleGunCameraDistanceBefore = cameraDistance;
+    cameraDistance = CAMERA_MIN_DISTANCE;
+    camera.fov = 46;
+    showControlsGuide(false);
+    closeMapUi();
+  } else {
+    cameraDistance = Math.max(scaleGunCameraDistanceBefore, 1.2);
+    camera.fov = 54;
+    scaleGunTarget = null;
+  }
+  camera.updateProjectionMatrix();
+  updateScaleGunOverlay();
+}
+
+function canUseScaleGun() {
+  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+}
+
+function updateScaleGun() {
+  restoreExpiredScaleGunEffects();
+  if (scaleGunAiming && !canUseScaleGun()) {
+    toggleScaleGunAiming(false);
+    return;
+  }
+  if (!scaleGunAiming) {
+    updateScaleGunOverlay();
+    return;
+  }
+  scaleGunTarget = findScaleGunTarget();
+  updateScaleGunOverlay();
+}
+
+function updateScaleGunOverlay() {
+  const visible = started && scaleGunAiming && hasScaleGun;
+  scaleGunOverlay.classList.toggle("is-visible", visible);
+  scaleGunOverlay.setAttribute("aria-hidden", String(!visible));
+  scaleGunTargetLabel.textContent = visible && scaleGunTarget ? scaleGunTarget.label : "未锁定目标";
+}
+
+function findScaleGunTarget(): ScaleGunTarget | null {
+  const targets = getScaleGunTargets();
+  if (targets.length === 0) return null;
+  scaleGunRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  scaleGunRaycaster.far = SCALE_GUN_RANGE;
+  const roots = new Map<string, ScaleGunTarget>();
+  for (const target of targets) roots.set(target.object.uuid, target);
+  const intersections = scaleGunRaycaster.intersectObjects(targets.map((target) => target.object), true);
+  for (const intersection of intersections) {
+    const target = findScaleGunRoot(intersection.object, roots);
+    if (target) return target;
+  }
+  return null;
+}
+
+function getScaleGunTargets() {
+  const targets: ScaleGunTarget[] = [];
+  const seen = new Set<string>();
+  const addTarget = (label: string, object: THREE.Object3D) => {
+    if (!object.visible || seen.has(object.uuid)) return;
+    seen.add(object.uuid);
+    targets.push({ label, object });
+  };
+
+  for (const landmark of world.landmarks) addTarget(landmark.label, landmark.object);
+  for (const object of world.unnumberedObjects) addTarget("未知物体", object.object);
+  if (fufu.visible) addTarget("福福", fufu);
+  return targets;
+}
+
+function findScaleGunRoot(object: THREE.Object3D, roots: Map<string, ScaleGunTarget>) {
+  let cursor: THREE.Object3D | null = object;
+  while (cursor) {
+    const target = roots.get(cursor.uuid);
+    if (target) return target;
+    cursor = cursor.parent;
+  }
+  return null;
+}
+
+function fireScaleGun(mode: "shrink" | "grow") {
+  if (!scaleGunAiming) return;
+  if (!scaleGunTarget) {
+    showDialogue("缩放枪", "未锁定可缩放目标。", 1.8);
+    return;
+  }
+  const effect = getScaleGunEffect(scaleGunTarget.object);
+  const multiplier = mode === "grow" ? 1.5 : 1 / 1.5;
+  const nextFactor = THREE.MathUtils.clamp(effect.factor * multiplier, SCALE_GUN_MIN_FACTOR, SCALE_GUN_MAX_FACTOR);
+  effect.factor = nextFactor;
+  effect.expiresAt = elapsedTime + SCALE_GUN_DURATION_SECONDS;
+  scaleGunTarget.object.scale.copy(effect.baseScale).multiplyScalar(nextFactor);
+  showDialogue("缩放枪", `${scaleGunTarget.label} ${mode === "grow" ? "放大" : "缩小"}到 ${nextFactor.toFixed(2)}x，60 秒后恢复。`, 2.2);
+  playUiBeep();
+}
+
+function getScaleGunEffect(object: THREE.Object3D) {
+  let effect = scaleGunEffects.get(object.uuid);
+  if (!effect) {
+    effect = {
+      baseScale: object.scale.clone(),
+      factor: 1,
+      expiresAt: 0,
+    };
+    scaleGunEffects.set(object.uuid, effect);
+  }
+  return effect;
+}
+
+function restoreExpiredScaleGunEffects() {
+  for (const [uuid, effect] of scaleGunEffects) {
+    if (elapsedTime < effect.expiresAt) continue;
+    const object = scene.getObjectByProperty("uuid", uuid);
+    if (object) object.scale.copy(effect.baseScale);
+    scaleGunEffects.delete(uuid);
+  }
+}
+
+function clearScaleGunEffects() {
+  for (const [uuid, effect] of scaleGunEffects) {
+    const object = scene.getObjectByProperty("uuid", uuid);
+    if (object) object.scale.copy(effect.baseScale);
+  }
+  scaleGunEffects.clear();
+}
+
 function updateHelmetLamp() {
   const visible = started && helmetLampOn && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket;
   helmetLamp.visible = visible;
@@ -1075,6 +1255,7 @@ function startGame() {
   grounded = true;
   resetSuitOxygen();
   setScaleGunOwned(false);
+  clearScaleGunEffects();
   resetPlayerToSpawn();
   resetFufu();
   resetStick();
@@ -1101,6 +1282,7 @@ function returnToTitle() {
   messageUntil = 0;
   resetSuitOxygen();
   setScaleGunOwned(false);
+  clearScaleGunEffects();
   closeDialogue();
   clearMapHoldTimer();
   keyState.clear();
@@ -1173,6 +1355,7 @@ function animate() {
   updateReadouts();
   updateMarsEngineer(playerRig, speed, elapsedTime, flightModeEnabled && canUseFlightMode(), isFlightAscending() || isFlightDescending());
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
+  updateScaleGun();
   updatePlayerContactShadow();
   updateHelmetLamp();
   updateBackgroundMusicFade();
@@ -2889,6 +3072,13 @@ function resetQuestState() {
 function setScaleGunOwned(owned: boolean) {
   hasScaleGun = owned;
   playerRig.scaleGun.visible = owned;
+  if (!owned && scaleGunAiming) {
+    scaleGunAiming = false;
+    scaleGunTarget = null;
+    camera.fov = 54;
+    camera.updateProjectionMatrix();
+    updateScaleGunOverlay();
+  }
   const item = world.interactables.find((interactable) => interactable.id === "monolith");
   if (item) item.completed = owned;
 }

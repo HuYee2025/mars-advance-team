@@ -615,7 +615,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     placeObjectOnPlanet(lander, x, z, LANDER_SURFACE_SETTLE, yaw);
     base.add(lander);
     landmarks.push(landmark(label, lander, x, z, 42, 260));
-    addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -12.4, -10.9, label, shipBriefing(label));
+    addMaintenanceBot(`${shipId ?? "飞船"} 机器人 飞船维护工`, x, z, yaw, -18.2, -15.4, label, shipBriefing(label));
     if (label.includes("货运飞船")) {
       interactables.push({
         id: "cargoShip",
@@ -732,9 +732,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
     add(box(0.72, 0.18, 0.32, dark), 0, 0.98, 0);
     add(box(0.14, 0.2, 0.12, amber), 0, 1.0, -0.18);
-    const torso = add(capsule(0.33, 0.72, suit), 0, 1.46, 0, 1.05, 1, 0.82);
-    torso.rotation.x = Math.PI / 2;
-    const chest = add(box(0.46, 0.42, 0.12, suit), 0, 1.56, -0.3);
+    const torso = add(capsule(0.26, 0.82, suit), 0, 1.46, 0, 0.9, 1, 0.72);
+    const chest = add(box(0.42, 0.38, 0.1, suit), 0, 1.57, -0.24);
     chest.rotation.x = -0.08;
     add(box(0.2, 0.2, 0.04, glow), 0, 1.58, -0.37);
     add(box(0.1, 0.08, 0.05, amber), 0.22, 1.71, -0.31);
@@ -2232,9 +2231,10 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       const vehicleRadius = kind === "cargo" ? 3.6 : 3.2;
       const targetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle), colliders, vehicleRadius);
       const storedNormal = rover.userData.routeNormal as THREE.Vector3 | undefined;
-      const normal = storedNormal
+      let normal = storedNormal
         ? steerNormalAtConstantRate(storedNormal, targetNormal, Math.max(Math.abs(speed) * delta * 2.4, 0.0016))
         : targetNormal.clone();
+      normal = keepVehicleNormalOutsideFixedColliders(normal, colliders, vehicleRadius);
       rover.userData.routeNormal = normal.clone();
       const nextTargetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle + directionSign * 0.035), colliders, vehicleRadius);
       const nextNormal = steerNormalAtConstantRate(normal, nextTargetNormal, Math.max(Math.abs(speed) * 0.035 * 2.4, 0.002));
@@ -2243,9 +2243,7 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       forward.normalize();
       const yaw = yawFromForward(normal, forward);
       placeObjectOnPlanetNormal(rover, normal, 0.08, yaw);
-      const projectedY = Math.abs(normal.y) < 0.08 ? Math.sign(normal.y || 1) * 0.08 : normal.y;
-      rover.userData.planetX = (normal.x / projectedY) * PLANET_RADIUS;
-      rover.userData.planetZ = (normal.z / projectedY) * PLANET_RADIUS;
+      setDynamicObjectPlanetCoordinate(rover, normal);
       updateRoverWheelSpin(rover, elapsed, speed);
       updateRoverSurfaceEffects(rover, elapsed, delta, speed);
       return;
@@ -2257,7 +2255,14 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
     const tangentX = -Math.sin(angle) * directionSign;
     const tangentZ = Math.cos(angle) * directionSign;
     const yaw = kind === "bot" || route === "planetLoop" ? Math.atan2(-tangentX, -tangentZ) : -angle + (speed > 0 ? Math.PI / 2 : -Math.PI / 2);
-    placeObjectOnPlanet(rover, x, z, route === "planetLoop" ? 0.08 : 0.0, yaw);
+    if (kind === "bot") {
+      placeObjectOnPlanet(rover, x, z, route === "planetLoop" ? 0.08 : 0.0, yaw);
+    } else {
+      const vehicleRadius = kind === "cargo" ? 3.6 : 3.2;
+      const safeNormal = keepVehicleNormalOutsideFixedColliders(planetNormal(x, z, new THREE.Vector3()), colliders, vehicleRadius);
+      placeObjectOnPlanetNormal(rover, safeNormal, route === "planetLoop" ? 0.08 : 0.0, yaw);
+      setDynamicObjectPlanetCoordinate(rover, safeNormal);
+    }
     if (kind === "bot") updateUtilityBotWalk(rover, elapsed, speed);
     if (kind !== "bot") {
       updateRoverWheelSpin(rover, elapsed, speed);
@@ -2414,6 +2419,35 @@ function avoidFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[],
     adjusted.addScaledVector(away, ((steerDistance - distance) / PLANET_RADIUS) * urgency * 0.62).normalize();
   }
   return adjusted;
+}
+
+function keepVehicleNormalOutsideFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[], vehicleRadius: number) {
+  const adjusted = normal.clone();
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const collider of colliders) {
+      if (collider.dynamicObject || collider.radius < 2.4) continue;
+      if (collider.enabled && !collider.enabled()) continue;
+      const colliderNormal = planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+      const dot = THREE.MathUtils.clamp(adjusted.dot(colliderNormal), -1, 1);
+      const distance = Math.acos(dot) * PLANET_RADIUS;
+      const minDistance = collider.radius + vehicleRadius + 0.9;
+      if (distance >= minDistance) continue;
+      let away = adjusted.clone().addScaledVector(colliderNormal, -dot);
+      if (away.lengthSq() < 0.000001) {
+        away = new THREE.Vector3(1, 0, 0).projectOnPlane(colliderNormal);
+        if (away.lengthSq() < 0.000001) away.set(0, 0, 1).projectOnPlane(colliderNormal);
+      }
+      away.normalize();
+      adjusted.copy(colliderNormal).multiplyScalar(Math.cos(minDistance / PLANET_RADIUS)).addScaledVector(away, Math.sin(minDistance / PLANET_RADIUS)).normalize();
+    }
+  }
+  return adjusted;
+}
+
+function setDynamicObjectPlanetCoordinate(object: THREE.Object3D, normal: THREE.Vector3) {
+  const projectedY = Math.abs(normal.y) < 0.08 ? Math.sign(normal.y || 1) * 0.08 : normal.y;
+  object.userData.planetX = (normal.x / projectedY) * PLANET_RADIUS;
+  object.userData.planetZ = (normal.z / projectedY) * PLANET_RADIUS;
 }
 
 function steerNormalAtConstantRate(current: THREE.Vector3, target: THREE.Vector3, maxAngle: number) {
