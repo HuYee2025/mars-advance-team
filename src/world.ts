@@ -156,6 +156,7 @@ export type UnnumberedObject = {
   x: number;
   z: number;
   mapRange: number;
+  label?: string;
 };
 
 export type CircleCollider = {
@@ -607,7 +608,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       const elevator = lander.userData.elevator as ElevatorControl;
       elevator.label = shipId ? `${shipId} 飞船升降梯` : "飞船升降梯";
       if (label.includes("返回飞船")) {
-        addElonAvatar(elevator.car.parent ?? elevator.car);
+        addElonAvatar(elevator.car.parent ?? elevator.car, x, z);
         elevator.rocketInterior = undefined;
         elevator.rocketInteriorLight = undefined;
         elevator.rocketInteriorFillLight = undefined;
@@ -704,7 +705,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     return "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。";
   }
 
-  function addElonAvatar(platform: THREE.Object3D) {
+  function addElonAvatar(platform: THREE.Object3D, shipX: number, shipZ: number) {
     const elon = new THREE.Group();
     elon.name = "Elon machine-dog astronaut avatar";
 
@@ -805,6 +806,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     elon.position.set(2.26, 10.17, 0.03);
     elon.rotation.y = 0.42;
     platform.add(elon);
+    unnumberedObjects.push({ object: elon, x: shipX, z: shipZ, mapRange: 260, label: "未知智能体" });
   }
 }
 

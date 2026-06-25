@@ -86,7 +86,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "monolith",
     speaker: "monolith",
     listener: "alex",
-    text: "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 U 举起缩放枪，锁定目标后选择“放大”或“缩小”。",
+    text: "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 X 举起缩放枪，锁定目标后按 E 放大、按 Q 缩小。",
     choices: [{ label: "获取", next: "monolith_scale_gun_acquired", effects: ["acquireScaleGun"] }],
   },
   monolith_scale_gun_acquired: {
@@ -94,7 +94,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "monolith",
     speaker: "monolith",
     listener: "alex",
-    text: "缩放枪已加入装备。需要时按 U 举起它。",
+    text: "缩放枪已加入装备。需要时按 X 举起它。",
     end: true,
   },
   intro_start: {

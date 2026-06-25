@@ -328,7 +328,6 @@ let fufuNextWanderAt = 0;
 let insideGreenhouse = false;
 let lastRobotGreetingAt = -Infinity;
 let helmetLampOn = false;
-let showUnnumberedOnMap = false;
 let controlsGuideOpen = false;
 let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
@@ -643,6 +642,19 @@ function bindInput() {
       handleDialogueKey(event);
       return;
     }
+    if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
+      event.preventDefault();
+      fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
+      return;
+    }
+    if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
+      event.preventDefault();
+      if (interactionActions.length === 2) {
+        selectedInteractionIndex = event.code === "KeyQ" ? 0 : 1;
+      }
+      executeSelectedInteraction();
+      return;
+    }
     if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "ArrowUp" || event.code === "ArrowDown")) {
       event.preventDefault();
       const direction = event.code === "ArrowLeft" || event.code === "ArrowUp" ? -1 : 1;
@@ -658,25 +670,25 @@ function bindInput() {
       toggleHud();
       return;
     }
-    if (event.code === "KeyM") {
+    if (event.code === "KeyF") {
       handleMapKeyDown(event);
       return;
     }
-    if (event.code === "KeyI") {
+    if (event.code === "KeyR") {
       toggleHelmetLamp();
       return;
     }
-    if (event.code === "KeyU") {
+    if (event.code === "KeyX") {
       event.preventDefault();
       toggleScaleGunAiming();
       return;
     }
-    if (event.code === "KeyO" && mapOpen) {
-      showUnnumberedOnMap = !showUnnumberedOnMap;
-      updateMap();
+    if (event.code === "KeyC") {
+      event.preventDefault();
+      setFirstPersonCamera();
       return;
     }
-    if (event.code === "Enter" && interactionChoiceOpen && interactionActions.length > 1) {
+    if ((event.code === "Enter" || event.code === "NumpadEnter") && interactionChoiceOpen && interactionActions.length > 1) {
       event.preventDefault();
       executeSelectedInteraction();
       return;
@@ -722,7 +734,7 @@ function bindInput() {
       showControlsGuide(false);
       return;
     }
-    if (event.code === "KeyM") {
+    if (event.code === "KeyF") {
       handleMapKeyUp(event);
       return;
     }
@@ -1222,6 +1234,13 @@ function adjustCameraDistance(direction: number) {
   cameraDistance = THREE.MathUtils.clamp(cameraDistance + direction * step, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
 }
 
+function setFirstPersonCamera() {
+  if (!started || exitConfirmOpen || dialogueOpen) return;
+  cameraDistance = CAMERA_MIN_DISTANCE;
+  orbitYawOffset = 0;
+  pitch = 0.34;
+}
+
 function adjustMapZoom(direction: number) {
   const factor = direction > 0 ? 1.18 : 1 / 1.18;
   mapZoom = THREE.MathUtils.clamp(mapZoom * factor, 0.65, 3.2);
@@ -1249,7 +1268,6 @@ function startGame() {
   pitch = 0.34;
   orbitYawOffset = 0;
   mapOpen = false;
-  showUnnumberedOnMap = false;
   exitConfirmOpen = false;
   helmetLampOn = false;
   activeHabitatDoor = null;
@@ -1297,7 +1315,6 @@ function returnToTitle() {
   mapExpanded = false;
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
-  showUnnumberedOnMap = false;
   helmetLampOn = false;
   pendingMotherCall = null;
   introCallQueued = false;
@@ -1514,7 +1531,7 @@ function updateScheduledCalls() {
   if (missionStep !== "intro") return;
   if (elapsedTime - gameStartElapsed < 60) return;
   introCallQueued = true;
-  queueMotherCall("intro", "Mother 正在呼叫。");
+  queueMotherCall("intro", "火星基地中控 AI Mother 正在呼叫。");
 }
 
 function updateRobotEncounters() {
@@ -2090,6 +2107,7 @@ function updateInteractionPrompts() {
   if (interactionActions.length > 1) {
     promptBox.textContent = "";
     promptBox.classList.remove("is-visible");
+    if (interactionActions.length === 2 && interactionChoiceSignature === "") selectedInteractionIndex = 1;
     interactionChoiceOpen = true;
     const nextSignature = getInteractionChoiceSignature();
     if (nextSignature !== interactionChoiceSignature) renderInteractionChoice();
@@ -2357,7 +2375,6 @@ function resetRunUiAfterRespawn() {
   introCallQueued = missionStep !== "intro";
   if (missionStep === "intro") gameStartElapsed = elapsedTime;
   hudCollapsed = false;
-  showUnnumberedOnMap = false;
   helmetLampOn = false;
   messageUntil = 0;
   selectedInteractionIndex = 0;
@@ -2870,42 +2887,43 @@ function updateMap() {
   const radarRadius = radarSize * 0.42;
   const right = playerForward.clone().cross(playerNormal).normalize();
 
-  const mapItems = world.landmarks.map((landmark) => ({
-    label: landmark.label,
-    object: landmark.object,
-    x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
-    z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
-    mapRange: landmark.mapRange,
-    type: mapTypeForLabel(landmark.label),
-    unknown: false,
-    missionTarget: isMissionTargetLabel(landmark.label),
-  }));
+  const mapItems = [
+    ...world.landmarks.map((landmark) => {
+      const type = mapTypeForLabel(landmark.label);
+      return {
+        label: landmark.label,
+        object: landmark.object,
+        x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
+        z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
+        mapRange: landmark.mapRange,
+        type,
+        unknown: type === "unknown",
+        missionTarget: isMissionTargetLabel(landmark.label),
+      };
+    }),
+    ...world.unnumberedObjects.map((item) => ({
+      label: item.label ?? "未知物体",
+      object: item.object,
+      x: item.x,
+      z: item.z,
+      mapRange: item.mapRange,
+      type: "unknown",
+      unknown: true,
+      missionTarget: false,
+    })),
+  ];
 
-  if (showUnnumberedOnMap || mapExpanded) {
-    mapItems.push(
-      ...world.unnumberedObjects.map((item) => ({
-        label: "未知残骸",
-        object: item.object,
-        x: item.x,
-        z: item.z,
-        mapRange: item.mapRange,
-        type: "unknown",
-        unknown: true,
-        missionTarget: false,
-      })),
-    );
-    if (!fufuRescued) {
-      mapItems.push({
-        label: "未知生命迹象",
-        object: fufu,
-        x: world.fufuRescueSite.x,
-        z: world.fufuRescueSite.z,
-        mapRange: 220,
-        type: "unknown",
-        unknown: true,
-        missionTarget: false,
-      });
-    }
+  if (!fufuRescued) {
+    mapItems.push({
+      label: "未知生命迹象",
+      object: fufu,
+      x: world.fufuRescueSite.x,
+      z: world.fufuRescueSite.z,
+      mapRange: 220,
+      type: "unknown",
+      unknown: true,
+      missionTarget: false,
+    });
   }
 
   const nearby = mapItems
@@ -2923,7 +2941,7 @@ function updateMap() {
     })
     .filter((entry) => entry.item.missionTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
     .sort((a, b) => Number(b.item.missionTarget) - Number(a.item.missionTarget) || a.distance - b.distance)
-    .slice(0, mapExpanded ? 80 : showUnnumberedOnMap ? 24 : 18);
+    .slice(0, mapExpanded ? 80 : 24);
 
   nearby.forEach((entry, index) => {
     const range = mapRangeForItem(entry.item.mapRange);
@@ -2972,6 +2990,7 @@ function formatMapCoordinate(value: number) {
 }
 
 function mapTypeForLabel(label: string) {
+  if (label.includes("黑色方碑") || label.includes("Elon")) return "unknown";
   if (label.includes("飞船")) return "ship";
   if (label.includes("能源") || label.includes("太阳能")) return "energy";
   if (label.includes("车辆")) return "vehicle";
@@ -3096,7 +3115,7 @@ function renderDialogueNode() {
   dialogueChoices.innerHTML = "";
 
   const choices = node.choices ?? [];
-  selectedDialogueChoiceIndex = 0;
+  selectedDialogueChoiceIndex = choices.length === 2 ? 1 : 0;
   dialogueChoices.hidden = choices.length === 0;
   dialogueContinue.hidden = choices.length > 0;
   for (const [index, choice] of choices.entries()) {
@@ -3115,6 +3134,19 @@ function handleDialogueKey(event: KeyboardEvent) {
   const node = dialogueNodes[activeDialogueNode];
   const choices = node.choices ?? [];
   if (choices.length > 0) {
+    if (event.code === "KeyQ") {
+      if (choices.length === 2) chooseDialogue(0);
+      else {
+        selectedDialogueChoiceIndex = Math.max(0, selectedDialogueChoiceIndex - 1);
+        renderDialogueChoiceSelection();
+      }
+      return;
+    }
+    if (event.code === "KeyE") {
+      if (choices.length === 2) chooseDialogue(1);
+      else chooseDialogue(selectedDialogueChoiceIndex);
+      return;
+    }
     if (event.code === "ArrowLeft") {
       selectedDialogueChoiceIndex = Math.max(0, selectedDialogueChoiceIndex - 1);
       renderDialogueChoiceSelection();
@@ -3125,10 +3157,10 @@ function handleDialogueKey(event: KeyboardEvent) {
       renderDialogueChoiceSelection();
       return;
     }
-    if (event.code === "Enter") chooseDialogue(selectedDialogueChoiceIndex);
+    if (event.code === "Enter" || event.code === "NumpadEnter") chooseDialogue(selectedDialogueChoiceIndex);
     return;
   }
-  if (event.code === "Enter") advanceDialogue();
+  if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") advanceDialogue();
 }
 
 function renderDialogueChoiceSelection() {
@@ -3407,7 +3439,7 @@ function isActiveMissionInteractable(id: Interactable["id"]) {
 
 function setCurrentMissionText() {
   const textByStep: Record<MainMissionStep, string> = {
-    intro: "先熟悉移动和视角。Mother 会建立通信，随后开始基地验收。",
+    intro: "先熟悉移动和视角。火星基地中控 AI Mother 会建立通信，随后开始基地验收。",
     m1_habitat: "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。",
     m1_oxygen: "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。",
     m1_solarC: "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。",
