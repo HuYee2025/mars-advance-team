@@ -94,6 +94,7 @@ const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
 const staminaReadout = document.querySelector<HTMLDivElement>("#stamina-readout");
 const powerReadout = document.querySelector<HTMLDivElement>("#power-readout");
+const onlineCountReadout = document.querySelector<HTMLDivElement>("#online-count-readout");
 const backgroundMusic = new Audio(backgroundMusicUrl);
 const BACKGROUND_MUSIC_BASE_VOLUME = 0.14;
 const MUSIC_LOOP_FADE_SECONDS = 5;
@@ -2226,7 +2227,28 @@ function buildInteractionActions() {
   if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
   if (pendingMotherCall) actions.push({ id: "motherCall", label: "接听 Mother 呼叫" });
-  return actions;
+  return prioritizeInteractionActions(actions).slice(0, 2);
+}
+
+function prioritizeInteractionActions(actions: InteractionAction[]) {
+  return actions
+    .map((action, order) => ({ action, order }))
+    .sort((a, b) => interactionActionPriority(a.action) - interactionActionPriority(b.action) || a.order - b.order)
+    .map((item) => item.action);
+}
+
+function interactionActionPriority(action: InteractionAction) {
+  const priority: Record<InteractionAction["id"], number> = {
+    motherCall: 0,
+    habitat: 1,
+    greenhouse: 1,
+    elevator: 1,
+    mission: 2,
+    robot: 3,
+    fufu: 3,
+    oxygenSupply: 4,
+  };
+  return priority[action.id];
 }
 
 function updateInteractionPrompts() {
@@ -3675,6 +3697,9 @@ function updateReadouts() {
   if (powerReadout) {
     const value = missionStep === "m1_solarC" ? 61 + Math.sin(elapsedTime * 3.2) * 4 : 89 + Math.sin(elapsedTime * 0.22 + 1.8) * 4;
     powerReadout.textContent = `${Math.round(value)}%`;
+  }
+  if (onlineCountReadout) {
+    onlineCountReadout.textContent = `${multiplayer.onlineCount}人`;
   }
 }
 

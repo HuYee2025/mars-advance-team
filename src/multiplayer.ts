@@ -66,6 +66,10 @@ export class MultiplayerClient {
     this.labelsRoot = options.labelsRoot;
   }
 
+  get onlineCount() {
+    return 1 + this.remotes.size;
+  }
+
   connect() {
     if (this.socket || this.connected) return;
     this.shouldReconnect = true;
