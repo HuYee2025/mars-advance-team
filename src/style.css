@@ -1016,6 +1016,17 @@ body:not(.hud-collapsed) #hud-toggle,
   background: #ff9f36;
 }
 
+.map-marker.type-orbital {
+  width: 10px;
+  height: 10px;
+  color: #aeeeff;
+  background: #d9fbff;
+  border-color: rgba(209, 250, 255, 0.95);
+  box-shadow:
+    0 0 0 5px rgba(105, 210, 255, 0.12),
+    0 0 18px rgba(139, 232, 255, 0.86);
+}
+
 .map-marker.is-mission-target {
   z-index: 2;
   width: 13px;

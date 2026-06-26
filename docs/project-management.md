@@ -17,6 +17,7 @@
 - `AGENTS.md`：所有对话进入项目时的第一入口。
 - `docs/project-management.md`：多对话协作制度。
 - `docs/production-blueprint.md`：游戏总控文档。
+- `docs/dev-log/current-handoff.md`：当前对话和近期修改的快速交接入口。
 - `docs/dev-log/v1-implementation.md`：1.0 当前实现交接记录。
 - `docs/lore/`：角色、世界观、基地、火星生存、对话规则。
 - `docs/art-direction.md`：美术方向。
@@ -31,6 +32,7 @@
 1. `AGENTS.md`
 2. `docs/project-management.md`
 3. `docs/production-blueprint.md`
+4. `docs/dev-log/current-handoff.md`
 
 按任务补充读取：
 
@@ -74,7 +76,24 @@
 
 如果这些内容对后续开发有长期价值，就写进 `docs/decision-log.md` 或相关设计文档，不要只留在聊天里。
 
-## 6. 创意和实现的边界
+## 6. 三次压缩后的交接检查
+
+同一项目对话如果已经发生约 3 次自动压缩，默认进入“交接检查”状态。这个规则不要求精确读取系统内部压缩次数；只要用户或 Codex 判断当前对话已经多次压缩、上下文变长或速度明显下降，就应触发。
+
+触发后先做检查，不继续默认推进大型修改：
+
+- 技术和 UI 决策是否写入 `docs/tech-plan.md`。
+- 重要取舍是否写入 `docs/decision-log.md`。
+- 剧情、设定、任务是否写入 `docs/production-blueprint.md`、`docs/lore/` 或 `docs/tasks/`。
+- 当前实现状态是否能从 `docs/dev-log/current-handoff.md` 和相关主管文件读懂。
+
+处理方式：
+
+- 如果记录完整，建议用户开启新对话继续项目。
+- 如果记录不完整，先补齐 `docs/dev-log/current-handoff.md` 或对应权威文档，再建议开启新对话。
+- 新对话开始后优先读取项目文件恢复上下文，不依赖旧聊天摘要。
+
+## 7. 创意和实现的边界
 
 可以提出新创意，但落地前要检查是否符合项目方向：
 
@@ -87,12 +106,13 @@
 
 如果新创意改变了这些原则，必须先写清楚原因，并更新总控文档。
 
-## 7. 当前已登记的重要新增内容
+## 8. 当前已登记的重要新增内容
 
 ### 1.0 可试玩版本
 
 当前 1.0 已经形成可试玩闭环。新对话需要快速接续时，先读：
 
+- `docs/dev-log/current-handoff.md`
 - `docs/dev-log/v1-implementation.md`
 
 该文件记录了当前已完成的场景、交互、对话、HUD、地图、移动端、封面和操作规则。
@@ -112,7 +132,7 @@
 - 不说人类语言。
 - 第一阶段可做成低多边形小猫跟随 Alex。
 
-## 8. 项目主管原则
+## 9. 项目主管原则
 
 本项目后续默认由“项目主管”视角协调：
 
@@ -122,7 +142,7 @@
 - AI 对话只负责自然表达，主线逻辑必须由代码控制。
 - 任何 agent 做出的有效创意，都要进入项目文件，成为所有对话都能读到的共同资产。
 
-## 9. 发布同步对话
+## 10. 发布同步对话
 
 本对话作为 GitHub 发布同步入口。
 
