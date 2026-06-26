@@ -195,7 +195,7 @@ export type Meteor = {
 export const WORLD_EXPANSION = 1.5;
 export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
-const CLOSE_METEOR_FLYBY_SECONDS = 180;
+const CLOSE_METEOR_FLYBY_SECONDS = 90;
 const CLOSE_METEOR_MIN_ALTITUDE = 105;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
@@ -2302,19 +2302,20 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
 
   const trail = new THREE.Group();
   const trailPuffs: THREE.Sprite[] = [];
-  const puffCount = isCloseFlyby ? 22 : 7;
+  const puffCount = isCloseFlyby ? 34 : 7;
   for (let i = 0; i < puffCount; i += 1) {
     const t = i / Math.max(puffCount - 1, 1);
     const puff = new THREE.Sprite(new THREE.SpriteMaterial({
       map: getDustFogTexture(),
-      color: isCloseFlyby ? 0xb98567 : order === 1 ? 0x8e8075 : 0x9a7b68,
+      color: isCloseFlyby ? 0x65d9ff : order === 1 ? 0x8e8075 : 0x9a7b68,
       transparent: true,
-      opacity: (isCloseFlyby ? 0.42 : 0.18) * Math.pow(1 - t, 1.08),
+      opacity: (isCloseFlyby ? 0.76 : 0.18) * Math.pow(1 - t, isCloseFlyby ? 0.74 : 1.08),
       depthWrite: false,
-      depthTest: true,
+      depthTest: !isCloseFlyby,
+      blending: isCloseFlyby ? THREE.AdditiveBlending : THREE.NormalBlending,
     }));
-    const scale = (isCloseFlyby ? 5.2 : 1.15) * (1.05 + t * 2.65);
-    puff.scale.set(scale, scale * 0.72, scale);
+    const scale = (isCloseFlyby ? 8.4 : 1.15) * (1.05 + t * (isCloseFlyby ? 3.35 : 2.65));
+    puff.scale.set(scale, scale * (isCloseFlyby ? 0.82 : 0.72), scale);
     puff.userData.baseOpacity = puff.material.opacity;
     puff.renderOrder = 2;
     trailPuffs.push(puff);
@@ -2322,13 +2323,14 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   }
   const coma = new THREE.Sprite(new THREE.SpriteMaterial({
     map: getDustFogTexture(),
-    color: isCloseFlyby ? 0x9b7a68 : 0x7c726b,
+    color: isCloseFlyby ? 0x53cfff : 0x7c726b,
     transparent: true,
-    opacity: isCloseFlyby ? 0.28 : 0.08,
+    opacity: isCloseFlyby ? 0.58 : 0.08,
     depthWrite: false,
-    depthTest: true,
+    depthTest: !isCloseFlyby,
+    blending: isCloseFlyby ? THREE.AdditiveBlending : THREE.NormalBlending,
   }));
-  coma.scale.set(isCloseFlyby ? 22 : 1.8, isCloseFlyby ? 15 : 1.25, 1);
+  coma.scale.set(isCloseFlyby ? 36 : 1.8, isCloseFlyby ? 26 : 1.25, 1);
   coma.renderOrder = 1;
   trail.add(coma);
   trail.renderOrder = 2;
@@ -2355,9 +2357,9 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     orbitMin: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_MIN_ALTITUDE : PLANET_RADIUS + 980 + randomA * 460,
     orbitMax: isCloseFlyby ? PLANET_RADIUS + 1550 : PLANET_RADIUS + 1460 + randomB * 820,
     orbitSpeed: (isCloseFlyby ? (Math.PI * 2) / CLOSE_METEOR_FLYBY_SECONDS : (Math.PI * 2) / (420 + randomC * 260)) * (order === 1 ? -1 : 1),
-    phase: isCloseFlyby ? -0.38 : (randomA - 0.5) * 0.46,
+    phase: isCloseFlyby ? -0.16 : (randomA - 0.5) * 0.46,
     tailAngle: isCloseFlyby ? 0.12 : 0.035 + randomB * 0.055,
-    tailLength: isCloseFlyby ? 118 : 18 + randomB * 24,
+    tailLength: isCloseFlyby ? 195 : 18 + randomB * 24,
     wobbleAxis,
     wobbleSpeed: isCloseFlyby ? 0.08 : 0.27 + randomC * 0.42,
     wobbleAmount: isCloseFlyby ? 0.02 : 0.08 + randomA * 0.22,
@@ -2900,6 +2902,8 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     const headMaterial = meteor.head.material;
     if (meteor.closeFlyby && headMaterial instanceof THREE.MeshStandardMaterial) {
       headMaterial.opacity = THREE.MathUtils.lerp(0.18, 1, closeness);
+      headMaterial.emissive.setHex(0x0f5f8f);
+      headMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.12, 0.72, closeness);
     }
     meteor.trail.position.copy(headPosition);
     meteor.trail.visible = !meteor.closeFlyby || closeness > 0.08;
@@ -2909,16 +2913,16 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
       puff.position
         .copy(motionDirection)
         .multiplyScalar(-meteor.tailLength * t)
-        .addScaledVector(radialDirection, meteor.closeFlyby ? -7.5 * t : -2.2 * t)
-        .addScaledVector(meteor.wobbleAxis, curl);
-      const base = meteor.closeFlyby ? 5.2 : meteor.tailLength > 40 ? 2.8 : 1.15;
-      const scale = base * (1.05 + t * (meteor.closeFlyby ? 2.65 : 2.15)) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.26, 1, closeness) : 1);
-      puff.scale.set(scale, scale * 0.72, scale);
+        .addScaledVector(radialDirection, meteor.closeFlyby ? -10.5 * t : -2.2 * t)
+        .addScaledVector(meteor.wobbleAxis, curl * (meteor.closeFlyby ? 1.7 : 1));
+      const base = meteor.closeFlyby ? 8.4 : meteor.tailLength > 40 ? 2.8 : 1.15;
+      const scale = base * (1.05 + t * (meteor.closeFlyby ? 3.35 : 2.15)) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.34, 1, closeness) : 1);
+      puff.scale.set(scale, scale * (meteor.closeFlyby ? 0.82 : 0.72), scale);
       const puffMaterial = puff.material;
       if (meteor.closeFlyby && puffMaterial instanceof THREE.SpriteMaterial) {
         const baseOpacity = puff.userData.baseOpacity ?? puffMaterial.opacity;
         puff.userData.baseOpacity = baseOpacity;
-        puffMaterial.opacity = baseOpacity * closeness;
+        puffMaterial.opacity = baseOpacity * THREE.MathUtils.lerp(0.18, 1, closeness);
       }
     });
 

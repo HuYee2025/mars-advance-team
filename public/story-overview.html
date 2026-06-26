@@ -80,9 +80,17 @@
         font-weight: 700;
         line-height: 1;
         background: rgba(7, 7, 7, 0.68);
-        border: 1px solid rgba(246, 189, 117, 0.34);
-        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 88, 82, 0.68);
+        box-shadow:
+          0 0 10px rgba(255, 66, 62, 0.32),
+          0 0 22px rgba(255, 66, 62, 0.16),
+          0 10px 34px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
+        transition:
+          border-color 160ms ease,
+          color 160ms ease,
+          box-shadow 160ms ease,
+          transform 160ms ease;
       }
 
       .home-link::before {
@@ -94,7 +102,13 @@
 
       .home-link:hover,
       .home-link:focus-visible {
-        border-color: rgba(134, 215, 232, 0.7);
+        border-color: rgba(255, 88, 82, 0.92);
+        color: #ffe1bd;
+        box-shadow:
+          0 0 12px rgba(255, 66, 62, 0.5),
+          0 0 26px rgba(255, 66, 62, 0.26),
+          0 10px 34px rgba(0, 0, 0, 0.3);
+        transform: translateY(-1px);
         outline: none;
       }
 
@@ -149,11 +163,13 @@
       }
 
       h1 {
-        max-width: 860px;
-        margin: 0 auto;
+        width: 100vw;
+        max-width: none;
+        margin: 0 0 0 50%;
         line-height: 0.96;
         letter-spacing: 0;
         text-shadow: 0 12px 34px rgba(0, 0, 0, 0.48);
+        transform: translateX(-50%);
       }
 
       .title-line {
