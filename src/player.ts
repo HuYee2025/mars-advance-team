@@ -226,17 +226,34 @@ function createScaleGun(graphite: THREE.Material, hardSuit: THREE.Material, oran
 }
 
 export function updateMarsEngineer(rig: PlayerRig, speed: number, elapsed: number, flying = false, thrusting = false) {
+  if (flying) {
+    const sway = Math.sin(elapsed * 5.2) * 0.045;
+    rig.visual.position.y = Math.sin(elapsed * 9.0) * 0.018;
+    rig.leftArm.rotation.x = 0.18 + sway;
+    rig.rightArm.rotation.x = 0.18 - sway;
+    rig.leftLeg.rotation.x = 0.26 - sway;
+    rig.rightLeg.rotation.x = 0.26 + sway;
+    rig.helmet.rotation.y = Math.sin(elapsed * 1.2) * 0.025;
+    rig.jetpackFlames.visible = true;
+    rig.jetpackFlames.children.forEach((flame, index) => {
+      const pulse = 0.9 + Math.sin(elapsed * 22 + index * 1.7) * 0.12;
+      const thrustScale = thrusting ? 1.2 : 0.84;
+      flame.scale.set(0.86 + pulse * 0.1, thrustScale * pulse, 0.86 + pulse * 0.1);
+    });
+    return;
+  }
+
   const moving = speed > 0.2;
   const stride = moving ? Math.sin(elapsed * 8.6) : Math.sin(elapsed * 1.8) * 0.12;
   const amount = moving ? 0.42 : 0.06;
 
-  rig.visual.position.y = flying ? Math.sin(elapsed * 9.0) * 0.018 : moving ? Math.abs(Math.sin(elapsed * 8.6)) * 0.035 : Math.sin(elapsed * 1.5) * 0.012;
+  rig.visual.position.y = moving ? Math.abs(Math.sin(elapsed * 8.6)) * 0.035 : Math.sin(elapsed * 1.5) * 0.012;
   rig.leftArm.rotation.x = stride * amount;
   rig.rightArm.rotation.x = -stride * amount;
   rig.leftLeg.rotation.x = -stride * amount * 0.92;
   rig.rightLeg.rotation.x = stride * amount * 0.92;
   rig.helmet.rotation.y = moving ? stride * 0.035 : Math.sin(elapsed * 0.9) * 0.035;
-  rig.jetpackFlames.visible = flying;
+  rig.jetpackFlames.visible = false;
   rig.jetpackFlames.children.forEach((flame, index) => {
     const pulse = 0.9 + Math.sin(elapsed * 22 + index * 1.7) * 0.12;
     const thrustScale = thrusting ? 1.2 : 0.84;

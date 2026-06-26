@@ -53,7 +53,6 @@ const labelsRoot = must<HTMLDivElement>("#labels");
 const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
-const mobileLampButton = must<HTMLButtonElement>("#mobile-lamp");
 const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const enterButton = must<HTMLButtonElement>("#enter-base");
@@ -61,6 +60,7 @@ const storySummaryButton = must<HTMLButtonElement>("#story-summary");
 const titleActionButtons = [enterButton, storySummaryButton] as const;
 const languageToggle = must<HTMLButtonElement>("#language-toggle");
 const hudToggle = must<HTMLButtonElement>("#hud-toggle");
+const missionToggle = must<HTMLButtonElement>("#mission-toggle");
 const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const coinReadout = must<HTMLElement>("#coin-readout");
 const scoreReadout = must<HTMLElement>("#score-readout");
@@ -158,14 +158,6 @@ scene.add(player);
 player.scale.setScalar(0.76);
 const playerContactShadow = createPlayerContactShadow();
 scene.add(playerContactShadow);
-const helmetLamp = new THREE.SpotLight(0xffd36c, 0, 10.5, Math.PI / 4.4, 0.8, 1.35);
-const helmetLampTarget = new THREE.Object3D();
-const helmetLampSpot = createHelmetLampSpot();
-helmetLamp.visible = false;
-helmetLampTarget.visible = false;
-helmetLampSpot.visible = false;
-helmetLamp.target = helmetLampTarget;
-scene.add(helmetLamp, helmetLampTarget, helmetLampSpot);
 
 const world = createMarsWorld(scene);
 const multiplayer = new MultiplayerClient({ scene, camera, labelsRoot });
@@ -236,6 +228,8 @@ const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
 const FLIGHT_MAX_ALTITUDE = 96;
+const FLIGHT_LANDING_SURFACE_CLEARANCE = 0.82;
+const FLIGHT_LANDING_SURFACE_MARGIN = 0.28;
 const SCALE_GUN_RANGE = 620;
 const SCALE_GUN_DURATION_SECONDS = 60;
 const SCALE_GUN_MIN_FACTOR = 1 / 4;
@@ -378,9 +372,9 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
 };
 
 const oxygenSupplyPoints = [
-  { label: "居住舱补给柜", x: expandWorldCoordinate(11), z: expandWorldCoordinate(62), radius: 12, mapRange: 240 },
-  { label: "氧气生产站", x: expandWorldCoordinate(-48.2), z: expandWorldCoordinate(40.4), radius: 15, mapRange: 260 },
-  { label: "登陆飞船补给舱", x: expandWorldCoordinate(59), z: expandWorldCoordinate(21.4), radius: 14, mapRange: 240 },
+  { label: "居住舱补给柜", x: expandWorldCoordinate(0), z: expandWorldCoordinate(36), radius: 12, mapRange: 240 },
+  { label: "氧气生产站", x: expandWorldCoordinate(48), z: expandWorldCoordinate(36), radius: 15, mapRange: 260 },
+  { label: "登陆飞船补给舱", x: expandWorldCoordinate(264), z: expandWorldCoordinate(156), radius: 14, mapRange: 240 },
 ];
 
 const explorableBuildingIds = new Set<Interactable["id"]>([
@@ -457,6 +451,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.close": "关闭基地地图",
     "mission.aria": "当前任务",
     "mission.current": "当前任务",
+    "missionToggle.show": "显示当前任务",
+    "missionToggle.hide": "隐藏当前任务",
     "dialogue.continue": "继续",
     "exit.title": "要退出当前游戏吗？",
     "exit.text": "退出会返回主页，当前巡检进度不会保留。",
@@ -514,6 +510,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.close": "Close Base Map",
     "mission.aria": "Current Mission",
     "mission.current": "Current Mission",
+    "missionToggle.show": "Show current mission",
+    "missionToggle.hide": "Hide current mission",
     "dialogue.continue": "Continue",
     "exit.title": "Exit the current game?",
     "exit.text": "This returns to the title screen. Current patrol progress will not be saved.",
@@ -697,7 +695,6 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["退出确认", "Exit Confirm"],
   ["按住指南", "Hold Guide"],
   ["隐藏界面", "Hide HUD"],
-  ["头灯", "Headlamp"],
   ["前进", "Forward"],
   ["左转", "Turn Left"],
   ["后退", "Back"],
@@ -715,7 +712,6 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["枪放大 / 缩小", "Gun Enlarge / Shrink"],
   ["备用缩放", "Backup Zoom"],
   ["默认视角", "Default View"],
-  ["照明", "Light"],
   ["跳", "Jump"],
 ];
 
@@ -743,6 +739,9 @@ let coins = 0;
 let currentRank: PlayerRankId = "internPatrol";
 let completedAnyTask = false;
 let hudCollapsed = false;
+let missionPanelOpen = false;
+let missionUnread = false;
+let missionIntroTimer: ReturnType<typeof window.setTimeout> | null = null;
 let mapOpen = false;
 let mapExpanded = false;
 let selectedTitleActionIndex = 0;
@@ -786,7 +785,6 @@ let fufuWanderDistance = 3.1;
 let fufuNextWanderAt = 0;
 let insideGreenhouse = false;
 let lastRobotGreetingAt = -Infinity;
-let helmetLampOn = false;
 let controlsGuideOpen = false;
 let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
@@ -799,6 +797,8 @@ let selectedInteractionIndex = 0;
 let interactionChoiceOpen = false;
 let interactionChoiceSignature = "";
 let selectedDialogueChoiceIndex = 0;
+let dialogueTextPages: string[] = [];
+let dialogueTextPageIndex = 0;
 let currentCoinGroup: CoinGroup | null = null;
 let nextCoinRefreshAt = 0;
 const awardedEvents = new Set<string>();
@@ -1128,34 +1128,6 @@ function createPlayerContactShadow() {
     polygonOffsetFactor: -2,
   });
   const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.72, 32), material);
-  mesh.renderOrder = 2;
-  return mesh;
-}
-
-function createHelmetLampSpot() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const gradient = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
-    gradient.addColorStop(0, "rgba(255, 211, 108, 0.48)");
-    gradient.addColorStop(0.48, "rgba(255, 211, 108, 0.28)");
-    gradient.addColorStop(0.82, "rgba(255, 211, 108, 0.09)");
-    gradient.addColorStop(1, "rgba(255, 211, 108, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 128, 128);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const material = new THREE.MeshBasicMaterial({
-    map: texture,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
   mesh.renderOrder = 2;
   return mesh;
 }
@@ -1533,6 +1505,7 @@ function bindInput() {
     if (target === enterButton || (target instanceof Element && target.closest("#enter-base"))) startGame();
   });
   hudToggle.addEventListener("click", toggleHud);
+  missionToggle.addEventListener("click", toggleMissionPanel);
   mapToggle.addEventListener("click", toggleMap);
   dialogueContinue.addEventListener("click", advanceDialogue);
   dialogueChoices.addEventListener("click", (event) => {
@@ -1638,7 +1611,8 @@ function bindInput() {
       return;
     }
     if (event.code === "KeyR") {
-      toggleHelmetLamp();
+      event.preventDefault();
+      toggleMissionPanel();
       return;
     }
     if (event.code === "KeyX") {
@@ -1777,10 +1751,6 @@ function bindInput() {
     event.preventDefault();
     if (started && !exitConfirmOpen && !dialogueOpen) jump();
   });
-  mobileLampButton.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    if (started && !exitConfirmOpen && !dialogueOpen) toggleHelmetLamp();
-  });
   mapRadar.addEventListener("pointerdown", (event) => {
     if (!started || exitConfirmOpen || !mapOpen || dialogueOpen || !isSmallScreenMapTouch()) return;
     event.preventDefault();
@@ -1826,6 +1796,16 @@ function setFlightModeEnabled(enabled: boolean) {
     keyState.delete("ControlLeft");
     keyState.delete("ControlRight");
   }
+}
+
+function landFromFlight() {
+  flightModeEnabled = false;
+  grounded = true;
+  verticalVelocity = 0;
+  playerVelocity.set(0, 0, 0);
+  keyState.delete("Space");
+  keyState.delete("ControlLeft");
+  keyState.delete("ControlRight");
 }
 
 function canUseFlightMode() {
@@ -1961,8 +1941,40 @@ function toggleHud() {
   if (!started) return;
   hudCollapsed = !hudCollapsed;
   document.body.classList.toggle("hud-collapsed", hudCollapsed);
-  hudToggle.setAttribute("aria-pressed", String(hudCollapsed));
+  hudToggle.setAttribute("aria-pressed", String(!hudCollapsed));
   hudToggle.setAttribute("aria-label", hudCollapsed ? "显示界面信息" : "隐藏界面信息");
+}
+
+function toggleMissionPanel() {
+  if (!started) return;
+  setMissionPanelOpen(!missionPanelOpen, true);
+}
+
+function setMissionPanelOpen(open: boolean, userInitiated = false) {
+  if (open && isSmallScreenMapTouch() && mapOpen) closeMapUi();
+  missionPanelOpen = open;
+  document.body.classList.toggle("mission-panel-open", missionPanelOpen);
+  missionToggle.setAttribute("aria-pressed", String(missionPanelOpen));
+  missionToggle.setAttribute("aria-label", missionPanelOpen ? tr("missionToggle.hide") : tr("missionToggle.show"));
+  if (missionPanelOpen || userInitiated) {
+    missionUnread = false;
+    missionToggle.classList.remove("has-mission-update");
+  }
+}
+
+function clearMissionIntroTimer() {
+  if (!missionIntroTimer) return;
+  window.clearTimeout(missionIntroTimer);
+  missionIntroTimer = null;
+}
+
+function previewMissionPanel() {
+  clearMissionIntroTimer();
+  setMissionPanelOpen(true);
+  missionIntroTimer = window.setTimeout(() => {
+    setMissionPanelOpen(false);
+    missionIntroTimer = null;
+  }, 4200);
 }
 
 function showControlsGuide(visible: boolean) {
@@ -1984,7 +1996,9 @@ function closeMapUi() {
 
 function toggleMap() {
   if (!started) return;
-  mapOpen = !mapOpen;
+  const nextMapOpen = !mapOpen;
+  if (nextMapOpen && isSmallScreenMapTouch()) setMissionPanelOpen(false);
+  mapOpen = nextMapOpen;
   if (!mapOpen) setMapExpanded(false);
   document.body.classList.toggle("map-open", mapOpen);
   mapOverlay.setAttribute("aria-hidden", String(!mapOpen));
@@ -2019,6 +2033,7 @@ function handleMapKeyUp(event: KeyboardEvent) {
 
 function openMap() {
   if (!started || mapOpen) return;
+  if (isSmallScreenMapTouch()) setMissionPanelOpen(false);
   mapOpen = true;
   document.body.classList.add("map-open");
   mapOverlay.setAttribute("aria-hidden", "false");
@@ -2041,11 +2056,6 @@ function clearMapHoldTimer() {
   if (!mapHoldTimer) return;
   window.clearTimeout(mapHoldTimer);
   mapHoldTimer = null;
-}
-
-function toggleHelmetLamp() {
-  if (!started) return;
-  helmetLampOn = !helmetLampOn;
 }
 
 function toggleScaleGunAiming(force?: boolean) {
@@ -2242,30 +2252,6 @@ function clearScaleGunEffects() {
   scaleGunEffects.clear();
 }
 
-function updateHelmetLamp() {
-  const visible = started && helmetLampOn && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket;
-  helmetLamp.visible = visible;
-  helmetLampTarget.visible = visible;
-  helmetLampSpot.visible = visible;
-  if (!visible) {
-    helmetLamp.intensity = 0;
-    return;
-  }
-
-  const forward = playerForward.clone().projectOnPlane(playerNormal).normalize();
-  const lampNormal = playerNormal.clone().addScaledVector(forward, 0.08).normalize();
-  const spotNormal = playerNormal.clone().addScaledVector(forward, 4 / PLANET_RADIUS).normalize();
-  const lampPosition = lampNormal.clone().multiplyScalar(PLANET_RADIUS + PLAYER_ALTITUDE + 0.78);
-  placeObjectOnPlanetNormal(helmetLampSpot, spotNormal, 0.052, 0);
-
-  helmetLamp.position.copy(lampPosition).addScaledVector(forward, 0.22);
-  helmetLampTarget.position.copy(helmetLampSpot.position).addScaledVector(spotNormal, 0.08);
-  helmetLamp.intensity = 4.4;
-
-  helmetLampSpot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), spotNormal);
-  helmetLampSpot.scale.setScalar(4.2);
-}
-
 function adjustCameraDistance(direction: number) {
   const step = THREE.MathUtils.clamp(cameraDistance * 0.16, 0.18, 12);
   cameraDistance = THREE.MathUtils.clamp(cameraDistance + direction * step, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
@@ -2332,7 +2318,6 @@ function startGame() {
   exitFrontCamera = null;
   mapOpen = false;
   exitConfirmOpen = false;
-  helmetLampOn = false;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
   world.habitatDoor.open = false;
@@ -2367,7 +2352,10 @@ function startGame() {
   startBackgroundMusic();
   titleScreen.classList.add("is-hidden");
   document.body.classList.add("is-playing");
+  hudToggle.setAttribute("aria-pressed", "true");
+  hudToggle.setAttribute("aria-label", "隐藏界面信息");
   setCurrentMissionText();
+  previewMissionPanel();
 }
 
 function returnToTitle() {
@@ -2376,12 +2364,14 @@ function returnToTitle() {
   multiplayer.disconnect();
   resetQuestState();
   hudCollapsed = false;
+  missionPanelOpen = false;
+  missionUnread = false;
+  clearMissionIntroTimer();
   mapOpen = false;
   mapExpanded = false;
   exitFrontCamera = null;
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
-  helmetLampOn = false;
   pendingMotherCall = null;
   introCallQueued = false;
   controlsGuideOpen = false;
@@ -2395,15 +2385,17 @@ function returnToTitle() {
   resetPlayerToSpawn();
   resetFufu();
   resetStick();
-  updateHelmetLamp();
-  document.body.classList.remove("is-playing", "hud-collapsed", "map-open", "map-expanded");
+  document.body.classList.remove("is-playing", "hud-collapsed", "mission-panel-open", "map-open", "map-expanded");
   exitConfirm.classList.remove("is-visible");
   exitConfirm.setAttribute("aria-hidden", "true");
   document.body.classList.remove("exit-confirm-open");
   controlsGuide.classList.remove("is-visible");
   controlsGuide.setAttribute("aria-hidden", "true");
-  hudToggle.setAttribute("aria-pressed", "false");
+  hudToggle.setAttribute("aria-pressed", "true");
   hudToggle.setAttribute("aria-label", "隐藏界面信息");
+  missionToggle.classList.remove("has-mission-update");
+  missionToggle.setAttribute("aria-pressed", "false");
+  missionToggle.setAttribute("aria-label", tr("missionToggle.show"));
   updateMapButtonState();
   mapOverlay.setAttribute("aria-hidden", "true");
   selectedTitleActionIndex = 0;
@@ -2471,13 +2463,11 @@ function animate() {
       quaternion: player.quaternion,
       speed,
       flying: playerFlying,
-      lampOn: helmetLampOn,
       insideState: currentPlayerInsideState(),
     });
   }
   updateScaleGun();
   updatePlayerContactShadow();
-  updateHelmetLamp();
   updateBackgroundMusicFade();
   updateMonolithSignal();
 
@@ -2733,14 +2723,46 @@ function updateFlightPlayer(delta: number) {
   if (verticalInput > 0) {
     playerAltitudeOffset = Math.min(FLIGHT_MAX_ALTITUDE, playerAltitudeOffset + FLIGHT_ASCEND_SPEED * delta);
   } else if (verticalInput < 0) {
-    playerAltitudeOffset = Math.max(FLIGHT_MIN_ALTITUDE, playerAltitudeOffset - FLIGHT_DESCEND_SPEED * delta);
+    playerAltitudeOffset = Math.max(0, playerAltitudeOffset - FLIGHT_DESCEND_SPEED * delta);
   } else {
     playerAltitudeOffset = Math.max(FLIGHT_MIN_ALTITUDE, playerAltitudeOffset);
   }
   grounded = false;
   verticalVelocity = 0;
   placePlayerOnPlanet();
+  if (verticalInput < 0 && tryLandFlightOnWalkableSurface()) return 0;
+  if (playerAltitudeOffset <= 0) {
+    playerAltitudeOffset = 0;
+    landFromFlight();
+    placePlayerOnPlanet();
+    return 0;
+  }
   return playerVelocity.length() + (verticalInput !== 0 ? FLIGHT_ASCEND_SPEED : 0);
+}
+
+function tryLandFlightOnWalkableSurface() {
+  for (const elevator of world.elevators) {
+    if (elevator.moving || elevator.target !== "top") continue;
+    const scale = new THREE.Vector3();
+    elevator.car.getWorldScale(scale);
+    const landingY = getElevatorPlayerLocalY(elevator, scale);
+    const local = elevator.car.worldToLocal(player.position.clone());
+    const withinX = local.x >= elevator.walkBounds.minX - FLIGHT_LANDING_SURFACE_MARGIN && local.x <= elevator.walkBounds.maxX + FLIGHT_LANDING_SURFACE_MARGIN;
+    const withinZ = local.z >= elevator.walkBounds.minZ - FLIGHT_LANDING_SURFACE_MARGIN && local.z <= elevator.walkBounds.maxZ + FLIGHT_LANDING_SURFACE_MARGIN;
+    if (!withinX || !withinZ) continue;
+    const heightAboveSurface = local.y - landingY;
+    if (heightAboveSurface < -0.12 || heightAboveSurface > FLIGHT_LANDING_SURFACE_CLEARANCE) continue;
+    elevatorRideLocal.set(
+      THREE.MathUtils.clamp(local.x, elevator.walkBounds.minX, elevator.walkBounds.maxX),
+      landingY,
+      THREE.MathUtils.clamp(local.z, elevator.walkBounds.minZ, elevator.walkBounds.maxZ),
+    );
+    ridingElevator = elevator;
+    landFromFlight();
+    placePlayerOnElevator(elevator);
+    return true;
+  }
+  return false;
 }
 
 function isFlightAscending() {
@@ -3842,7 +3864,6 @@ function resetRunUiAfterRespawn() {
   introCallQueued = missionStep !== "intro";
   if (missionStep === "intro") gameStartElapsed = elapsedTime;
   hudCollapsed = false;
-  helmetLampOn = false;
   messageUntil = 0;
   selectedInteractionIndex = 0;
   interactionChoiceOpen = false;
@@ -3861,9 +3882,15 @@ function resetRunUiAfterRespawn() {
   showControlsGuide(false);
   keyState.clear();
   resetStick();
-  document.body.classList.remove("hud-collapsed");
-  hudToggle.setAttribute("aria-pressed", "false");
+  missionPanelOpen = false;
+  missionUnread = false;
+  clearMissionIntroTimer();
+  document.body.classList.remove("hud-collapsed", "mission-panel-open");
+  hudToggle.setAttribute("aria-pressed", "true");
   hudToggle.setAttribute("aria-label", "隐藏界面信息");
+  missionToggle.classList.remove("has-mission-update");
+  missionToggle.setAttribute("aria-pressed", "false");
+  missionToggle.setAttribute("aria-label", tr("missionToggle.show"));
   promptBox.textContent = "";
   promptBox.classList.remove("is-visible");
   interactionChoice.classList.remove("is-visible");
@@ -4674,7 +4701,62 @@ function closeDialogue() {
   if (closedNode?.scene === "intro" && missionStep === "intro") startOxygenMission();
 }
 
-function renderDialogueNode() {
+function dialogueTextWeight(text: string) {
+  let weight = 0;
+  for (const char of text) {
+    if (char.trim() === "") weight += 0.35;
+    else if ("，,。.!！?？；;、：:".includes(char)) weight += 0.45;
+    else weight += char.charCodeAt(0) > 255 ? 1 : 0.56;
+  }
+  return weight;
+}
+
+function splitDialogueTextIntoPages(text: string) {
+  const normalized = text
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+  if (!normalized) return [""];
+  if (!isSmallScreenMapTouch()) return [normalized];
+
+  const maxWeight = 48;
+  if (dialogueTextWeight(normalized) <= maxWeight) return [normalized];
+
+  const pages: string[] = [];
+  let remaining = normalized;
+  while (dialogueTextWeight(remaining) > maxWeight) {
+    let weight = 0;
+    let cutIndex = 0;
+    let preferredCutIndex = 0;
+    for (const [index, char] of Array.from(remaining).entries()) {
+      weight += dialogueTextWeight(char);
+      cutIndex = index + char.length;
+      if ("。.!！?？；;，,、 ".includes(char)) preferredCutIndex = cutIndex;
+      if (weight >= maxWeight) break;
+    }
+
+    const finalCutIndex = preferredCutIndex > 0 && preferredCutIndex >= cutIndex * 0.58 ? preferredCutIndex : cutIndex;
+    const page = remaining.slice(0, finalCutIndex).trim();
+    if (!page) break;
+    pages.push(page);
+    remaining = remaining.slice(finalCutIndex).trim();
+  }
+  if (remaining) pages.push(remaining);
+  return pages.length ? pages : [normalized];
+}
+
+function dialogueChoiceLetter(index: number) {
+  return String.fromCharCode(65 + index);
+}
+
+function dialogueTextWithCompactChoices(text: string, choices: DialogueChoice[]) {
+  if (!isSmallScreenMapTouch() || choices.length !== 2) return text;
+  const choiceLines = choices.map((choice, index) => `${dialogueChoiceLetter(index)}. ${localizeText(choice.label)}`);
+  return `${text}\n${choiceLines.join("\n")}`;
+}
+
+function renderDialogueNode(resetPage = true) {
   if (!activeDialogueNode) return;
   const node = dialogueNodes[activeDialogueNode];
   const leftCharacter = characters.alex;
@@ -4703,19 +4785,27 @@ function renderDialogueNode() {
   dialogueStats.textContent = `${localizeText("信任")} ${dialogueState.motherTrust} · ${localizeText("基地")} ${dialogueState.baseIntegrity} · ${localizeText("自主")} ${dialogueState.humanAutonomy}`;
   dialogueItemImage.hidden = !node.image;
   if (node.image) dialogueItemImage.src = node.image;
-  dialogueText.textContent = localizeText(node.text);
+  const choices = node.choices ?? [];
+  const useCompactChoiceButtons = isSmallScreenMapTouch() && choices.length === 2;
+  if (resetPage) dialogueTextPageIndex = 0;
+  dialogueTextPages = splitDialogueTextIntoPages(dialogueTextWithCompactChoices(localizeText(node.text), choices));
+  dialogueTextPageIndex = Math.min(dialogueTextPageIndex, dialogueTextPages.length - 1);
+  dialogueText.textContent = dialogueTextPages[dialogueTextPageIndex] ?? "";
   dialogueChoices.innerHTML = "";
 
-  const choices = node.choices ?? [];
+  const hasMorePages = dialogueTextPageIndex < dialogueTextPages.length - 1;
+  dialogueChoices.classList.toggle("is-compact-binary", useCompactChoiceButtons);
   selectedDialogueChoiceIndex = choices.length === 2 ? 1 : 0;
-  dialogueChoices.hidden = choices.length === 0;
-  dialogueContinue.hidden = choices.length > 0;
+  dialogueChoices.hidden = hasMorePages || choices.length === 0;
+  dialogueContinue.hidden = !hasMorePages && choices.length > 0;
   for (const [index, choice] of choices.entries()) {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.choiceIndex = String(index);
-    button.textContent = localizeText(choice.label);
-    button.classList.toggle("is-selected", index === selectedDialogueChoiceIndex);
+    const choiceLabel = localizeText(choice.label);
+    button.textContent = useCompactChoiceButtons ? dialogueChoiceLetter(index) : choiceLabel;
+    if (useCompactChoiceButtons) button.setAttribute("aria-label", `${dialogueChoiceLetter(index)}. ${choiceLabel}`);
+    button.classList.toggle("is-selected", !useCompactChoiceButtons && index === selectedDialogueChoiceIndex);
     dialogueChoices.appendChild(button);
   }
 }
@@ -4725,6 +4815,10 @@ function handleDialogueKey(event: KeyboardEvent) {
   if (!activeDialogueNode) return;
   const node = dialogueNodes[activeDialogueNode];
   const choices = node.choices ?? [];
+  if (dialogueTextPageIndex < dialogueTextPages.length - 1) {
+    if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") advanceDialogue();
+    return;
+  }
   if (choices.length > 0) {
     if (event.code === "KeyQ") {
       if (choices.length === 2) chooseDialogue(0);
@@ -4765,6 +4859,7 @@ function chooseDialogue(index: number) {
   const node = dialogueNodes[activeDialogueNode];
   const choice = node.choices?.[index];
   if (!choice) return;
+  playUiBeep();
   applyDialogueEffects(choice);
   activeDialogueNode = choice.next;
   renderDialogueNode();
@@ -4773,12 +4868,20 @@ function chooseDialogue(index: number) {
 function advanceDialogue() {
   if (!activeDialogueNode) return;
   const node = dialogueNodes[activeDialogueNode];
+  if (dialogueTextPageIndex < dialogueTextPages.length - 1) {
+    playUiBeep();
+    dialogueTextPageIndex += 1;
+    renderDialogueNode(false);
+    return;
+  }
   if (node.choices?.length) return;
   if (node.next) {
+    playUiBeep();
     activeDialogueNode = node.next;
     renderDialogueNode();
     return;
   }
+  playUiBeep();
   closeDialogue();
 }
 
@@ -4866,8 +4969,13 @@ function awardCoins(amount: number) {
 }
 
 function updateRewardReadouts() {
-  coinReadout.textContent = `${tr("reward.coins")} ${coins}`;
-  scoreReadout.textContent = `${tr("reward.score")} ${scorePoints}`;
+  coinReadout.textContent = formatRewardCount(coins, "$");
+  scoreReadout.textContent = scorePoints > 0 ? formatRewardCount(scorePoints, "0") : "0";
+}
+
+function formatRewardCount(value: number, zeroLabel: string) {
+  if (value <= 0) return zeroLabel;
+  return String(value).padStart(3, "0");
 }
 
 function updateRankReadout() {
@@ -5530,13 +5638,20 @@ function setCurrentMissionText() {
 }
 
 function setMission(text: string) {
+  const previous = missionText.dataset.sourceText;
   missionText.dataset.sourceText = text;
   missionText.textContent = localizeText(text);
+  if (started && previous && previous !== text) {
+    missionUnread = true;
+    missionToggle.classList.add("has-mission-update");
+    if (isSmallScreenMapTouch()) setMissionPanelOpen(false);
+  }
 }
 
 function updateMissionAfterLanguageChange() {
   if (missionText.dataset.sourceText) missionText.textContent = localizeText(missionText.dataset.sourceText);
   else setCurrentMissionText();
+  missionToggle.setAttribute("aria-label", missionPanelOpen ? tr("missionToggle.hide") : tr("missionToggle.show"));
 }
 
 function showDialogue(speaker: string, text: string, seconds: number) {

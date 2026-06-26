@@ -9,7 +9,6 @@ export type PlayerSnapshot = {
   quaternion: [number, number, number, number];
   speed: number;
   flying: boolean;
-  lampOn: boolean;
   insideState: PlayerInsideState;
 };
 

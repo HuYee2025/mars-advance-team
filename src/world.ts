@@ -194,6 +194,7 @@ export const WORLD_EXPANSION = 1.5;
 export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
 const CLOSE_METEOR_FLYBY_SECONDS = 180;
+const CLOSE_METEOR_MIN_ALTITUDE = 105;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -316,9 +317,9 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   scene.add(base);
   addNasaPerseveranceRover(base, colliders, landmarks);
 
-  addLanderSite("01 飞船 登陆飞船", spread(29.5), spread(10.7), 0.18, true);
-  addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
-  addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, true);
+  addLanderSite("01 飞船 登陆飞船", spread(132), spread(78), 0.18, true);
+  addLanderSite("02 飞船 货运飞船", spread(142), spread(18), -0.55, true);
+  addLanderSite("03 飞船 返回飞船", spread(-118), spread(82), 0.94, true);
 
   const monolithX = expandWorldCoordinate(-360);
   const monolithZ = expandWorldCoordinate(-300);
@@ -356,8 +357,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const habitat = createHabitatModule();
   habitat.scale.setScalar(HABITAT_SCALE);
   const habitatDoor = habitat.userData.door as HabitatDoorControl;
-  const habitatX = spread(5.5);
-  const habitatZ = spread(30.9);
+  const habitatX = spread(0);
+  const habitatZ = spread(18);
   const habitatYaw = -0.22;
   placeObjectOnPlanet(habitat, habitatX, habitatZ, 2.0, habitatYaw);
   base.add(habitat);
@@ -388,8 +389,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const greenhouse = createGreenhouse(flickerLights);
   greenhouse.scale.setScalar(GREENHOUSE_SCALE);
   const greenhouseDoor = greenhouse.userData.door as GreenhouseDoorControl;
-  const greenhouseX = spread(-29.5);
-  const greenhouseZ = spread(-10.7);
+  const greenhouseX = spread(-24);
+  const greenhouseZ = spread(18);
   const greenhouseYaw = 0.3;
   placeObjectOnPlanet(greenhouse, greenhouseX, greenhouseZ, -0.86, greenhouseYaw);
   base.add(greenhouse);
@@ -415,8 +416,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     () => !greenhouseDoor.occupied
   );
 
-  const oxygenX = spread(-24.1);
-  const oxygenZ = spread(20.2);
+  const oxygenX = spread(24);
+  const oxygenZ = spread(18);
   const oxygenYaw = -0.18;
   const oxygenPlant = createIndustrialPlant(0xff3d2f, "O2", true);
   oxygenPlant.scale.setScalar(INDUSTRIAL_SCALE);
@@ -440,8 +441,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const methanePlant = createIndustrialPlant(0xffba66, "CH4");
   methanePlant.scale.setScalar(INDUSTRIAL_SCALE);
-  const methaneX = spread(24.1);
-  const methaneZ = spread(-20.2);
+  const methaneX = spread(24);
+  const methaneZ = spread(-16);
   placeObjectOnPlanet(methanePlant, methaneX, methaneZ, 0, 0.8);
   base.add(methanePlant);
   landmarks.push(landmark("04 建筑 甲烷燃料厂", methanePlant, methaneX, methaneZ, 34, 230));
@@ -458,8 +459,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const garage = createGarage();
   garage.scale.setScalar(GARAGE_SCALE);
-  const garageX = spread(-5.5);
-  const garageZ = spread(-30.9);
+  const garageX = spread(-22);
+  const garageZ = spread(-16);
   placeObjectOnPlanet(garage, garageX, garageZ, 0, -0.7);
   base.add(garage);
   landmarks.push(landmark("05 建筑 机器人车库", garage, garageX, garageZ, 34, 230));
@@ -476,8 +477,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const tower = createCommTower(flickerLights);
   tower.scale.setScalar(TOWER_SCALE);
-  const towerX = spread(21.5);
-  const towerZ = spread(122.2);
+  const towerX = spread(46);
+  const towerZ = spread(24);
   placeObjectOnPlanet(tower, towerX, towerZ, 0, 0.2);
   base.add(tower);
   landmarks.push(landmark("06 建筑 通信塔", tower, towerX, towerZ, 34, 220));
@@ -494,8 +495,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const lab04 = createNumberedFacility("04", 0x75d7ff, "lab");
   lab04.scale.setScalar(NUMBERED_FACILITY_SCALE);
-  const lab04X = spread(-116.6);
-  const lab04Z = spread(-42.4);
+  const lab04X = spread(-42);
+  const lab04Z = spread(-6);
   placeObjectOnPlanet(lab04, lab04X, lab04Z, 0, -0.38);
   base.add(lab04);
   landmarks.push(landmark("07 建筑 科研舱", lab04, lab04X, lab04Z, 34, 230));
@@ -512,8 +513,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const store07 = createNumberedFacility("07", 0xffc36d, "depot");
   store07.scale.setScalar(NUMBERED_FACILITY_SCALE);
-  const store07X = spread(-62);
-  const store07Z = spread(-107.4);
+  const store07X = spread(-42);
+  const store07Z = spread(-28);
   placeObjectOnPlanet(store07, store07X, store07Z, 0, 0.72);
   base.add(store07);
   landmarks.push(landmark("08 建筑 物资仓", store07, store07X, store07Z, 34, 230));
@@ -530,8 +531,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   const med09 = createNumberedFacility("09", 0x9ff28b, "clinic");
   med09.scale.setScalar(NUMBERED_FACILITY_SCALE);
-  const med09X = spread(95);
-  const med09Z = spread(-79.8);
+  const med09X = spread(44);
+  const med09Z = spread(-8);
   placeObjectOnPlanet(med09, med09X, med09Z, 0, -0.86);
   base.add(med09);
   landmarks.push(landmark("09 建筑 医疗舱", med09, med09X, med09Z, 34, 230));
@@ -546,8 +547,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     completed: false,
   });
 
-  const solarAX = spread(95);
-  const solarAZ = spread(79.8);
+  const solarAX = spread(44);
+  const solarAZ = spread(-70);
   const solarA = createSolarArray(solarAX, solarAZ, -0.36, base);
   solarArrays.push(solarA);
   landmarks.push(landmark("01 能源 太阳能阵列 A", solarA, solarAX, solarAZ, 30, 220));
@@ -561,8 +562,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 12.5,
     completed: false,
   });
-  const solarBX = spread(-116.6);
-  const solarBZ = spread(42.4);
+  const solarBX = spread(64);
+  const solarBZ = spread(-70);
   const solarB = createSolarArray(solarBX, solarBZ, -0.36, base);
   solarArrays.push(solarB);
   landmarks.push(landmark("02 能源 太阳能阵列 B", solarB, solarBX, solarBZ, 30, 220));
@@ -576,9 +577,9 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 12.5,
     completed: false,
   });
-  const solarCX = spread(21.5);
-  const solarCZ = spread(-122.2);
-  const solarNode = createSolarArray(solarCX, solarCZ, 0.18, base);
+  const solarCX = spread(84);
+  const solarCZ = spread(-70);
+  const solarNode = createSolarArray(solarCX, solarCZ, -0.36, base);
   solarArrays.push(solarNode);
   landmarks.push(landmark("03 能源 太阳能阵列 C", solarNode, solarCX, solarCZ, 30, 220));
   addMaintenanceBot("12 机器人 阵列 C 维修工", solarCX, solarCZ, 0.18, 0, -11.8, "03 能源 太阳能阵列 C", "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。");
@@ -1807,11 +1808,11 @@ function createSolarArray(x: number, z: number, rotationY: number, parent: THREE
 function createPipes(parent: THREE.Group) {
   const pipeMat = mat(0x8c7f72, 0.48, 0.54);
   const runs = [
-    [planetSurfacePoint(spread(-24.1), spread(20.2), 0.28), planetSurfacePoint(spread(5.5), spread(30.9), 0.28)],
-    [planetSurfacePoint(spread(24.1), spread(-20.2), 0.28), planetSurfacePoint(spread(5.5), spread(30.9), 0.28)],
-    [planetSurfacePoint(spread(-29.5), spread(-10.7), 0.28), planetSurfacePoint(spread(5.5), spread(30.9), 0.28)],
-    [planetSurfacePoint(spread(29.5), spread(10.7), 0.28), planetSurfacePoint(spread(-5.5), spread(-30.9), 0.28)],
-    [planetSurfacePoint(spread(21.5), spread(-122.2), 0.28), planetSurfacePoint(spread(-29.5), spread(-10.7), 0.28)],
+    [planetSurfacePoint(spread(24), spread(18), 0.28), planetSurfacePoint(spread(0), spread(18), 0.28)],
+    [planetSurfacePoint(spread(24), spread(-16), 0.28), planetSurfacePoint(spread(0), spread(18), 0.28)],
+    [planetSurfacePoint(spread(-24), spread(18), 0.28), planetSurfacePoint(spread(0), spread(18), 0.28)],
+    [planetSurfacePoint(spread(132), spread(78), 0.28), planetSurfacePoint(spread(-22), spread(-16), 0.28)],
+    [planetSurfacePoint(spread(84), spread(-70), 0.28), planetSurfacePoint(spread(-24), spread(18), 0.28)],
   ];
   for (const [from, to] of runs) {
     const mid = from.clone().lerp(to, 0.5);
@@ -2273,7 +2274,7 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   const randomC = seededNoise(starIndex, 89.31);
   const isCloseFlyby = order === 0;
   const meteorColor = isCloseFlyby ? 0x8a8680 : order === 1 ? 0x6f6d68 : 0x79746e;
-  const headRadius = isCloseFlyby ? 2.6 : 0.62 + randomA * 0.32;
+  const headRadius = isCloseFlyby ? 13.2 : 0.62 + randomA * 0.32;
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(headRadius, isCloseFlyby ? 24 : 14, isCloseFlyby ? 16 : 10),
     new THREE.MeshStandardMaterial({
@@ -2293,18 +2294,18 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
 
   const trail = new THREE.Group();
   const trailPuffs: THREE.Sprite[] = [];
-  const puffCount = isCloseFlyby ? 10 : 7;
+  const puffCount = isCloseFlyby ? 22 : 7;
   for (let i = 0; i < puffCount; i += 1) {
     const t = i / Math.max(puffCount - 1, 1);
     const puff = new THREE.Sprite(new THREE.SpriteMaterial({
       map: getDustFogTexture(),
       color: isCloseFlyby ? 0xb98567 : order === 1 ? 0x8e8075 : 0x9a7b68,
       transparent: true,
-      opacity: (isCloseFlyby ? 0.28 : 0.18) * Math.pow(1 - t, 1.35),
+      opacity: (isCloseFlyby ? 0.42 : 0.18) * Math.pow(1 - t, 1.08),
       depthWrite: false,
       depthTest: true,
     }));
-    const scale = (isCloseFlyby ? 2.8 : 1.15) * (1.05 + t * 2.15);
+    const scale = (isCloseFlyby ? 5.2 : 1.15) * (1.05 + t * 2.65);
     puff.scale.set(scale, scale * 0.72, scale);
     puff.userData.baseOpacity = puff.material.opacity;
     puff.renderOrder = 2;
@@ -2315,11 +2316,11 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     map: getDustFogTexture(),
     color: isCloseFlyby ? 0x9b7a68 : 0x7c726b,
     transparent: true,
-    opacity: isCloseFlyby ? 0.16 : 0.08,
+    opacity: isCloseFlyby ? 0.28 : 0.08,
     depthWrite: false,
     depthTest: true,
   }));
-  coma.scale.set(isCloseFlyby ? 5.4 : 1.8, isCloseFlyby ? 3.8 : 1.25, 1);
+  coma.scale.set(isCloseFlyby ? 22 : 1.8, isCloseFlyby ? 15 : 1.25, 1);
   coma.renderOrder = 1;
   trail.add(coma);
   trail.renderOrder = 2;
@@ -2343,12 +2344,12 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     starIndex,
     startDirection: direction.clone(),
     orbitAxis,
-    orbitMin: isCloseFlyby ? PLANET_RADIUS + 18 : PLANET_RADIUS + 980 + randomA * 460,
+    orbitMin: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_MIN_ALTITUDE : PLANET_RADIUS + 980 + randomA * 460,
     orbitMax: isCloseFlyby ? PLANET_RADIUS + 1550 : PLANET_RADIUS + 1460 + randomB * 820,
     orbitSpeed: (isCloseFlyby ? (Math.PI * 2) / CLOSE_METEOR_FLYBY_SECONDS : (Math.PI * 2) / (420 + randomC * 260)) * (order === 1 ? -1 : 1),
     phase: isCloseFlyby ? -0.38 : (randomA - 0.5) * 0.46,
     tailAngle: isCloseFlyby ? 0.12 : 0.035 + randomB * 0.055,
-    tailLength: isCloseFlyby ? 58 : 18 + randomB * 24,
+    tailLength: isCloseFlyby ? 118 : 18 + randomB * 24,
     wobbleAxis,
     wobbleSpeed: isCloseFlyby ? 0.08 : 0.27 + randomC * 0.42,
     wobbleAmount: isCloseFlyby ? 0.02 : 0.08 + randomA * 0.22,
@@ -2880,8 +2881,8 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     const motionDirection = aheadPosition.sub(headPosition).normalize();
     const radialDirection = headPosition.clone().normalize();
     const altitude = headPosition.length() - PLANET_RADIUS;
-    const closeness = meteor.closeFlyby ? 1 - THREE.MathUtils.smoothstep(altitude, 120, 920) : 1;
-    const headScale = meteor.closeFlyby ? THREE.MathUtils.lerp(0.16, 1, closeness) : 1;
+    const closeness = meteor.closeFlyby ? 1 - THREE.MathUtils.smoothstep(altitude, CLOSE_METEOR_MIN_ALTITUDE + 90, 1180) : 1;
+    const headScale = meteor.closeFlyby ? THREE.MathUtils.lerp(0.1, 1, closeness) : 1;
 
     meteor.head.position.copy(headPosition);
     meteor.head.scale.setScalar(headScale);
@@ -2899,10 +2900,10 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
       puff.position
         .copy(motionDirection)
         .multiplyScalar(-meteor.tailLength * t)
-        .addScaledVector(radialDirection, -2.2 * t)
+        .addScaledVector(radialDirection, meteor.closeFlyby ? -7.5 * t : -2.2 * t)
         .addScaledVector(meteor.wobbleAxis, curl);
-      const base = meteor.tailLength > 40 ? 2.8 : 1.15;
-      const scale = base * (1.05 + t * 2.15) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.18, 1, closeness) : 1);
+      const base = meteor.closeFlyby ? 5.2 : meteor.tailLength > 40 ? 2.8 : 1.15;
+      const scale = base * (1.05 + t * (meteor.closeFlyby ? 2.65 : 2.15)) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.26, 1, closeness) : 1);
       puff.scale.set(scale, scale * 0.72, scale);
       const puffMaterial = puff.material;
       if (meteor.closeFlyby && puffMaterial instanceof THREE.SpriteMaterial) {
