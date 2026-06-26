@@ -134,6 +134,8 @@ const STORM_FOG_DENSITY = 0.012;
 const STORM_PERIOD_SECONDS = 4 * 60 * 60;
 const STORM_DURATION_SECONDS = 1500;
 const STORM_FADE_SECONDS = 260;
+const TITLE_PLANET_VIEW_SCALE = 0.7;
+const TITLE_CAMERA_DISTANCE = 230 / TITLE_PLANET_VIEW_SCALE;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
@@ -3079,7 +3081,7 @@ function directionTowardNormal(from: THREE.Vector3, to: THREE.Vector3) {
 function updateCamera(delta: number) {
   if (!started) {
     cameraObstructionLift = 0;
-    const distance = 230;
+    const distance = TITLE_CAMERA_DISTANCE;
     const titleYaw = yaw;
     const target = new THREE.Vector3(0, 0, 0);
     const desired = new THREE.Vector3(
