@@ -2310,7 +2310,7 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
 
   const trail = new THREE.Group();
   const trailPuffs: THREE.Sprite[] = [];
-  const puffCount = isCloseFlyby ? 34 : 7;
+  const puffCount = isCloseFlyby ? 0 : 7;
   for (let i = 0; i < puffCount; i += 1) {
     const t = i / Math.max(puffCount - 1, 1);
     const puff = new THREE.Sprite(new THREE.SpriteMaterial({

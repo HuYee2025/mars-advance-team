@@ -521,7 +521,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "app.aria": "Mars Advance Team 3D Demo",
     "title.aria": "Enter Mars Base",
     "title.eyebrow": "Year {year} / Sol {sol}",
-    "title.name": "Mars Advance Team",
+    "title.name": "Mars Advance\nTeam",
     "title.subtitle": "The First Human",
     "title.text": "At last, the Mars base welcomes its first human resident.",
     "title.enter": "Enter Base",
