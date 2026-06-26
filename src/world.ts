@@ -547,8 +547,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     completed: false,
   });
 
-  const solarAX = spread(44);
-  const solarAZ = spread(-70);
+  const solarAX = spread(-22);
+  const solarAZ = spread(52);
   const solarA = createSolarArray(solarAX, solarAZ, -0.36, base);
   solarArrays.push(solarA);
   landmarks.push(landmark("01 能源 太阳能阵列 A", solarA, solarAX, solarAZ, 30, 220));
@@ -562,8 +562,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 12.5,
     completed: false,
   });
-  const solarBX = spread(64);
-  const solarBZ = spread(-70);
+  const solarBX = spread(-4);
+  const solarBZ = spread(52);
   const solarB = createSolarArray(solarBX, solarBZ, -0.36, base);
   solarArrays.push(solarB);
   landmarks.push(landmark("02 能源 太阳能阵列 B", solarB, solarBX, solarBZ, 30, 220));
@@ -577,8 +577,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 12.5,
     completed: false,
   });
-  const solarCX = spread(84);
-  const solarCZ = spread(-70);
+  const solarCX = spread(14);
+  const solarCZ = spread(52);
   const solarNode = createSolarArray(solarCX, solarCZ, -0.36, base);
   solarArrays.push(solarNode);
   landmarks.push(landmark("03 能源 太阳能阵列 C", solarNode, solarCX, solarCZ, 30, 220));
@@ -1812,7 +1812,7 @@ function createPipes(parent: THREE.Group) {
     [planetSurfacePoint(spread(24), spread(-16), 0.28), planetSurfacePoint(spread(0), spread(18), 0.28)],
     [planetSurfacePoint(spread(-24), spread(18), 0.28), planetSurfacePoint(spread(0), spread(18), 0.28)],
     [planetSurfacePoint(spread(132), spread(78), 0.28), planetSurfacePoint(spread(-22), spread(-16), 0.28)],
-    [planetSurfacePoint(spread(84), spread(-70), 0.28), planetSurfacePoint(spread(-24), spread(18), 0.28)],
+    [planetSurfacePoint(spread(14), spread(52), 0.28), planetSurfacePoint(spread(-24), spread(18), 0.28)],
   ];
   for (const [from, to] of runs) {
     const mid = from.clone().lerp(to, 0.5);
