@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import marsAlbedoUrl from "./assets/mars-albedo-generated.webp";
+import meteorRockUrl from "./assets/meteor-rock-generated.png";
 
 export type Interactable = {
   id:
@@ -171,7 +172,7 @@ export type CircleCollider = {
 export type Meteor = {
   head: THREE.Mesh;
   trail: THREE.Group;
-  trailPuffs: THREE.Mesh[];
+  trailPuffs: THREE.Sprite[];
   starAttribute: THREE.BufferAttribute;
   starIndex: number;
   startDirection: THREE.Vector3;
@@ -215,6 +216,11 @@ marsAlbedoTexture.colorSpace = THREE.SRGBColorSpace;
 marsAlbedoTexture.wrapS = THREE.RepeatWrapping;
 marsAlbedoTexture.wrapT = THREE.ClampToEdgeWrapping;
 marsAlbedoTexture.anisotropy = 8;
+const meteorRockTexture = new THREE.TextureLoader().load(meteorRockUrl);
+meteorRockTexture.colorSpace = THREE.SRGBColorSpace;
+meteorRockTexture.wrapS = THREE.RepeatWrapping;
+meteorRockTexture.wrapT = THREE.RepeatWrapping;
+meteorRockTexture.anisotropy = 4;
 
 const wheelTrackGeometry = new THREE.PlaneGeometry(0.54, 3.15);
 let dustFogTexture: THREE.CanvasTexture | null = null;
@@ -308,6 +314,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const base = new THREE.Group();
   base.name = "ARES Base Alpha";
   scene.add(base);
+  addNasaPerseveranceRover(base, colliders, landmarks);
 
   addLanderSite("01 飞船 登陆飞船", spread(29.5), spread(10.7), 0.18, true);
   addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
@@ -1851,8 +1858,93 @@ function createRovers(
   });
 }
 
+function addNasaPerseveranceRover(parent: THREE.Group, colliders: CircleCollider[], landmarks: Landmark[]) {
+  const x = spread(78);
+  const z = spread(56);
+  const yaw = -0.64;
+  const rover = createPerseveranceRover(0.82);
+  rover.userData.dynamicMap = true;
+  rover.userData.planetX = x;
+  rover.userData.planetZ = z;
+  placeObjectOnPlanet(rover, x, z, 0.1, yaw);
+  parent.add(rover);
+  landmarks.push(landmark("NASA 火星车 Perseverance / Jezero Crater", rover, x, z, 30, 190));
+  colliders.push(circle(x, z, 2.2, "NASA 火星车 Perseverance"));
+}
+
 function createRover(size: number) {
   return createCybertruckRover(size);
+}
+
+function createPerseveranceRover(size: number) {
+  const group = new THREE.Group();
+  const bodyMat = mat(0xd7d0bf, 0.46, 0.24);
+  const deckMat = mat(0x7a766f, 0.58, 0.18);
+  const darkMat = mat(0x161718, 0.78, 0.22);
+  const wheelMat = mat(0x3d3a35, 0.86, 0.12);
+  const goldMat = mat(0xc59a4a, 0.42, 0.32);
+  const cameraMat = mat(0x0d161b, 0.34, 0.36, 0x061923);
+
+  const body = box(2.65 * size, 0.66 * size, 2.05 * size, bodyMat);
+  body.position.set(0, 1.05 * size, 0);
+  const topDeck = box(2.3 * size, 0.16 * size, 1.72 * size, deckMat);
+  topDeck.position.set(0.05 * size, 1.45 * size, 0);
+  const warmBox = box(0.72 * size, 0.42 * size, 0.78 * size, goldMat);
+  warmBox.position.set(0.74 * size, 1.74 * size, -0.3 * size);
+  const rearRtg = new THREE.Mesh(new THREE.CylinderGeometry(0.28 * size, 0.28 * size, 1.08 * size, 10), darkMat);
+  rearRtg.rotation.z = Math.PI / 2;
+  rearRtg.position.set(1.62 * size, 1.1 * size, 0.04 * size);
+  group.add(body, topDeck, warmBox, rearRtg);
+
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045 * size, 0.055 * size, 1.15 * size, 8), darkMat);
+  mast.position.set(-0.55 * size, 2.0 * size, -0.26 * size);
+  const cameraHead = box(0.62 * size, 0.22 * size, 0.26 * size, cameraMat);
+  cameraHead.position.set(-0.55 * size, 2.62 * size, -0.26 * size);
+  const leftEye = new THREE.Mesh(new THREE.CylinderGeometry(0.055 * size, 0.055 * size, 0.035 * size, 10), cameraMat);
+  leftEye.rotation.x = Math.PI / 2;
+  leftEye.position.set(-0.72 * size, 2.63 * size, -0.4 * size);
+  const rightEye = leftEye.clone();
+  rightEye.position.x = -0.38 * size;
+  group.add(mast, cameraHead, leftEye, rightEye);
+
+  const armRoot = new THREE.Vector3(-1.18 * size, 1.2 * size, 0.66 * size);
+  const armElbow = new THREE.Vector3(-1.86 * size, 0.88 * size, 1.14 * size);
+  const armTip = new THREE.Vector3(-2.24 * size, 0.58 * size, 1.54 * size);
+  group.add(cylinderBetween(armRoot, armElbow, 0.045 * size, darkMat));
+  group.add(cylinderBetween(armElbow, armTip, 0.04 * size, darkMat));
+  const drill = box(0.16 * size, 0.16 * size, 0.28 * size, cameraMat);
+  drill.position.copy(armTip);
+  drill.rotation.y = 0.6;
+  group.add(drill);
+
+  const wheels: THREE.Mesh[] = [];
+  for (const sx of [-1.18, 0, 1.18]) {
+    for (const side of [-1, 1]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32 * size, 0.32 * size, 0.28 * size, 16), wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(sx * size, 0.52 * size, side * 1.08 * size);
+      wheel.castShadow = true;
+      wheel.receiveShadow = true;
+      wheels.push(wheel);
+      const strutStart = new THREE.Vector3(sx * 0.82 * size, 0.98 * size, side * 0.72 * size);
+      const strutEnd = wheel.position.clone();
+      group.add(cylinderBetween(strutStart, strutEnd, 0.032 * size, darkMat));
+      group.add(wheel);
+    }
+  }
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.18 * size, 0.16 * size, 0.055 * size, 18), bodyMat);
+  antenna.position.set(0.1 * size, 1.78 * size, 0.6 * size);
+  antenna.rotation.x = 0.18;
+  group.add(antenna);
+  group.userData.wheels = wheels;
+  group.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
+  return group;
 }
 
 function createCargoRover(size: number) {
@@ -2180,52 +2272,54 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   const randomB = seededNoise(starIndex, 41.77);
   const randomC = seededNoise(starIndex, 89.31);
   const isCloseFlyby = order === 0;
-  const meteorColor = isCloseFlyby ? 0xfff0cc : order === 1 ? 0xfff3c2 : 0xffd28a;
+  const meteorColor = isCloseFlyby ? 0x8a8680 : order === 1 ? 0x6f6d68 : 0x79746e;
   const headRadius = isCloseFlyby ? 2.6 : 0.62 + randomA * 0.32;
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(headRadius, isCloseFlyby ? 24 : 14, isCloseFlyby ? 16 : 10),
-    new THREE.MeshBasicMaterial({
+    new THREE.MeshStandardMaterial({
       color: meteorColor,
+      map: meteorRockTexture,
+      bumpMap: meteorRockTexture,
+      bumpScale: isCloseFlyby ? 0.16 : 0.08,
+      roughness: 0.94,
+      metalness: 0.03,
       transparent: true,
-      opacity: isCloseFlyby ? 0.82 : 0.62 + randomB * 0.18,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      opacity: isCloseFlyby ? 1 : 0.78 + randomB * 0.12,
     })
   );
+  head.rotation.set(randomA * Math.PI, randomB * Math.PI, randomC * Math.PI);
+  head.castShadow = true;
   head.renderOrder = 3;
 
   const trail = new THREE.Group();
-  const trailPuffs: THREE.Mesh[] = [];
+  const trailPuffs: THREE.Sprite[] = [];
   const puffCount = isCloseFlyby ? 10 : 7;
   for (let i = 0; i < puffCount; i += 1) {
     const t = i / Math.max(puffCount - 1, 1);
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 12, 8),
-      new THREE.MeshBasicMaterial({
-        color: isCloseFlyby ? 0xffb56f : order === 1 ? 0xffcf8a : 0xff8f5d,
-        transparent: true,
-        opacity: (isCloseFlyby ? 0.34 : 0.24) * Math.pow(1 - t, 1.35),
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      })
-    );
+    const puff = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: getDustFogTexture(),
+      color: isCloseFlyby ? 0xb98567 : order === 1 ? 0x8e8075 : 0x9a7b68,
+      transparent: true,
+      opacity: (isCloseFlyby ? 0.28 : 0.18) * Math.pow(1 - t, 1.35),
+      depthWrite: false,
+      depthTest: true,
+    }));
     const scale = (isCloseFlyby ? 2.8 : 1.15) * (1.05 + t * 2.15);
-    puff.scale.setScalar(scale);
+    puff.scale.set(scale, scale * 0.72, scale);
+    puff.userData.baseOpacity = puff.material.opacity;
     puff.renderOrder = 2;
     trailPuffs.push(puff);
     trail.add(puff);
   }
-  const coma = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 16, 10),
-    new THREE.MeshBasicMaterial({
-      color: isCloseFlyby ? 0xffd8a4 : 0xffb87a,
-      transparent: true,
-      opacity: isCloseFlyby ? 0.2 : 0.14,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  coma.scale.setScalar(isCloseFlyby ? 5.4 : 1.8);
+  const coma = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getDustFogTexture(),
+    color: isCloseFlyby ? 0x9b7a68 : 0x7c726b,
+    transparent: true,
+    opacity: isCloseFlyby ? 0.16 : 0.08,
+    depthWrite: false,
+    depthTest: true,
+  }));
+  coma.scale.set(isCloseFlyby ? 5.4 : 1.8, isCloseFlyby ? 3.8 : 1.25, 1);
   coma.renderOrder = 1;
   trail.add(coma);
   trail.renderOrder = 2;
@@ -2791,9 +2885,11 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
 
     meteor.head.position.copy(headPosition);
     meteor.head.scale.setScalar(headScale);
+    meteor.head.rotation.y += 0.0025;
+    meteor.head.rotation.x += 0.0013;
     const headMaterial = meteor.head.material;
-    if (meteor.closeFlyby && headMaterial instanceof THREE.MeshBasicMaterial) {
-      headMaterial.opacity = THREE.MathUtils.lerp(0.22, 0.82, closeness);
+    if (meteor.closeFlyby && headMaterial instanceof THREE.MeshStandardMaterial) {
+      headMaterial.opacity = THREE.MathUtils.lerp(0.18, 1, closeness);
     }
     meteor.trail.position.copy(headPosition);
     meteor.trail.visible = !meteor.closeFlyby || closeness > 0.08;
@@ -2806,9 +2902,10 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
         .addScaledVector(radialDirection, -2.2 * t)
         .addScaledVector(meteor.wobbleAxis, curl);
       const base = meteor.tailLength > 40 ? 2.8 : 1.15;
-      puff.scale.setScalar(base * (1.05 + t * 2.15) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.18, 1, closeness) : 1));
+      const scale = base * (1.05 + t * 2.15) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.18, 1, closeness) : 1);
+      puff.scale.set(scale, scale * 0.72, scale);
       const puffMaterial = puff.material;
-      if (meteor.closeFlyby && puffMaterial instanceof THREE.MeshBasicMaterial) {
+      if (meteor.closeFlyby && puffMaterial instanceof THREE.SpriteMaterial) {
         const baseOpacity = puff.userData.baseOpacity ?? puffMaterial.opacity;
         puff.userData.baseOpacity = baseOpacity;
         puffMaterial.opacity = baseOpacity * closeness;

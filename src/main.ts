@@ -298,6 +298,19 @@ type FootballGoalState = {
   lastScoredAt: number;
 };
 
+type MapItem = {
+  label: string;
+  object: THREE.Object3D | null;
+  x: number;
+  z: number;
+  mapRange: number;
+  type: string;
+  unknown: boolean;
+  missionTarget: boolean;
+  oxygenSupplyTarget: boolean;
+  coinTarget: boolean;
+};
+
 type MainMissionStep =
   | "intro"
   | "m1_habitat"
@@ -455,6 +468,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "scale.noTarget": "未锁定目标",
     "reward.coins": "金币",
     "reward.score": "积分",
+    "score.discovery": "发现 {label}",
     "rank.internPatrol": "实习巡航员",
     "rank.juniorAstronaut": "初级宇航员",
     "rank.astronaut": "正式宇航员",
@@ -511,6 +525,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "scale.noTarget": "No target locked",
     "reward.coins": "Coins",
     "reward.score": "Score",
+    "score.discovery": "Discovered {label}",
     "rank.internPatrol": "Trainee Patrol Officer",
     "rank.juniorAstronaut": "Junior Astronaut",
     "rank.astronaut": "Astronaut",
@@ -556,6 +571,9 @@ const exactEnglishTexts: Record<string, string> = {
   "03 能源 太阳能阵列 C": "03 Energy Solar Array C",
   "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
   "02 车辆 运输车": "02 Vehicle Cargo Rover",
+  "NASA 火星车 Perseverance / Jezero Crater": "NASA Rover Perseverance / Jezero Crater",
+  "NASA 火星车 Perseverance": "NASA Rover Perseverance",
+  "坠毁飞船残骸": "Crashed ship wreckage",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
   "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
@@ -2890,6 +2908,7 @@ function updateFootball(delta: number) {
 function applyPlayerFootballCollision() {
   const distance = surfaceDistanceBetween(playerNormal, football.normal);
   if (distance > FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS) return;
+  awardHiddenDiscovery("football", "火星足球");
 
   const away = tangentDirectionBetween(playerNormal, football.normal, football.normal);
   if (away.lengthSq() < 0.000001) return;
@@ -4384,34 +4403,40 @@ function updateMap() {
   const right = playerForward.clone().cross(playerNormal).normalize();
   const showOxygenSupplyTargets = suitOxygen <= OXYGEN_SUPPLY_RADAR_THRESHOLD;
 
-  const mapItems = [
+  const mapItems: MapItem[] = [
     ...world.landmarks.map((landmark) => {
-      const type = mapTypeForLabel(landmark.label);
+      const missionTarget = isMissionTargetLabel(landmark.label);
+      const mysteryId = missionTarget ? null : mysteryDiscoveryIdForLabel(landmark.label);
+      const type = mysteryId ? "unknown" : mapTypeForLabel(landmark.label);
       return {
-        label: localizeLabel(landmark.label),
+        label: mysteryId ? mysteryMapLabel(mysteryId, landmark.label) : localizeLabel(landmark.label),
         object: landmark.object,
         x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
         z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
         mapRange: landmark.mapRange,
         type,
-        unknown: type === "unknown",
-        missionTarget: isMissionTargetLabel(landmark.label),
+        unknown: Boolean(mysteryId),
+        missionTarget,
         oxygenSupplyTarget: false,
         coinTarget: false,
       };
     }),
-    ...world.unnumberedObjects.map((item) => ({
-      label: localizeLabel(item.label ?? tr("map.unknownObject")),
-      object: item.object,
-      x: item.x,
-      z: item.z,
-      mapRange: item.mapRange,
-      type: "unknown",
-      unknown: true,
-      missionTarget: false,
-      oxygenSupplyTarget: false,
-      coinTarget: false,
-    })),
+    ...world.unnumberedObjects.map((item, index) => {
+      const mysteryId = unnumberedMysteryDiscoveryId(item.label, index);
+      const trueLabel = item.label ?? "坠毁飞船残骸";
+      return {
+        label: mysteryMapLabel(mysteryId, trueLabel),
+        object: item.object,
+        x: item.x,
+        z: item.z,
+        mapRange: item.mapRange,
+        type: "unknown",
+        unknown: true,
+        missionTarget: false,
+        oxygenSupplyTarget: false,
+        coinTarget: false,
+      };
+    }),
     ...(showOxygenSupplyTargets
       ? oxygenSupplyPoints.map((point) => ({
           label: localizeLabel(point.label),
@@ -4427,6 +4452,19 @@ function updateMap() {
         }))
       : []),
   ];
+
+  mapItems.push({
+    label: mysteryMapLabel("football", "火星足球"),
+    object: football.group,
+    x: FOOTBALL_SPAWN_X,
+    z: FOOTBALL_SPAWN_Z,
+    mapRange: 220,
+    type: "unknown",
+    unknown: true,
+    missionTarget: false,
+    oxygenSupplyTarget: false,
+    coinTarget: false,
+  });
 
   if (currentCoinGroup && currentCoinGroup.coins.some((coin) => !coin.collected)) {
     mapItems.push({
@@ -4445,7 +4483,7 @@ function updateMap() {
 
   if (!fufuRescued) {
     mapItems.push({
-      label: tr("map.unknownLife"),
+      label: mysteryMapLabel("unknown:fufu", "福福", "map.unknownLife"),
       object: fufu,
       x: world.fufuRescueSite.x,
       z: world.fufuRescueSite.z,
@@ -4530,12 +4568,26 @@ function formatMapCoordinate(value: number) {
 }
 
 function mapTypeForLabel(label: string) {
-  if (label.includes("黑色方碑") || label.includes("Elon")) return "unknown";
   if (label.includes("飞船")) return "ship";
   if (label.includes("能源") || label.includes("太阳能")) return "energy";
   if (label.includes("车辆")) return "vehicle";
   if (label.includes("机器人")) return "robot";
   return "building";
+}
+
+function mysteryDiscoveryIdForLabel(label: string) {
+  if (label.includes("黑色方碑")) return "monolith";
+  if (label.includes("NASA 火星车") || label.includes("Perseverance")) return `unknown:${label}`;
+  if (label.includes("Elon")) return `unknown:${label}`;
+  return null;
+}
+
+function unnumberedMysteryDiscoveryId(label: string | undefined, index: number) {
+  return label ? `unknown:${label}` : `unknown:wreck:${index}`;
+}
+
+function mysteryMapLabel(mysteryId: string, trueLabel: string, unknownKey = "map.unknownObject") {
+  return hiddenDiscoveries.has(mysteryId) ? localizeLabel(trueLabel) : tr(unknownKey);
 }
 
 function isMissionTargetLabel(label: string) {
@@ -4768,7 +4820,7 @@ function awardExplorationScore(eventId: string, label: string, points = SCORE_BU
 function awardHiddenDiscovery(eventId: string, label: string) {
   if (hiddenDiscoveries.has(eventId)) return;
   hiddenDiscoveries.add(eventId);
-  awardExplorationScore(`hidden:${eventId}`, `发现 ${label}`, SCORE_HIDDEN_DISCOVERY);
+  awardExplorationScore(`hidden:${eventId}`, tr("score.discovery", { label: localizeLabel(label) }), SCORE_HIDDEN_DISCOVERY);
 }
 
 function awardFunnyScore(eventId: string, label: string, points = SCORE_FUNNY_DEFAULT) {
@@ -4916,13 +4968,23 @@ function updateHiddenDiscoveries() {
   ];
   for (const [index, item] of world.unnumberedObjects.entries()) {
     targets.push({
-      id: item.label ? `unknown:${item.label}` : `unknown:wreck:${index}`,
+      id: unnumberedMysteryDiscoveryId(item.label, index),
       label: item.label ?? "坠毁飞船残骸",
       object: item.object,
       radius: item.label ? 18 : 34,
     });
   }
-  if (!fufuRescued) targets.push({ id: "unknown:fufu", label: tr("map.unknownLife"), object: fufu, radius: 13 });
+  const nasaRover = world.landmarks.find((landmark) => landmark.label.includes("NASA 火星车") || landmark.label.includes("Perseverance"));
+  if (nasaRover) {
+    targets.push({
+      id: `unknown:${nasaRover.label}`,
+      label: nasaRover.label,
+      object: nasaRover.object,
+      radius: 16,
+    });
+  }
+  targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });
+  if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "福福", object: fufu, radius: 13 });
 
   for (const target of targets) {
     if (hiddenDiscoveries.has(target.id)) continue;
