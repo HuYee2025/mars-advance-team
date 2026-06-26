@@ -959,6 +959,7 @@ body:not(.hud-collapsed) #hud-toggle,
   left: 0;
   top: 0;
   pointer-events: none;
+  z-index: 4;
 }
 
 .map-compass span {
@@ -967,11 +968,11 @@ body:not(.hud-collapsed) #hud-toggle,
   top: 50%;
   color: rgba(255, 214, 147, 0.86);
   font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1;
-  text-shadow: 0 0 6px rgba(255, 126, 60, 0.3);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
 }
 
 .map-player {
@@ -1190,6 +1191,10 @@ body:not(.hud-collapsed) #hud-toggle,
     0 1px 2px rgba(0, 0, 0, 0.9),
     0 0 8px rgba(255, 126, 60, 0.34);
   pointer-events: none;
+}
+
+.map-expanded .map-compass span {
+  font-size: 13px;
 }
 
 .map-expanded .map-marker.type-unknown span {

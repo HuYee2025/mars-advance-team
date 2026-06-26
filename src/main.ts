@@ -5382,7 +5382,7 @@ function updateMapCompass(radarSize: number) {
   const heading = normalizedHeadingDegrees();
   const roundedHeading = Math.round(heading) % 360;
   mapHeading.textContent = `HDG ${roundedHeading.toString().padStart(3, "0")}°`;
-  const radius = radarSize * 0.48;
+  const radius = radarSize * 0.405;
   mapCompass.querySelectorAll<HTMLElement>("[data-bearing]").forEach((tick) => {
     const bearing = Number(tick.dataset.bearing ?? 0);
     const angle = THREE.MathUtils.degToRad(bearing - heading);
