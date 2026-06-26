@@ -49,7 +49,7 @@ type LabelAnchor = {
 };
 
 type InteractionAction = {
-  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission";
+  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "photoWall";
   label: string;
 };
 
@@ -80,6 +80,11 @@ const scaleGunOverlay = must<HTMLElement>("#scale-gun-overlay");
 const scaleGunTargetLabel = must<HTMLElement>("#scale-gun-target");
 const scaleGunShrinkButton = must<HTMLButtonElement>("#scale-gun-shrink");
 const scaleGunGrowButton = must<HTMLButtonElement>("#scale-gun-grow");
+const cameraOverlay = must<HTMLElement>("#camera-overlay");
+const cameraZoomReadout = must<HTMLElement>("#camera-zoom-readout");
+const photoViewer = must<HTMLElement>("#photo-viewer");
+const photoViewerTitle = must<HTMLElement>("#photo-viewer-title");
+const photoViewerImage = must<HTMLImageElement>("#photo-viewer-image");
 const dialogueBox = must<HTMLDivElement>("#dialogue-box");
 const dialogueStage = must<HTMLElement>("#dialogue-stage");
 const dialogueLeftSlot = must<HTMLDivElement>(".dialogue-portrait-left");
@@ -105,7 +110,9 @@ const exitConfirmButtons = [exitResumeButton, exitTitleButton] as const;
 const controlsGuide = must<HTMLElement>("#controls-guide");
 const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
+const mapCompass = must<HTMLDivElement>("#map-compass");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
+const mapHeading = must<HTMLDivElement>("#map-heading");
 const mapList = must<HTMLDivElement>("#map-list");
 const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
@@ -130,6 +137,7 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: true,
   powerPreference: "high-performance",
+  preserveDrawingBuffer: true,
 });
 const EARTH_TOTAL_SOLAR_IRRADIANCE = 1361.6;
 const MARS_MEAN_DISTANCE_AU = 1.524;
@@ -172,7 +180,14 @@ player.scale.setScalar(0.76);
 const playerContactShadow = createPlayerContactShadow();
 scene.add(playerContactShadow);
 
+const PHOTO_WALL_CAPACITY = 7;
+const CAMERA_MIN_ZOOM = 1;
+const CAMERA_MAX_ZOOM = 4;
+const cameraPhotos: Array<{ dataUrl: string; texture: THREE.Texture; takenAt: number }> = [];
+const photoWallFrames: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
 const world = createMarsWorld(scene);
+const photoWall = createPhotoWall();
+world.habitatDoor.interiorScene.add(photoWall);
 const multiplayer = new MultiplayerClient({ scene, camera, labelsRoot });
 const fufuRig = createFufuCat();
 const fufu = fufuRig.group;
@@ -479,6 +494,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "scale.shrink": "缩小",
     "scale.grow": "放大",
     "scale.noTarget": "未锁定目标",
+    "camera.instructions": "A/D 转向 / W/S 缩放 / E 或 Enter 拍照 / G 收起",
+    "photoViewer.instructions": "A/D 切换 / W 放大 / S 恢复 / E 下载 / Q 退出",
     "reward.coins": "金币",
     "reward.score": "积分",
     "score.discovery": "发现 {label}",
@@ -538,6 +555,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "scale.shrink": "Shrink",
     "scale.grow": "Enlarge",
     "scale.noTarget": "No target locked",
+    "camera.instructions": "A/D turn / W/S zoom / E or Enter photo / G holster",
+    "photoViewer.instructions": "A/D switch / W zoom / S reset / E download / Q exit",
     "reward.coins": "Coins",
     "reward.score": "Score",
     "score.discovery": "Discovered {label}",
@@ -844,6 +863,18 @@ const runtimeEnglishTexts: Record<string, string> = {
   "角色对话": "Character Dialogue",
   "退出游戏确认": "Exit Game Confirm",
   "移动端操作": "Mobile Controls",
+  "相机取景框": "Camera Viewfinder",
+  "照片墙查看器": "Photo Wall Viewer",
+  "火星照片": "Mars photo",
+  "相机": "Camera",
+  "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上": "Congratulations! You received a camera\nPress G anytime to use the camera\nPhotos will appear on the habitat wall",
+  "相机已解锁": "Camera unlocked",
+  "尚未获得相机。把足球踢进球门可以获得它。": "Camera not acquired yet. Kick the football into the goal to earn it.",
+  "当前空间太窄，无法使用相机。": "This space is too tight to use the camera.",
+  "照片已保存到居住舱照片墙": "Photo saved to the habitat photo wall",
+  "照片墙暂无照片": "The photo wall has no photos yet",
+  "查看照片墙": "View photo wall",
+  "已触发当前照片下载": "Current photo download started",
 };
 
 const englishPhrasePairs: Array<[string, string]> = [
@@ -863,6 +894,16 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["火星足球", "Mars Football"],
   ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
   ["火星足球进球", "Mars football goal"],
+  ["照片墙", "Photo Wall"],
+  ["查看照片墙", "View Photo Wall"],
+  ["照片", "Photo"],
+  ["相机", "Camera"],
+  ["恭喜！你获得了一台相机", "Congratulations! You received a camera"],
+  ["随时按 G 键可以使用相机", "Press G anytime to use the camera"],
+  ["照片会展示在居住舱的墙上", "Photos will appear on the habitat wall"],
+  ["相机已解锁", "Camera unlocked"],
+  ["照片已保存到居住舱照片墙", "Photo saved to the habitat photo wall"],
+  ["已触发当前照片下载", "Current photo download started"],
   ["轨道链路", "Orbital Link"],
   ["下一批", "Next batch"],
   ["星链卫星命中", "Starlink satellite hit"],
@@ -1021,6 +1062,13 @@ let hasScaleGun = false;
 let scaleGunAiming = false;
 let scaleGunTarget: ScaleGunTarget | null = null;
 let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+let hasCamera = false;
+let cameraMode = false;
+let cameraZoom = 1;
+let cameraDistanceBeforeCamera = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+let photoViewerOpen = false;
+let photoViewerIndex = 0;
+let photoViewerZoom = 1;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
@@ -1852,7 +1900,12 @@ function bindInput() {
       handleDialogueKey(event);
       return;
     }
+    if (photoViewerOpen) {
+      handlePhotoViewerKey(event);
+      return;
+    }
     if (handleExpandedMapKey(event)) return;
+    if (cameraMode && handleCameraModeKey(event)) return;
     if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
@@ -1898,6 +1951,11 @@ function bindInput() {
     if (event.code === "KeyX") {
       event.preventDefault();
       toggleScaleGunAiming();
+      return;
+    }
+    if (event.code === "KeyG") {
+      event.preventDefault();
+      toggleCameraMode();
       return;
     }
     if (event.code === "KeyC") {
@@ -1985,6 +2043,11 @@ function bindInput() {
       pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0018, 0.34 + SCALE_GUN_AIM_PITCH_MIN, 0.34 + SCALE_GUN_AIM_PITCH_MAX);
       return;
     }
+    if (cameraMode) {
+      orbitYawOffset = wrapSignedAngle(orbitYawOffset - event.movementX * 0.0022);
+      pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.16, 0.88);
+      return;
+    }
     orbitYawOffset = THREE.MathUtils.clamp(orbitYawOffset - event.movementX * 0.0022, -0.85, 0.85);
     pitch = insideRocket
       ? THREE.MathUtils.clamp(pitch - event.movementY * 0.0015, 0.02, 1.68)
@@ -1992,6 +2055,16 @@ function bindInput() {
   });
   window.addEventListener("wheel", (event) => {
     if (!started || exitConfirmOpen) return;
+    if (photoViewerOpen) {
+      event.preventDefault();
+      adjustPhotoViewerZoom(event.deltaY < 0 ? 1 : -1);
+      return;
+    }
+    if (cameraMode) {
+      event.preventDefault();
+      adjustCameraZoom(event.deltaY < 0 ? 1 : -1);
+      return;
+    }
     if (mapOpen) {
       event.preventDefault();
       adjustMapZoom(-Math.sign(event.deltaY));
@@ -2001,7 +2074,7 @@ function bindInput() {
   }, { passive: false });
 
   joystick.addEventListener("pointerdown", (event) => {
-    if (!started || exitConfirmOpen || isMapFocusActive()) return;
+    if (!started || exitConfirmOpen || isMapFocusActive() || cameraMode || photoViewerOpen) return;
     mobileStick.active = true;
     mobileStick.pointerId = event.pointerId;
     joystick.setPointerCapture(event.pointerId);
@@ -2105,14 +2178,20 @@ function currentPlayerInsideState(): PlayerInsideState {
 }
 
 function handleTitleScreenKey(event: KeyboardEvent) {
-  if (event.code === "ArrowUp" || event.code === "ArrowDown") {
+  if (event.code === "ArrowUp" || event.code === "ArrowDown" || event.code === "KeyW" || event.code === "KeyS") {
     event.preventDefault();
-    const direction = event.code === "ArrowUp" ? -1 : 1;
+    const direction = event.code === "ArrowUp" || event.code === "KeyW" ? -1 : 1;
     const nextIndex = (selectedTitleActionIndex + direction + titleActionButtons.length) % titleActionButtons.length;
     selectTitleAction(nextIndex, true, true);
     return true;
   }
-  if (event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space") {
+  if (event.code === "KeyQ") {
+    event.preventDefault();
+    selectTitleAction(1, false, selectedTitleActionIndex !== 1);
+    openStorySummary();
+    return true;
+  }
+  if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space") {
     event.preventDefault();
     activateSelectedTitleAction();
     return true;
@@ -2472,6 +2551,310 @@ function updateScaleGunOverlay() {
   scaleGunTargetLabel.textContent = visible && scaleGunTarget ? localizeLabel(scaleGunTarget.label) : tr("scale.noTarget");
 }
 
+function awardCamera() {
+  hasCamera = true;
+  showDialogue("相机", "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上", 5.2);
+  showRewardFloat(localizeText("相机已解锁"), false);
+  playScoreRewardSound(2);
+}
+
+function canUseCamera() {
+  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !photoViewerOpen;
+}
+
+function toggleCameraMode(force?: boolean) {
+  if (!started) return;
+  if (!hasCamera) {
+    showDialogue("相机", "尚未获得相机。把足球踢进球门可以获得它。", 2.8);
+    return;
+  }
+  if (!cameraMode && !canUseCamera()) {
+    showDialogue("相机", "当前空间太窄，无法使用相机。", 2.4);
+    return;
+  }
+  const next = force ?? !cameraMode;
+  if (next === cameraMode) return;
+  cameraMode = next;
+  if (cameraMode) {
+    if (scaleGunAiming) toggleScaleGunAiming(false);
+    cameraDistanceBeforeCamera = cameraDistance;
+    cameraDistance = CAMERA_MIN_DISTANCE;
+    cameraZoom = 1;
+    pitch = 0.34;
+    orbitYawOffset = 0;
+    exitFrontCamera = null;
+    clearMovementInputState();
+    resetStick();
+    playerVelocity.set(0, 0, 0);
+    closeMapUi();
+    showControlsGuide(false);
+  } else {
+    cameraDistance = Math.max(cameraDistanceBeforeCamera, 1.2);
+    cameraZoom = 1;
+    pitch = 0.34;
+    orbitYawOffset = 0;
+  }
+  updateCameraZoomProjection();
+  updateCameraOverlay();
+}
+
+function handleCameraModeKey(event: KeyboardEvent) {
+  if (!cameraMode) return false;
+  if (event.code === "KeyG" || event.code === "KeyQ" || event.code === "Escape") {
+    event.preventDefault();
+    toggleCameraMode(false);
+    return true;
+  }
+  if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") {
+    event.preventDefault();
+    captureCameraPhoto();
+    return true;
+  }
+  if (event.code === "KeyW" || event.code === "ArrowUp") {
+    event.preventDefault();
+    adjustCameraZoom(1);
+    return true;
+  }
+  if (event.code === "KeyS" || event.code === "ArrowDown") {
+    event.preventDefault();
+    adjustCameraZoom(-1);
+    return true;
+  }
+  if (event.code === "KeyA" || event.code === "KeyD" || event.code === "ArrowLeft" || event.code === "ArrowRight") {
+    event.preventDefault();
+    keyState.add(event.code);
+    return true;
+  }
+  return true;
+}
+
+function updateCameraModePlayer(delta: number) {
+  playerVelocity.set(0, 0, 0);
+  let turnInput = 0;
+  if (keyState.has("KeyA") || keyState.has("ArrowLeft")) turnInput += 1;
+  if (keyState.has("KeyD") || keyState.has("ArrowRight")) turnInput -= 1;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(playerNormal, turnInput * 1.18 * delta).projectOnPlane(playerNormal).normalize();
+  }
+  return 0;
+}
+
+function adjustCameraZoom(direction: number) {
+  if (!cameraMode) return;
+  const factor = direction > 0 ? 1.18 : 1 / 1.18;
+  cameraZoom = THREE.MathUtils.clamp(cameraZoom * factor, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
+  updateCameraZoomProjection();
+  updateCameraOverlay();
+}
+
+function updateCameraZoomProjection() {
+  camera.fov = cameraMode ? 54 / cameraZoom : 54;
+  camera.updateProjectionMatrix();
+}
+
+function updateCameraOverlay() {
+  const visible = started && cameraMode && hasCamera;
+  cameraOverlay.classList.toggle("is-visible", visible);
+  cameraOverlay.setAttribute("aria-hidden", String(!visible));
+  cameraZoomReadout.textContent = `CAM ${cameraZoom.toFixed(1)}x`;
+}
+
+function updateCameraSystem() {
+  if (cameraMode && !canUseCamera()) {
+    toggleCameraMode(false);
+    return;
+  }
+  updateCameraOverlay();
+}
+
+function captureCameraPhoto() {
+  if (!cameraMode) return;
+  renderer.render(scene, camera);
+  const dataUrl = renderer.domElement.toDataURL("image/png");
+  const texture = new THREE.TextureLoader().load(dataUrl);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  cameraPhotos.push({ dataUrl, texture, takenAt: Date.now() });
+  while (cameraPhotos.length > PHOTO_WALL_CAPACITY) {
+    const removed = cameraPhotos.shift();
+    removed?.texture.dispose();
+  }
+  updatePhotoWallFrames();
+  showDialogue("相机", "照片已保存到居住舱照片墙", 2.2);
+}
+
+function createPhotoWall() {
+  const group = new THREE.Group();
+  group.name = "Habitat photo wall";
+  group.position.set(5.62, -0.08, 0);
+  group.rotation.y = -Math.PI / 2;
+
+  const frameLayout = [
+    { x: -1.24, y: 0.56, w: 1.02, h: 0.68 },
+    { x: 0, y: 0.56, w: 1.12, h: 0.76 },
+    { x: 1.28, y: 0.56, w: 0.96, h: 0.64 },
+    { x: -1.42, y: -0.34, w: 0.86, h: 0.62 },
+    { x: -0.42, y: -0.34, w: 0.78, h: 0.58 },
+    { x: 0.58, y: -0.34, w: 0.86, h: 0.62 },
+    { x: 1.55, y: -0.34, w: 0.72, h: 0.54 },
+  ];
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x6e513b, roughness: 0.74, metalness: 0.12 });
+
+  for (const [index, item] of frameLayout.entries()) {
+    const frame = new THREE.Group();
+    frame.position.set(item.x, item.y, 0.02);
+    const photoMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(item.w, item.h),
+      new THREE.MeshBasicMaterial({ map: createPhotoPlaceholderTexture(index), toneMapped: false })
+    );
+    const borderTop = new THREE.Mesh(new THREE.BoxGeometry(item.w + 0.12, 0.045, 0.06), railMat);
+    const borderBottom = borderTop.clone();
+    const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.045, item.h + 0.12, 0.06), railMat);
+    const borderRight = borderLeft.clone();
+    borderTop.position.y = item.h * 0.5 + 0.055;
+    borderBottom.position.y = -item.h * 0.5 - 0.055;
+    borderLeft.position.x = -item.w * 0.5 - 0.055;
+    borderRight.position.x = item.w * 0.5 + 0.055;
+    frame.add(photoMesh, borderTop, borderBottom, borderLeft, borderRight);
+    group.add(frame);
+    photoWallFrames.push(photoMesh);
+  }
+
+  return group;
+}
+
+function createPhotoPlaceholderTexture(index: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 176;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#17120f";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(255, 204, 142, 0.26)";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+    ctx.fillStyle = "rgba(255, 232, 200, 0.32)";
+    ctx.font = "bold 42px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(index + 1).padStart(2, "0"), canvas.width / 2, canvas.height / 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function updatePhotoWallFrames() {
+  for (const [index, frame] of photoWallFrames.entries()) {
+    const material = frame.material;
+    if (material.map && !cameraPhotos.some((photo) => photo.texture === material.map)) material.map.dispose();
+    material.map = cameraPhotos[index]?.texture ?? createPhotoPlaceholderTexture(index);
+    material.needsUpdate = true;
+  }
+}
+
+function openPhotoViewer() {
+  if (cameraPhotos.length === 0) {
+    showDialogue("照片墙", "照片墙暂无照片", 2);
+    return;
+  }
+  if (cameraMode) toggleCameraMode(false);
+  photoViewerOpen = true;
+  photoViewerIndex = THREE.MathUtils.clamp(photoViewerIndex, 0, cameraPhotos.length - 1);
+  photoViewerZoom = 1;
+  clearMovementInputState();
+  resetStick();
+  updatePhotoViewer();
+}
+
+function closePhotoViewer() {
+  photoViewerOpen = false;
+  photoViewer.classList.remove("is-visible");
+  photoViewer.setAttribute("aria-hidden", "true");
+  photoViewerImage.removeAttribute("src");
+  photoViewerZoom = 1;
+}
+
+function handlePhotoViewerKey(event: KeyboardEvent) {
+  event.preventDefault();
+  if (event.code === "KeyQ" || event.code === "Escape") {
+    closePhotoViewer();
+    return;
+  }
+  if (event.code === "KeyA" || event.code === "ArrowLeft") {
+    photoViewerIndex = (photoViewerIndex - 1 + cameraPhotos.length) % cameraPhotos.length;
+    photoViewerZoom = 1;
+    updatePhotoViewer();
+    return;
+  }
+  if (event.code === "KeyD" || event.code === "ArrowRight") {
+    photoViewerIndex = (photoViewerIndex + 1) % cameraPhotos.length;
+    photoViewerZoom = 1;
+    updatePhotoViewer();
+    return;
+  }
+  if (event.code === "KeyW" || event.code === "ArrowUp") {
+    adjustPhotoViewerZoom(1);
+    return;
+  }
+  if (event.code === "KeyS" || event.code === "ArrowDown") {
+    photoViewerZoom = 1;
+    updatePhotoViewer();
+    return;
+  }
+  if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") {
+    downloadCurrentPhoto();
+  }
+}
+
+function updatePhotoViewer() {
+  const photo = cameraPhotos[photoViewerIndex];
+  if (!photo) {
+    closePhotoViewer();
+    return;
+  }
+  photoViewer.classList.add("is-visible");
+  photoViewer.setAttribute("aria-hidden", "false");
+  photoViewerTitle.textContent = `PHOTO ${String(photoViewerIndex + 1).padStart(2, "0")} / ${String(cameraPhotos.length).padStart(2, "0")}`;
+  photoViewerImage.src = photo.dataUrl;
+  photoViewerImage.style.transform = `scale(${photoViewerZoom.toFixed(2)})`;
+}
+
+function adjustPhotoViewerZoom(direction: number) {
+  if (!photoViewerOpen) return;
+  const factor = direction > 0 ? 1.22 : 1 / 1.22;
+  photoViewerZoom = THREE.MathUtils.clamp(photoViewerZoom * factor, 1, 3.4);
+  updatePhotoViewer();
+}
+
+function downloadCurrentPhoto() {
+  const photo = cameraPhotos[photoViewerIndex];
+  if (!photo) return;
+  const link = document.createElement("a");
+  link.href = photo.dataUrl;
+  link.download = `ares-photo-${new Date(photo.takenAt).toISOString().replace(/[:.]/g, "-")}.png`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  showRewardFloat(localizeText("已触发当前照片下载"), false);
+}
+
+function resetCameraSystem() {
+  hasCamera = false;
+  cameraMode = false;
+  cameraZoom = 1;
+  photoViewerOpen = false;
+  photoViewerIndex = 0;
+  photoViewerZoom = 1;
+  for (const photo of cameraPhotos) photo.texture.dispose();
+  cameraPhotos.length = 0;
+  updatePhotoWallFrames();
+  cameraOverlay.classList.remove("is-visible");
+  cameraOverlay.setAttribute("aria-hidden", "true");
+  closePhotoViewer();
+  updateCameraZoomProjection();
+}
+
 function findScaleGunTarget(): ScaleGunTarget | null {
   const targets = getScaleGunTargets();
   if (targets.length === 0) return null;
@@ -2666,6 +3049,7 @@ function startGame() {
   resetVitals();
   setScaleGunOwned(false);
   clearScaleGunEffects();
+  resetCameraSystem();
   resetPlayerToSpawn();
   resetFufu();
   resetStick();
@@ -2700,6 +3084,7 @@ function returnToTitle() {
   resetVitals();
   setScaleGunOwned(false);
   clearScaleGunEffects();
+  resetCameraSystem();
   closeDialogue();
   clearMapHoldTimer();
   keyState.clear();
@@ -2789,6 +3174,7 @@ function animate() {
     });
   }
   updateScaleGun();
+  updateCameraSystem();
   updatePlayerContactShadow();
   updateBackgroundMusicFade();
   updateMonolithSignal();
@@ -2983,6 +3369,9 @@ function updatePlayer(delta: number) {
   }
   if (ridingElevator) {
     return updateElevatorRide(delta, ridingElevator);
+  }
+  if (cameraMode) {
+    return updateCameraModePlayer(delta);
   }
   if (scaleGunAiming) {
     return updateScaleGunAimingPlayer(delta);
@@ -3427,7 +3816,8 @@ function checkFootballGoal() {
   footballGoal.goals += 1;
   footballGoal.lastScoredAt = elapsedTime;
   awardRepeatableScore(SCORE_FOOTBALL_GOAL, "火星足球进球");
-  showDialogue("火星足球", "进球！足球已回到出生点。", 2.4);
+  if (!hasCamera) awardCamera();
+  else showDialogue("火星足球", "进球！足球已回到出生点。", 2.4);
   respawnFootball();
 }
 
@@ -3892,6 +4282,7 @@ function buildInteractionActions() {
   const actions: InteractionAction[] = [];
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
+  if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
   if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
@@ -3914,6 +4305,7 @@ function interactionActionPriority(action: InteractionAction) {
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
+    photoWall: 2,
     mission: 2,
     robot: 3,
     fufu: 3,
@@ -4077,6 +4469,10 @@ function executeSelectedInteraction() {
   if (action.id === "greenhouse" && activeGreenhouseDoor) {
     if (insideGreenhouse) exitGreenhouse(activeGreenhouseDoor);
     else enterGreenhouse(activeGreenhouseDoor);
+    return;
+  }
+  if (action.id === "photoWall") {
+    openPhotoViewer();
     return;
   }
   if (action.id === "fufu") {
@@ -4776,6 +5172,7 @@ function updateMap() {
   mapRadar.querySelectorAll(".map-marker").forEach((node) => node.remove());
   const radarSize = mapRadar.clientWidth || 280;
   const radarRadius = radarSize * 0.42;
+  updateMapCompass(radarSize);
   const right = playerForward.clone().cross(playerNormal).normalize();
   const showOxygenSupplyTargets = suitOxygen <= OXYGEN_SUPPLY_RADAR_THRESHOLD;
 
@@ -4890,6 +5287,22 @@ function updateMap() {
     });
   }
 
+  const closeMeteor = world.meteors.find((meteor) => meteor.closeFlyby);
+  if (closeMeteor) {
+    mapItems.push({
+      label: localizeLabel("近火流星"),
+      object: closeMeteor.head,
+      x: 0,
+      z: 0,
+      mapRange: PLANET_RADIUS * Math.PI,
+      type: "meteor",
+      unknown: false,
+      missionTarget: false,
+      oxygenSupplyTarget: false,
+      coinTarget: false,
+    });
+  }
+
   const nearby = mapItems
     .map((item) => {
       const landmarkNormal = new THREE.Vector3();
@@ -4909,6 +5322,7 @@ function updateMap() {
         Number(b.item.missionTarget) - Number(a.item.missionTarget) ||
         Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) ||
         Number(b.item.coinTarget) - Number(a.item.coinTarget) ||
+        Number(b.item.type === "meteor") - Number(a.item.type === "meteor") ||
         a.distance - b.distance
     )
     .slice(0, mapExpanded ? 80 : 24);
@@ -4962,6 +5376,24 @@ function formatMapCoordinate(value: number) {
   const rounded = Math.round(value);
   const sign = rounded < 0 ? "-" : "+";
   return `${sign}${Math.abs(rounded).toString().padStart(3, "0")}`;
+}
+
+function updateMapCompass(radarSize: number) {
+  const heading = normalizedHeadingDegrees();
+  const roundedHeading = Math.round(heading) % 360;
+  mapHeading.textContent = `HDG ${roundedHeading.toString().padStart(3, "0")}°`;
+  const radius = radarSize * 0.48;
+  mapCompass.querySelectorAll<HTMLElement>("[data-bearing]").forEach((tick) => {
+    const bearing = Number(tick.dataset.bearing ?? 0);
+    const angle = THREE.MathUtils.degToRad(bearing - heading);
+    const x = Math.sin(angle) * radius;
+    const y = -Math.cos(angle) * radius;
+    tick.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
+  });
+}
+
+function normalizedHeadingDegrees() {
+  return (THREE.MathUtils.radToDeg(headingFromForward(playerNormal, playerForward)) + 360) % 360;
 }
 
 function mapTypeForLabel(label: string) {

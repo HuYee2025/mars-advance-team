@@ -105,7 +105,7 @@ body {
   min-width: 168px;
   min-height: 46px;
   padding: 0 22px;
-  border: 1px solid rgba(255, 210, 151, 0.34);
+  border: 1px solid transparent;
   border-radius: 0;
   background: rgba(28, 12, 8, 0.62);
   color: #f7efe3;
@@ -181,6 +181,7 @@ body {
   display: grid;
   width: 24px;
   height: 24px;
+  aspect-ratio: 1;
   min-width: 0;
   min-height: 0;
   padding: 0;
@@ -188,6 +189,7 @@ body {
   overflow: hidden;
   border: 1px solid rgba(255, 210, 151, 0.34);
   border-radius: 50%;
+  clip-path: circle(50% at 50% 50%);
   background: #1f0d09;
   color: #ffcf98;
   font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
@@ -197,10 +199,11 @@ body {
   cursor: pointer;
   pointer-events: auto;
   backdrop-filter: blur(10px);
+  isolation: isolate;
   box-shadow:
     inset -5px -5px 9px rgba(0, 0, 0, 0.48),
     inset 4px 3px 6px rgba(255, 255, 255, 0.22),
-    0 8px 22px rgba(0, 0, 0, 0.32);
+    0 6px 16px rgba(0, 0, 0, 0.28);
 }
 
 #language-toggle::before,
@@ -211,11 +214,11 @@ body {
 }
 
 #language-toggle::before {
-  left: -48px;
-  top: 0;
-  width: 120px;
-  height: 24px;
-  animation: language-globe-spin 7.5s linear infinite;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  animation: language-globe-pan 7.5s linear infinite;
 }
 
 #language-toggle[data-flag="us"]::before {
@@ -276,13 +279,13 @@ body {
     0 0 22px rgba(255, 66, 62, 0.22);
 }
 
-@keyframes language-globe-spin {
+@keyframes language-globe-pan {
   from {
-    transform: translateX(0);
+    background-position: 0 0;
   }
 
   to {
-    transform: translateX(48px);
+    background-position: 48px 0;
   }
 }
 
@@ -913,6 +916,7 @@ body:not(.hud-collapsed) #hud-toggle,
 
 .map-ring,
 .map-cross,
+.map-compass,
 .map-player,
 .map-marker {
   position: absolute;
@@ -948,6 +952,26 @@ body:not(.hud-collapsed) #hud-toggle,
 .map-cross.y {
   width: 1px;
   height: 100%;
+}
+
+.map-compass {
+  inset: 0;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.map-compass span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  color: rgba(255, 214, 147, 0.86);
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-shadow: 0 0 6px rgba(255, 126, 60, 0.3);
 }
 
 .map-player {
@@ -1023,6 +1047,15 @@ body:not(.hud-collapsed) #hud-toggle,
   color: #d4f6ff;
   background: #d4f6ff;
   border-color: rgba(209, 250, 255, 0.8);
+  box-shadow: none;
+}
+
+.map-marker.type-meteor {
+  width: 10px;
+  height: 10px;
+  color: #65d9ff;
+  background: #65d9ff;
+  border-color: rgba(177, 239, 255, 0.92);
   box-shadow: none;
 }
 
@@ -1128,6 +1161,11 @@ body:not(.hud-collapsed) #hud-toggle,
   line-height: 18px;
 }
 
+.map-expanded .map-marker.type-meteor {
+  width: 11px;
+  height: 11px;
+}
+
 .map-expanded .map-player {
   border-left-width: 12px;
   border-right-width: 12px;
@@ -1171,9 +1209,26 @@ body:not(.hud-collapsed) #hud-toggle,
   text-shadow: 0 0 8px rgba(255, 126, 60, 0.36);
 }
 
+.map-heading {
+  margin-top: -2px;
+  color: rgba(255, 214, 147, 0.84);
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0 7px rgba(255, 126, 60, 0.28);
+}
+
 .map-expanded .map-coordinates {
   margin-top: 14px;
   font-size: 15px;
+}
+
+.map-expanded .map-heading {
+  margin-top: 2px;
+  font-size: 12px;
 }
 
 .map-list {
@@ -1259,6 +1314,18 @@ body:not(.hud-collapsed) #hud-toggle,
 }
 
 #scale-gun-overlay.is-visible {
+  display: block;
+}
+
+#camera-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: none;
+  pointer-events: none;
+}
+
+#camera-overlay.is-visible {
   display: block;
 }
 
@@ -1368,6 +1435,131 @@ body:not(.hud-collapsed) #hud-toggle,
 
 .scale-actions button:active {
   transform: translateY(1px);
+}
+
+.camera-reticle {
+  position: absolute;
+  inset: clamp(34px, 6vw, 78px);
+  border: 1px solid rgba(255, 228, 178, 0.68);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.52),
+    0 0 26px rgba(255, 185, 96, 0.12);
+}
+
+.camera-reticle::before,
+.camera-reticle::after,
+.camera-reticle span::before,
+.camera-reticle span::after {
+  content: "";
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-color: rgba(255, 198, 120, 0.92);
+}
+
+.camera-reticle::before {
+  left: 12px;
+  top: 12px;
+  border-left: 2px solid;
+  border-top: 2px solid;
+}
+
+.camera-reticle::after {
+  right: 12px;
+  top: 12px;
+  border-right: 2px solid;
+  border-top: 2px solid;
+}
+
+.camera-reticle span::before {
+  left: 12px;
+  bottom: 12px;
+  border-left: 2px solid;
+  border-bottom: 2px solid;
+}
+
+.camera-reticle span::after {
+  right: 12px;
+  bottom: 12px;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+}
+
+.camera-readout {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(26px, 6vh, 58px);
+  display: grid;
+  gap: 4px;
+  min-width: 260px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 210, 151, 0.38);
+  background: rgba(24, 12, 8, 0.74);
+  color: #ffe8c8;
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  text-align: center;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.camera-readout strong {
+  font-size: 13px;
+}
+
+.camera-readout span {
+  color: rgba(255, 232, 200, 0.72);
+  font-size: 11px;
+}
+
+#photo-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  display: none;
+  place-items: center;
+  padding: clamp(18px, 4vw, 48px);
+  background: rgba(3, 5, 9, 0.74);
+  backdrop-filter: blur(10px) saturate(0.82);
+}
+
+#photo-viewer.is-visible {
+  display: grid;
+}
+
+.photo-viewer-panel {
+  width: min(980px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.photo-viewer-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #ffe8c8;
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.photo-viewer-head span {
+  color: rgba(255, 232, 200, 0.72);
+}
+
+.photo-viewer-stage {
+  display: grid;
+  place-items: center;
+  min-height: min(66vh, 640px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 210, 151, 0.34);
+  background: rgba(10, 8, 7, 0.86);
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.52);
+}
+
+#photo-viewer-image {
+  max-width: 100%;
+  max-height: min(66vh, 640px);
+  object-fit: contain;
+  transform-origin: center;
 }
 
 .interaction-option {
@@ -1480,6 +1672,7 @@ body:not(.hud-collapsed) #hud-toggle,
 
 #dialogue-box span {
   display: block;
+  white-space: pre-line;
   font-size: 14px;
   line-height: 1.5;
 }
