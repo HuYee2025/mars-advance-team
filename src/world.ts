@@ -170,7 +170,8 @@ export type CircleCollider = {
 
 export type Meteor = {
   head: THREE.Mesh;
-  trail: THREE.Line;
+  trail: THREE.Group;
+  trailPuffs: THREE.Mesh[];
   starAttribute: THREE.BufferAttribute;
   starIndex: number;
   startDirection: THREE.Vector3;
@@ -180,14 +181,18 @@ export type Meteor = {
   orbitSpeed: number;
   phase: number;
   tailAngle: number;
+  tailLength: number;
   wobbleAxis: THREE.Vector3;
   wobbleSpeed: number;
   wobbleAmount: number;
+  closeFlyby: boolean;
+  flybyTangent: THREE.Vector3;
 };
 
 export const WORLD_EXPANSION = 1.5;
 export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
+const CLOSE_METEOR_FLYBY_SECONDS = 180;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -359,15 +364,19 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 11.5,
     completed: false,
   });
-  for (const x of [-8.2, -5.4, -2.7, 0, 2.7, 5.4, 8.2]) {
-    colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, x, 0.2, 3.05, "关闭的居住舱"), enabled: () => !habitatDoor.occupied });
-  }
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 0, -1.45, 1.65, "关闭的居住舱舱门"), enabled: () => !habitatDoor.occupied });
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, -8.2, 0.2, 2.6, "居住舱左端盖"), enabled: () => habitatDoor.open && !habitatDoor.occupied });
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 8.2, 0.2, 2.6, "居住舱右端盖"), enabled: () => habitatDoor.open && !habitatDoor.occupied });
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, -3.8, 3.35, 2.2, "居住舱后舱壁"), enabled: () => habitatDoor.open && !habitatDoor.occupied });
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 0, 3.35, 2.2, "居住舱后舱壁"), enabled: () => habitatDoor.open && !habitatDoor.occupied });
-  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 3.8, 3.35, 2.2, "居住舱后舱壁"), enabled: () => habitatDoor.open && !habitatDoor.occupied });
+  addFootprintColliders(
+    colliders,
+    habitatX,
+    habitatZ,
+    habitatYaw,
+    [-9.6, -6.4, -3.2, 0, 3.2, 6.4, 9.6],
+    [-3.2, 0.2, 3.6],
+    2.35,
+    "居住舱外壳",
+    () => !habitatDoor.occupied
+  );
+  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, -10.8, 0.2, 2.75, "居住舱左端盖"), enabled: () => !habitatDoor.occupied });
+  colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 10.8, 0.2, 2.75, "居住舱右端盖"), enabled: () => !habitatDoor.occupied });
 
   const greenhouse = createGreenhouse(flickerLights);
   greenhouse.scale.setScalar(GREENHOUSE_SCALE);
@@ -387,10 +396,17 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     radius: 13.5,
     completed: false,
   });
-  colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, -8.6, 0.2, 5.0, "温室左舱壁"));
-  colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, 8.6, 0.2, 5.0, "温室右舱壁"));
-  colliders.push(offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, 0, 9.2, 6.6, "温室后舱壁"));
-  colliders.push({ ...offsetCircle(greenhouseX, greenhouseZ, greenhouseYaw, 0, -4.2, 6.2, "密封的温室生态舱"), enabled: () => !greenhouseDoor.occupied });
+  addFootprintColliders(
+    colliders,
+    greenhouseX,
+    greenhouseZ,
+    greenhouseYaw,
+    [-9, -4.5, 0, 4.5, 9],
+    [-5.4, 0.4, 6.2],
+    3.0,
+    "温室生态舱外壳",
+    () => !greenhouseDoor.occupied
+  );
 
   const oxygenX = spread(-24.1);
   const oxygenZ = spread(20.2);
@@ -401,9 +417,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(oxygenPlant);
   landmarks.push(landmark("03 建筑 氧气生产站", oxygenPlant, oxygenX, oxygenZ, 38, 240));
   addMaintenanceBot("03 机器人 制氧站维修工", oxygenX, oxygenZ, oxygenYaw, 6.8, -5.8, "03 建筑 氧气生产站", "氧气生产站压缩火星大气中的 CO2，再分离出可用氧气。我负责进气口、压缩机、储氧罐和外部管线。");
-  colliders.push(offsetCircle(oxygenX, oxygenZ, oxygenYaw, -4.4, -0.2, 2.8, "氧气生产站左墙"));
-  colliders.push(offsetCircle(oxygenX, oxygenZ, oxygenYaw, 4.4, -0.2, 2.8, "氧气生产站右墙"));
-  colliders.push(offsetCircle(oxygenX, oxygenZ, oxygenYaw, 0, 3.8, 3.8, "氧气生产站后墙"));
+  addFootprintColliders(colliders, oxygenX, oxygenZ, oxygenYaw, [-4.6, 0, 4.6], [-2.4, 2.6], 2.45, "氧气生产站外壳");
   const oxygenLight = new THREE.PointLight(0xff3d2f, 2.2, 13);
   oxygenLight.position.copy(planetSurfacePoint(oxygenX, oxygenZ - 2.2, 8.5));
   base.add(oxygenLight);
@@ -425,7 +439,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(methanePlant);
   landmarks.push(landmark("04 建筑 甲烷燃料厂", methanePlant, methaneX, methaneZ, 34, 230));
   addMaintenanceBot("04 机器人 燃料厂维修工", methaneX, methaneZ, 0.8, -6.2, -5.4, "04 建筑 甲烷燃料厂", "甲烷燃料厂把 CO2 和氢反应生成 CH4，为返回飞船和基地备用发电储备燃料。我负责反应器、冷凝管和安全阀。");
-  colliders.push(circle(methaneX, methaneZ, 6.4, "甲烷燃料厂"));
+  addFootprintColliders(colliders, methaneX, methaneZ, 0.8, [-4.8, 0, 4.8], [-3.2, 2.8], 2.75, "甲烷燃料厂外壳");
   interactables.push({
     id: "methane",
     label: "04 建筑 甲烷燃料厂",
@@ -443,7 +457,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(garage);
   landmarks.push(landmark("05 建筑 机器人车库", garage, garageX, garageZ, 34, 230));
   addMaintenanceBot("05 机器人 车库维修工", garageX, garageZ, -0.7, 6.4, -6.2, "05 建筑 机器人车库", "机器人车库是维修队列的调度和充电中心。我负责机械臂、备件架、充电桩和低速搬运平台。");
-  colliders.push(circle(garageX, garageZ, 6.8, "机器人车库"));
+  addFootprintColliders(colliders, garageX, garageZ, -0.7, [-5.2, 0, 5.2], [-3.6, 2.8], 2.85, "机器人车库外壳");
   interactables.push({
     id: "garage",
     label: "05 建筑 机器人车库",
@@ -479,7 +493,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(lab04);
   landmarks.push(landmark("07 建筑 科研舱", lab04, lab04X, lab04Z, 34, 230));
   addMaintenanceBot("07 机器人 科研舱维修工", lab04X, lab04Z, -0.38, 5.8, -5.6, "07 建筑 科研舱", "科研舱用于岩石样本、辐射数据和基地环境记录。我负责样本锁、分析台、传感器阵列和数据备份。");
-  colliders.push(circle(lab04X, lab04Z, 6.2, "04 科研舱"));
+  addFootprintColliders(colliders, lab04X, lab04Z, -0.38, [-4.6, 0, 4.6], [-3.2, 2.8], 2.65, "科研舱外壳");
   interactables.push({
     id: "lab",
     label: "07 建筑 科研舱",
@@ -497,7 +511,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(store07);
   landmarks.push(landmark("08 建筑 物资仓", store07, store07X, store07Z, 34, 230));
   addMaintenanceBot("08 机器人 物资仓维修工", store07X, store07Z, 0.72, -5.8, -5.4, "08 建筑 物资仓", "物资仓保存食品、密封件、氧气背包、工具和备用电子模块。我负责货架固定、库存扫描和气闸门维护。");
-  colliders.push(circle(store07X, store07Z, 6.5, "07 物资仓"));
+  addFootprintColliders(colliders, store07X, store07Z, 0.72, [-4.8, 0, 4.8], [-3.2, 2.8], 2.75, "物资仓外壳");
   interactables.push({
     id: "storehouse",
     label: "08 建筑 物资仓",
@@ -515,7 +529,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.add(med09);
   landmarks.push(landmark("09 建筑 医疗舱", med09, med09X, med09Z, 34, 230));
   addMaintenanceBot("09 机器人 医疗舱维修工", med09X, med09Z, -0.86, -2.6, -8.8, "09 建筑 医疗舱", "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。");
-  colliders.push(circle(med09X, med09Z, 6.0, "09 医疗舱"));
+  addFootprintColliders(colliders, med09X, med09Z, -0.86, [-4.4, 0, 4.4], [-3.0, 2.6], 2.55, "医疗舱外壳");
   interactables.push({
     id: "medical",
     label: "09 建筑 医疗舱",
@@ -848,6 +862,26 @@ function worldOffsetToLocal(yaw: number, worldX: number, worldZ: number) {
 function offsetCircle(x: number, z: number, yaw: number, localX: number, localZ: number, radius: number, label: string): CircleCollider {
   const point = offsetPoint(x, z, yaw, localX, localZ);
   return circle(point.x, point.z, radius, label);
+}
+
+function addFootprintColliders(
+  colliders: CircleCollider[],
+  x: number,
+  z: number,
+  yaw: number,
+  xs: number[],
+  zs: number[],
+  radius: number,
+  label: string,
+  enabled?: () => boolean
+) {
+  for (const localX of xs) {
+    for (const localZ of zs) {
+      const collider = offsetCircle(x, z, yaw, localX, localZ, radius, label);
+      if (enabled) collider.enabled = enabled;
+      colliders.push(collider);
+    }
+  }
 }
 
 function createTerrain() {
@@ -2145,30 +2179,55 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   const randomA = seededNoise(starIndex, 17.13);
   const randomB = seededNoise(starIndex, 41.77);
   const randomC = seededNoise(starIndex, 89.31);
+  const isCloseFlyby = order === 0;
+  const meteorColor = isCloseFlyby ? 0xfff0cc : order === 1 ? 0xfff3c2 : 0xffd28a;
+  const headRadius = isCloseFlyby ? 2.6 : 0.62 + randomA * 0.32;
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.3 + randomA * 0.22, 10, 8),
+    new THREE.SphereGeometry(headRadius, isCloseFlyby ? 24 : 14, isCloseFlyby ? 16 : 10),
     new THREE.MeshBasicMaterial({
-      color: order === 1 ? 0xfff3c2 : 0xffd28a,
+      color: meteorColor,
       transparent: true,
-      opacity: 0.72 + randomB * 0.18,
+      opacity: isCloseFlyby ? 0.82 : 0.62 + randomB * 0.18,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
   );
   head.renderOrder = 3;
 
-  const trailGeometry = new THREE.BufferGeometry();
-  trailGeometry.setAttribute("position", new THREE.Float32BufferAttribute(new Array(9).fill(0), 3));
-  const trail = new THREE.Line(
-    trailGeometry,
-    new THREE.LineBasicMaterial({
-      color: order === 1 ? 0xfff5d0 : 0xffb86c,
+  const trail = new THREE.Group();
+  const trailPuffs: THREE.Mesh[] = [];
+  const puffCount = isCloseFlyby ? 10 : 7;
+  for (let i = 0; i < puffCount; i += 1) {
+    const t = i / Math.max(puffCount - 1, 1);
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: isCloseFlyby ? 0xffb56f : order === 1 ? 0xffcf8a : 0xff8f5d,
+        transparent: true,
+        opacity: (isCloseFlyby ? 0.34 : 0.24) * Math.pow(1 - t, 1.35),
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    const scale = (isCloseFlyby ? 2.8 : 1.15) * (1.05 + t * 2.15);
+    puff.scale.setScalar(scale);
+    puff.renderOrder = 2;
+    trailPuffs.push(puff);
+    trail.add(puff);
+  }
+  const coma = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 10),
+    new THREE.MeshBasicMaterial({
+      color: isCloseFlyby ? 0xffd8a4 : 0xffb87a,
       transparent: true,
-      opacity: 0.36 + randomC * 0.18,
+      opacity: isCloseFlyby ? 0.2 : 0.14,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
   );
+  coma.scale.setScalar(isCloseFlyby ? 5.4 : 1.8);
+  coma.renderOrder = 1;
+  trail.add(coma);
   trail.renderOrder = 2;
 
   const seed = new THREE.Vector3(Math.sin(starIndex * 12.9898), Math.cos(starIndex * 78.233), Math.sin(starIndex * 37.719)).normalize();
@@ -2181,6 +2240,7 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   }
   orbitAxis.normalize();
   const wobbleAxis = orbitAxis.clone().cross(direction).normalize();
+  const flybyTangent = orbitAxis.clone().cross(direction).normalize();
 
   return {
     head,
@@ -2189,14 +2249,18 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     starIndex,
     startDirection: direction.clone(),
     orbitAxis,
-    orbitMin: PLANET_RADIUS + 132 + randomA * 46,
-    orbitMax: PLANET_RADIUS + 620 + randomB * 580,
-    orbitSpeed: (0.018 + randomC * 0.056) * (order === 1 ? -1 : 1),
-    phase: (randomA - 0.5) * 0.46,
-    tailAngle: 0.018 + randomB * 0.05,
+    orbitMin: isCloseFlyby ? PLANET_RADIUS + 18 : PLANET_RADIUS + 980 + randomA * 460,
+    orbitMax: isCloseFlyby ? PLANET_RADIUS + 1550 : PLANET_RADIUS + 1460 + randomB * 820,
+    orbitSpeed: (isCloseFlyby ? (Math.PI * 2) / CLOSE_METEOR_FLYBY_SECONDS : (Math.PI * 2) / (420 + randomC * 260)) * (order === 1 ? -1 : 1),
+    phase: isCloseFlyby ? -0.38 : (randomA - 0.5) * 0.46,
+    tailAngle: isCloseFlyby ? 0.12 : 0.035 + randomB * 0.055,
+    tailLength: isCloseFlyby ? 58 : 18 + randomB * 24,
     wobbleAxis,
-    wobbleSpeed: 0.27 + randomC * 0.42,
-    wobbleAmount: 0.08 + randomA * 0.22,
+    wobbleSpeed: isCloseFlyby ? 0.08 : 0.27 + randomC * 0.42,
+    wobbleAmount: isCloseFlyby ? 0.02 : 0.08 + randomA * 0.22,
+    trailPuffs,
+    closeFlyby: isCloseFlyby,
+    flybyTangent,
   };
 }
 
@@ -2716,17 +2780,40 @@ function updateUtilityBotWalk(bot: THREE.Group, elapsed: number, speed: number) 
 export function updateMeteors(meteors: Meteor[], elapsed: number) {
   meteors.forEach((meteor) => {
     const angle = meteor.phase + elapsed * meteor.orbitSpeed;
-    const halfTail = meteor.tailAngle * 0.5;
     const headPosition = meteorPositionAtAngle(meteor, angle, elapsed);
-    const midPosition = meteorPositionAtAngle(meteor, angle - halfTail, elapsed);
-    const tailPosition = meteorPositionAtAngle(meteor, angle - meteor.tailAngle, elapsed);
-    const tailAttribute = meteor.trail.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const orbitDirection = Math.sign(meteor.orbitSpeed) || 1;
+    const aheadPosition = meteorPositionAtAngle(meteor, angle + orbitDirection * 0.006, elapsed);
+    const motionDirection = aheadPosition.sub(headPosition).normalize();
+    const radialDirection = headPosition.clone().normalize();
+    const altitude = headPosition.length() - PLANET_RADIUS;
+    const closeness = meteor.closeFlyby ? 1 - THREE.MathUtils.smoothstep(altitude, 120, 920) : 1;
+    const headScale = meteor.closeFlyby ? THREE.MathUtils.lerp(0.16, 1, closeness) : 1;
 
     meteor.head.position.copy(headPosition);
-    tailAttribute.setXYZ(0, headPosition.x, headPosition.y, headPosition.z);
-    tailAttribute.setXYZ(1, midPosition.x, midPosition.y, midPosition.z);
-    tailAttribute.setXYZ(2, tailPosition.x, tailPosition.y, tailPosition.z);
-    tailAttribute.needsUpdate = true;
+    meteor.head.scale.setScalar(headScale);
+    const headMaterial = meteor.head.material;
+    if (meteor.closeFlyby && headMaterial instanceof THREE.MeshBasicMaterial) {
+      headMaterial.opacity = THREE.MathUtils.lerp(0.22, 0.82, closeness);
+    }
+    meteor.trail.position.copy(headPosition);
+    meteor.trail.visible = !meteor.closeFlyby || closeness > 0.08;
+    meteor.trailPuffs.forEach((puff, index) => {
+      const t = (index + 1) / (meteor.trailPuffs.length + 1);
+      const curl = Math.sin(elapsed * 1.7 + meteor.phase * 4 + index * 0.9) * t * 1.8;
+      puff.position
+        .copy(motionDirection)
+        .multiplyScalar(-meteor.tailLength * t)
+        .addScaledVector(radialDirection, -2.2 * t)
+        .addScaledVector(meteor.wobbleAxis, curl);
+      const base = meteor.tailLength > 40 ? 2.8 : 1.15;
+      puff.scale.setScalar(base * (1.05 + t * 2.15) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.18, 1, closeness) : 1));
+      const puffMaterial = puff.material;
+      if (meteor.closeFlyby && puffMaterial instanceof THREE.MeshBasicMaterial) {
+        const baseOpacity = puff.userData.baseOpacity ?? puffMaterial.opacity;
+        puff.userData.baseOpacity = baseOpacity;
+        puffMaterial.opacity = baseOpacity * closeness;
+      }
+    });
 
     meteor.starAttribute.setXYZ(meteor.starIndex, headPosition.x, headPosition.y, headPosition.z);
     meteor.starAttribute.needsUpdate = true;
@@ -2734,15 +2821,23 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
 }
 
 function meteorPositionAtAngle(meteor: Meteor, angle: number, elapsed: number) {
-  const distanceT = (1 - Math.cos(angle)) * 0.5;
-  const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, distanceT);
-  const wobble = Math.sin(elapsed * meteor.wobbleSpeed + meteor.phase * 3.1) * meteor.wobbleAmount;
-  return meteor.startDirection
-    .clone()
-    .applyAxisAngle(meteor.orbitAxis, angle)
-    .applyAxisAngle(meteor.wobbleAxis, wobble)
-    .normalize()
-    .multiplyScalar(radius);
+  if (meteor.closeFlyby) {
+    const distanceT = (1 - Math.cos(angle)) * 0.5;
+    const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, distanceT);
+    const sideOffset = Math.sin(angle) * 820;
+    const wobble = Math.sin(elapsed * meteor.wobbleSpeed + meteor.phase * 3.1) * meteor.wobbleAmount * 18;
+    return meteor.startDirection
+      .clone()
+      .multiplyScalar(radius)
+      .addScaledVector(meteor.flybyTangent, sideOffset)
+      .addScaledVector(meteor.wobbleAxis, wobble);
+  }
+  const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, 0.5 + Math.sin(angle * 0.47 + meteor.phase) * 0.5);
+  const center = meteor.startDirection.clone().multiplyScalar(radius);
+  const driftA = Math.sin(angle) * (120 + meteor.tailLength * 1.8);
+  const driftB = Math.cos(angle * 0.63 + meteor.phase) * (70 + meteor.tailLength);
+  const wobble = Math.sin(elapsed * meteor.wobbleSpeed + meteor.phase * 3.1) * meteor.wobbleAmount * 24;
+  return center.addScaledVector(meteor.flybyTangent, driftA).addScaledVector(meteor.wobbleAxis, driftB + wobble);
 }
 
 export function updateSolarArrays(arrays: THREE.Group[], sunPosition: THREE.Vector3) {

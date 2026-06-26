@@ -208,13 +208,14 @@ const CAMERA_OBSTRUCTION_MAX_LIFT = 7.4;
 const FOOTBALL_RADIUS = 0.44;
 const FOOTBALL_REST_ALTITUDE = FOOTBALL_RADIUS + 0.035;
 const FOOTBALL_PLAYER_RADIUS = 0.82;
-const FOOTBALL_GROUND_FRICTION = 0.62;
-const FOOTBALL_AIR_DRAG = 0.055;
+const FOOTBALL_GROUND_FRICTION = 0.31;
+const FOOTBALL_AIR_DRAG = 0.035;
 const FOOTBALL_STATIC_RESTITUTION = 0.58;
 const FOOTBALL_DYNAMIC_RESTITUTION = 0.72;
 const FOOTBALL_KICK_VERTICAL_MIN = 0.42;
 const FOOTBALL_KICK_VERTICAL_SCALE = 0.16;
-const FOOTBALL_MAX_SPEED = 16.5;
+const FOOTBALL_KICK_POWER = 2.0;
+const FOOTBALL_MAX_SPEED = 33;
 const FOOTBALL_SPAWN_X = expandWorldCoordinate(23);
 const FOOTBALL_SPAWN_Z = expandWorldCoordinate(49);
 const FOOTBALL_GOAL_WIDTH = 4.4;
@@ -540,6 +541,14 @@ const exactEnglishTexts: Record<string, string> = {
   "07 建筑 科研舱": "07 Building Lab Module",
   "08 建筑 物资仓": "08 Building Storehouse",
   "09 建筑 医疗舱": "09 Building Medical Bay",
+  "居住舱外壳": "Habitat Hull",
+  "温室生态舱外壳": "Greenhouse Hull",
+  "氧气生产站外壳": "Oxygen Plant Hull",
+  "甲烷燃料厂外壳": "Methane Plant Hull",
+  "机器人车库外壳": "Robot Garage Hull",
+  "科研舱外壳": "Lab Module Hull",
+  "物资仓外壳": "Storehouse Hull",
+  "医疗舱外壳": "Medical Bay Hull",
   "01 能源 太阳能阵列 A": "01 Energy Solar Array A",
   "02 能源 太阳能阵列 B": "02 Energy Solar Array B",
   "03 能源 太阳能阵列 C": "03 Energy Solar Array C",
@@ -2889,7 +2898,9 @@ function applyPlayerFootballCollision() {
 
   const movingKick = Math.max(playerTowardBall, 0);
   const ballBounce = Math.max(ballTowardPlayer, 0) * 0.42;
-  const impulse = THREE.MathUtils.clamp(Math.max(movingKick * 1.08, ballBounce, movingKick > 0.15 ? 1.15 : 0), 0, FOOTBALL_MAX_SPEED);
+  const impulse =
+    THREE.MathUtils.clamp(Math.max(movingKick * 1.08, ballBounce, movingKick > 0.15 ? 1.15 : 0), 0, FOOTBALL_MAX_SPEED) *
+    FOOTBALL_KICK_POWER;
   if (impulse > 0) {
     football.velocity.addScaledVector(away, impulse);
     football.verticalVelocity = Math.max(
@@ -2923,7 +2934,9 @@ function applyRoverFootballCollisions(delta: number) {
     const objectPush = Math.max(roverVelocity.dot(away), 0);
     const ballIntoObject = Math.max(football.velocity.dot(away.clone().negate()), 0);
     const minimumPush = objectPush > 0.1 ? (kind === "bot" ? 0.65 : 1.6) : 0;
-    const impulse = THREE.MathUtils.clamp(Math.max(objectPush * (kind === "bot" ? 0.86 : 1.18), ballIntoObject * 0.5, minimumPush), 0, FOOTBALL_MAX_SPEED);
+    const impulse =
+      THREE.MathUtils.clamp(Math.max(objectPush * (kind === "bot" ? 0.86 : 1.18), ballIntoObject * 0.5, minimumPush), 0, FOOTBALL_MAX_SPEED) *
+      FOOTBALL_KICK_POWER;
     if (impulse > 0) {
       football.velocity.addScaledVector(away, impulse);
       football.verticalVelocity = Math.max(football.verticalVelocity, 0.28 + Math.min(1.8, impulse * (kind === "bot" ? 0.09 : 0.14)));
