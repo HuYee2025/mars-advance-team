@@ -17,13 +17,16 @@ import {
 } from "./dialogue/dialogues";
 import {
   PLANET_RADIUS,
+  expandWorldCoordinate,
   createMarsWorld,
   placeObjectOnPlanetNormal,
+  planetSurfacePointFromNormal,
   planetNormal,
   updateElevators,
   updateMeteors,
   updateRovers,
   updateSolarArrays,
+  type CircleCollider,
   type ElevatorControl,
   type GreenhouseDoorControl,
   type HabitatDoorControl,
@@ -39,9 +42,11 @@ type LabelAnchor = {
 };
 
 type InteractionAction = {
-  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "explore";
+  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission";
   label: string;
 };
+
+type LanguageCode = "zh-CN" | "en-US";
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
 const labelsRoot = must<HTMLDivElement>("#labels");
@@ -54,10 +59,12 @@ const titleScreen = must<HTMLDivElement>("#title-screen");
 const enterButton = must<HTMLButtonElement>("#enter-base");
 const storySummaryButton = must<HTMLButtonElement>("#story-summary");
 const titleActionButtons = [enterButton, storySummaryButton] as const;
+const languageToggle = must<HTMLButtonElement>("#language-toggle");
 const hudToggle = must<HTMLButtonElement>("#hud-toggle");
 const mapToggle = must<HTMLButtonElement>("#map-toggle");
 const coinReadout = must<HTMLElement>("#coin-readout");
 const scoreReadout = must<HTMLElement>("#score-readout");
+const rankReadout = must<HTMLElement>("#rank-readout");
 const missionText = must<HTMLDivElement>("#mission-text");
 const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
@@ -168,10 +175,10 @@ labels.push(addLabel({ label: "福福", object: fufu, x: world.fufuRescueSite.x,
 
 const keyState = new Set<string>();
 const playerVelocity = new THREE.Vector3();
-const SPAWN_X = -18;
-const SPAWN_Z = -124;
-const SPAWN_TARGET_X = 18;
-const SPAWN_TARGET_Z = 18;
+const SPAWN_X = expandWorldCoordinate(-18);
+const SPAWN_Z = expandWorldCoordinate(-124);
+const SPAWN_TARGET_X = expandWorldCoordinate(18);
+const SPAWN_TARGET_Z = expandWorldCoordinate(18);
 const playerNormal = new THREE.Vector3();
 const playerForward = new THREE.Vector3();
 const PLAYER_ALTITUDE = 0.66;
@@ -195,6 +202,27 @@ const SCORE_HIDDEN_DISCOVERY = 30;
 const SCORE_ALL_BUILDINGS_EXPLORED = 100;
 const SCORE_FUNNY_DEFAULT = 10;
 const SCORE_FUNNY_PENALTY = -10;
+const ELEVATOR_FOOT_CLEARANCE = 0.045;
+const CAMERA_OBSTRUCTION_MARGIN = 0.9;
+const CAMERA_OBSTRUCTION_MAX_LIFT = 7.4;
+const FOOTBALL_RADIUS = 0.44;
+const FOOTBALL_REST_ALTITUDE = FOOTBALL_RADIUS + 0.035;
+const FOOTBALL_PLAYER_RADIUS = 0.82;
+const FOOTBALL_GROUND_FRICTION = 0.62;
+const FOOTBALL_AIR_DRAG = 0.055;
+const FOOTBALL_STATIC_RESTITUTION = 0.58;
+const FOOTBALL_DYNAMIC_RESTITUTION = 0.72;
+const FOOTBALL_KICK_VERTICAL_MIN = 0.42;
+const FOOTBALL_KICK_VERTICAL_SCALE = 0.16;
+const FOOTBALL_MAX_SPEED = 16.5;
+const FOOTBALL_SPAWN_X = expandWorldCoordinate(23);
+const FOOTBALL_SPAWN_Z = expandWorldCoordinate(49);
+const FOOTBALL_GOAL_WIDTH = 4.4;
+const FOOTBALL_GOAL_HEIGHT = 2.25;
+const FOOTBALL_GOAL_DEPTH = 1.35;
+const FOOTBALL_GOAL_SAFE_MARGIN = 5.4;
+const FOOTBALL_GOAL_COOLDOWN_SECONDS = 1.2;
+const SCORE_FOOTBALL_GOAL = 100;
 const COIN_GROUP_SIZE = 10;
 const COIN_REFRESH_SECONDS = 4 * 60 * 60;
 const COIN_COLLECT_RADIUS = 1.45;
@@ -238,6 +266,33 @@ type CoinGroup = {
   centerX: number;
   centerZ: number;
   expiresAt: number;
+};
+
+type PlayerRankId =
+  | "internPatrol"
+  | "juniorAstronaut"
+  | "astronaut"
+  | "seniorAstronaut"
+  | "marsMissionSpecialist"
+  | "deputyCommander"
+  | "firstResident";
+
+type FootballState = {
+  group: THREE.Group;
+  ball: THREE.Mesh;
+  shadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  normal: THREE.Vector3;
+  velocity: THREE.Vector3;
+  altitude: number;
+  verticalVelocity: number;
+  lastPlayerKickAt: number;
+};
+
+type FootballGoalState = {
+  group: THREE.Group;
+  normal: THREE.Vector3;
+  goals: number;
+  lastScoredAt: number;
 };
 
 type MainMissionStep =
@@ -307,9 +362,9 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
 };
 
 const oxygenSupplyPoints = [
-  { label: "居住舱补给柜", x: 11, z: 62, radius: 12, mapRange: 240 },
-  { label: "氧气生产站", x: -48.2, z: 40.4, radius: 15, mapRange: 260 },
-  { label: "登陆飞船补给舱", x: 59, z: 21.4, radius: 14, mapRange: 240 },
+  { label: "居住舱补给柜", x: expandWorldCoordinate(11), z: expandWorldCoordinate(62), radius: 12, mapRange: 240 },
+  { label: "氧气生产站", x: expandWorldCoordinate(-48.2), z: expandWorldCoordinate(40.4), radius: 15, mapRange: 260 },
+  { label: "登陆飞船补给舱", x: expandWorldCoordinate(59), z: expandWorldCoordinate(21.4), radius: 14, mapRange: 240 },
 ];
 
 const explorableBuildingIds = new Set<Interactable["id"]>([
@@ -324,7 +379,316 @@ const explorableBuildingIds = new Set<Interactable["id"]>([
   "medical",
 ]);
 
+const colliderExplorationRules: Array<{ key: string; match: string; label?: string; interactableId?: Interactable["id"] }> = [
+  { key: "habitat", match: "居住舱", interactableId: "habitatCheck" },
+  { key: "greenhouse", match: "温室", interactableId: "greenhouse" },
+  { key: "oxygen", match: "氧气生产站", interactableId: "oxygen" },
+  { key: "methane", match: "甲烷燃料厂", interactableId: "methane" },
+  { key: "garage", match: "机器人车库", interactableId: "garage" },
+  { key: "tower", match: "通信塔", interactableId: "tower" },
+  { key: "lab", match: "科研舱", interactableId: "lab" },
+  { key: "storehouse", match: "物资仓", interactableId: "storehouse" },
+  { key: "medical", match: "医疗舱", interactableId: "medical" },
+  { key: "solar_a", match: "太阳能阵列 A", interactableId: "solarA" },
+  { key: "solar_b", match: "太阳能阵列 B", interactableId: "solarB" },
+  { key: "solar_c", match: "太阳能阵列 C", interactableId: "solarC" },
+  { key: "lander_01", match: "登陆飞船", label: "01 飞船 登陆飞船" },
+  { key: "lander_02", match: "货运飞船", label: "02 飞船 货运飞船" },
+  { key: "lander_03", match: "返回飞船", label: "03 飞船 返回飞船" },
+];
+
+const rankRules: Array<{ id: PlayerRankId; score: number; taskRequired?: boolean; storyOnly?: boolean }> = [
+  { id: "internPatrol", score: 0 },
+  { id: "juniorAstronaut", score: 100, taskRequired: true },
+  { id: "astronaut", score: 300 },
+  { id: "seniorAstronaut", score: 700 },
+  { id: "marsMissionSpecialist", score: 1500 },
+  { id: "deputyCommander", score: 3000 },
+  { id: "firstResident", score: Infinity, storyOnly: true },
+];
+
 const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_mother_1", "elon_fufu_1", "elon_robots_1"];
+
+const LANG_STORAGE_KEY = "mars.language";
+let currentLanguage: LanguageCode = readInitialLanguage();
+
+const i18n: Record<LanguageCode, Record<string, string>> = {
+  "zh-CN": {
+    "app.aria": "火星先遣队 3D Demo",
+    "title.aria": "进入火星基地",
+    "title.eyebrow": "2050 年 / 第 30 火星日",
+    "title.name": "火星先遣队",
+    "title.subtitle": "第一位人类",
+    "title.text": "终于，火星基地迎来了第一位人类居民。",
+    "title.enter": "进入基地",
+    "title.story": "故事概要",
+    "hud.aria": "基地状态",
+    "hud.baseAria": "基地指标",
+    "hud.peopleAria": "人员指标",
+    "hud.base": "基地",
+    "hud.oxygenProduction": "制氧量",
+    "hud.power": "能量",
+    "hud.robots": "机器人",
+    "hud.online": "在线人数",
+    "hud.people": "人员",
+    "hud.patrolOfficer": "巡航员",
+    "hud.suitOxygen": "氧气",
+    "hud.stamina": "体能",
+    "hudToggle.hide": "隐藏界面信息",
+    "hudToggle.show": "显示界面信息",
+    "hudButtons.aria": "界面显示控制",
+    "map.open": "打开基地地图",
+    "map.close": "关闭基地地图",
+    "mission.aria": "当前任务",
+    "mission.current": "当前任务",
+    "dialogue.continue": "继续",
+    "exit.title": "要退出当前游戏吗？",
+    "exit.text": "退出会返回主页，当前巡检进度不会保留。",
+    "exit.resume": "返回游戏",
+    "exit.quit": "退出游戏",
+    "scale.instructions": "WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）",
+    "scale.shrink": "缩小",
+    "scale.grow": "放大",
+    "scale.noTarget": "未锁定目标",
+    "reward.coins": "金币",
+    "reward.score": "积分",
+    "rank.internPatrol": "实习巡航员",
+    "rank.juniorAstronaut": "初级宇航员",
+    "rank.astronaut": "正式宇航员",
+    "rank.seniorAstronaut": "高级宇航员",
+    "rank.marsMissionSpecialist": "火星任务专家",
+    "rank.deputyCommander": "火星基地副指挥官",
+    "rank.firstResident": "第一位居民",
+    "rank.promoted": "职位晋升：{rank}",
+    "map.unknownLife": "未知生命迹象",
+    "map.unknownObject": "未知物体",
+    "map.coin": "金币",
+    "interaction.title": "互动",
+    "interaction.choose": "选择互动",
+    "interaction.close": "收起",
+    "interaction.count": "{count} 个可互动项",
+    "language.button": "English",
+  },
+  "en-US": {
+    "app.aria": "Mars Advance Team 3D Demo",
+    "title.aria": "Enter Mars Base",
+    "title.eyebrow": "Year 2050 / Sol 30",
+    "title.name": "Mars Advance Team",
+    "title.subtitle": "The First Human",
+    "title.text": "At last, the Mars base welcomes its first human resident.",
+    "title.enter": "Enter Base",
+    "title.story": "Story Brief",
+    "hud.aria": "Base Status",
+    "hud.baseAria": "Base Metrics",
+    "hud.peopleAria": "Crew Metrics",
+    "hud.base": "Base",
+    "hud.oxygenProduction": "O2 Output",
+    "hud.power": "Power",
+    "hud.robots": "Robots",
+    "hud.online": "Online",
+    "hud.people": "Crew",
+    "hud.patrolOfficer": "Patrol Officer",
+    "hud.suitOxygen": "Oxygen",
+    "hud.stamina": "Stamina",
+    "hudToggle.hide": "Hide HUD",
+    "hudToggle.show": "Show HUD",
+    "hudButtons.aria": "HUD Controls",
+    "map.open": "Open Base Map",
+    "map.close": "Close Base Map",
+    "mission.aria": "Current Mission",
+    "mission.current": "Current Mission",
+    "dialogue.continue": "Continue",
+    "exit.title": "Exit the current game?",
+    "exit.text": "This returns to the title screen. Current patrol progress will not be saved.",
+    "exit.resume": "Resume",
+    "exit.quit": "Exit Game",
+    "scale.instructions": "WASD aim / X holster / Q shrink / E enlarge (- / = backup)",
+    "scale.shrink": "Shrink",
+    "scale.grow": "Enlarge",
+    "scale.noTarget": "No target locked",
+    "reward.coins": "Coins",
+    "reward.score": "Score",
+    "rank.internPatrol": "Trainee Patrol Officer",
+    "rank.juniorAstronaut": "Junior Astronaut",
+    "rank.astronaut": "Astronaut",
+    "rank.seniorAstronaut": "Senior Astronaut",
+    "rank.marsMissionSpecialist": "Mars Mission Specialist",
+    "rank.deputyCommander": "Mars Base Deputy Commander",
+    "rank.firstResident": "First Resident",
+    "rank.promoted": "Rank Up: {rank}",
+    "map.unknownLife": "Unknown life sign",
+    "map.unknownObject": "Unknown object",
+    "map.coin": "Coin",
+    "interaction.title": "Interact",
+    "interaction.choose": "Choose Interaction",
+    "interaction.close": "Close",
+    "interaction.count": "{count} actions",
+    "language.button": "简体中文",
+  },
+};
+
+const exactEnglishTexts: Record<string, string> = {
+  "01 飞船 登陆飞船": "01 Ship Lander",
+  "02 飞船 货运飞船": "02 Ship Cargo Ship",
+  "03 飞船 返回飞船": "03 Ship Return Ship",
+  "01 建筑 居住舱": "01 Building Habitat",
+  "02 建筑 温室生态舱": "02 Building Greenhouse",
+  "03 建筑 氧气生产站": "03 Building Oxygen Plant",
+  "04 建筑 甲烷燃料厂": "04 Building Methane Plant",
+  "05 建筑 机器人车库": "05 Building Robot Garage",
+  "06 建筑 通信塔": "06 Building Comm Tower",
+  "07 建筑 科研舱": "07 Building Lab Module",
+  "08 建筑 物资仓": "08 Building Storehouse",
+  "09 建筑 医疗舱": "09 Building Medical Bay",
+  "01 能源 太阳能阵列 A": "01 Energy Solar Array A",
+  "02 能源 太阳能阵列 B": "02 Energy Solar Array B",
+  "03 能源 太阳能阵列 C": "03 Energy Solar Array C",
+  "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
+  "02 车辆 运输车": "02 Vehicle Cargo Rover",
+  "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
+  "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
+  "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
+  "01 机器人 居住舱维修工": "01 Robot Habitat Technician",
+  "02 机器人 温室维修工": "02 Robot Greenhouse Technician",
+  "03 机器人 制氧站维修工": "03 Robot Oxygen Plant Technician",
+  "04 机器人 燃料厂维修工": "04 Robot Methane Plant Technician",
+  "05 机器人 车库维修工": "05 Robot Garage Technician",
+  "06 机器人 通信塔维修工": "06 Robot Comm Tower Technician",
+  "07 机器人 科研舱维修工": "07 Robot Lab Technician",
+  "08 机器人 物资仓维修工": "08 Robot Storehouse Technician",
+  "09 机器人 医疗舱维修工": "09 Robot Medical Technician",
+  "10 机器人 阵列 A 维修工": "10 Robot Array A Technician",
+  "11 机器人 阵列 B 维修工": "11 Robot Array B Technician",
+  "12 机器人 阵列 C 维修工": "12 Robot Array C Technician",
+  "先熟悉移动和视角。火星基地中控 AI Mother 会建立通信，随后开始基地验收。": "Get familiar with movement and camera controls. Mars base central AI Mother will establish comms, then begin base acceptance checks.",
+  "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。": "Main 1: Go to 01 Building Habitat. Check air circulation and the supply locker.",
+  "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。": "Main 1: Go to 03 Building Oxygen Plant. Confirm pressure, CO2 intake, and power.",
+  "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。": "Main 1: Go to 03 Energy Solar Array C. Clear dust and calibrate the angle.",
+  "主线一：前往 05 建筑机器人车库，授权 A-12 生成维修单。": "Main 1: Go to 05 Building Robot Garage. Authorize A-12 to generate the repair order.",
+  "主线二：前往 02 建筑温室生态舱，检查水循环、补光和舱压。": "Main 2: Go to 02 Building Greenhouse. Check water circulation, grow lights, and pressure.",
+  "主线二：前往 08 建筑物资仓，清点可用密封件。": "Main 2: Go to 08 Building Storehouse. Count usable seals.",
+  "主线二：前往 07 建筑科研舱，制作临时密封环。": "Main 2: Go to 07 Building Lab Module. Fabricate a temporary seal ring.",
+  "主线二：前往 02 能源太阳能阵列 B，给温室分配补光功率。": "Main 2: Go to 02 Energy Solar Array B. Allocate grow-light power to the greenhouse.",
+  "主线二：回到 02 建筑温室生态舱，决定火星第一批种植方案。": "Main 2: Return to 02 Building Greenhouse. Choose the first Mars planting plan.",
+  "主线三：前往 06 建筑通信塔，校准风暴中的延迟通信。": "Main 3: Go to 06 Building Comm Tower. Calibrate delayed comms during the storm.",
+  "主线三：前往 07 建筑科研舱，比对地球旧指令和本地气象数据。": "Main 3: Go to 07 Building Lab Module. Compare outdated Earth instructions with local weather data.",
+  "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。": "Main 3: Go to 04 Building Methane Plant. Complete low-power test production.",
+  "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。": "Main 3: Go to 01 Energy Solar Array A. Secure the storm locks.",
+  "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。": "Main 3: Go to 05 Building Robot Garage. Set dispatch priority for A-12 and A-01.",
+  "主线三：回到 01 建筑居住舱 Mother 终端，签署人机协作协议。": "Main 3: Return to the Mother terminal in 01 Building Habitat. Sign the human-machine cooperation protocol.",
+  "主线完成：ARES BASE ALPHA 达到最低生存标准。可继续完成剩余支线。": "Main complete: ARES BASE ALPHA has reached minimum survival standards. Remaining side missions are still available.",
+};
+
+const englishPhrasePairs: Array<[string, string]> = [
+  ["火星先遣队", "Mars Advance Team"],
+  ["第一位人类", "The First Human"],
+  ["当前任务", "Current Mission"],
+  ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
+  ["火星基地中控 AI Mother 正在呼叫。", "Mars base central AI Mother is calling."],
+  ["居住舱补给柜", "Habitat supply locker"],
+  ["氧气生产站", "Oxygen Plant"],
+  ["登陆飞船补给舱", "Lander supply bay"],
+  ["黑色方碑", "Black Monolith"],
+  ["未知生命迹象", "Unknown life sign"],
+  ["未知物体", "Unknown object"],
+  ["未知智能体", "Unknown intelligence"],
+  ["福福", "Fufu"],
+  ["火星足球", "Mars Football"],
+  ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
+  ["火星足球进球", "Mars football goal"],
+  ["接听 Mother 呼叫", "Answer Mother"],
+  ["与维修机器人通话", "Talk to maintenance robot"],
+  ["安抚 福福", "Comfort Fufu"],
+  ["离开居住舱", "Leave Habitat"],
+  ["进入居住舱", "Enter Habitat"],
+  ["离开温室生态舱", "Leave Greenhouse"],
+  ["进入温室生态舱", "Enter Greenhouse"],
+  ["离开飞船内舱", "Leave ship interior"],
+  ["检查 03 飞船升降梯", "Inspect Ship 03 elevator"],
+  ["与 Elon 通话", "Talk to Elon"],
+  ["进入飞船内部观察", "Enter ship interior"],
+  ["乘坐升降梯", "Ride elevator"],
+  ["启动飞船升降梯", "Start ship elevator"],
+  ["飞船升降梯", "Ship Elevator"],
+  ["升降梯上行，前往飞船舱门。", "Elevator rising toward the ship hatch."],
+  ["升降梯下行，返回地面。", "Elevator descending back to the surface."],
+  ["运行中", "running"],
+  ["氧气包已满", "oxygen pack full"],
+  ["更换氧气背包", "Replace oxygen pack"],
+  ["尚未获得。去黑色方碑处取得它。", "Not acquired yet. Retrieve it from the Black Monolith."],
+  ["当前空间太窄，无法展开瞄准镜。", "This space is too tight to deploy the sight."],
+  ["未锁定可缩放目标。", "No scalable target locked."],
+  ["放大", "enlarged"],
+  ["缩小", "shrunk"],
+  ["到", "to"],
+  ["秒后恢复", "restores in seconds"],
+  ["金币", "Coins"],
+  ["积分", "Score"],
+  ["信任", "Trust"],
+  ["基地", "Base"],
+  ["自主", "Autonomy"],
+  ["人员", "Crew"],
+  ["制氧量", "O2 Output"],
+  ["能量", "Power"],
+  ["在线人数", "Online"],
+  ["体能", "Stamina"],
+  ["机器人", "Robot"],
+  ["飞船", "Ship"],
+  ["建筑", "Building"],
+  ["能源", "Energy"],
+  ["车辆", "Vehicle"],
+  ["居住舱", "Habitat"],
+  ["温室生态舱", "Greenhouse"],
+  ["制氧站", "Oxygen Plant"],
+  ["甲烷燃料厂", "Methane Plant"],
+  ["机器人车库", "Robot Garage"],
+  ["通信塔", "Comm Tower"],
+  ["科研舱", "Lab Module"],
+  ["物资仓", "Storehouse"],
+  ["医疗舱", "Medical Bay"],
+  ["太阳能阵列", "Solar Array"],
+  ["登陆飞船", "Lander"],
+  ["货运飞船", "Cargo Ship"],
+  ["返回飞船", "Return Ship"],
+  ["维修工", "Technician"],
+  ["维护工", "Maintenance Bot"],
+  ["巡航员", "Patrol Officer"],
+  ["前往", "Go to"],
+  ["检查", "inspect"],
+  ["确认", "confirm"],
+  ["启动", "start"],
+  ["授权", "authorize"],
+  ["完成", "complete"],
+  ["主线一", "Main 1"],
+  ["主线二", "Main 2"],
+  ["主线三", "Main 3"],
+  ["支线", "Side"],
+  ["当前目标", "current target"],
+  ["操作指南", "Controls"],
+  ["退出确认", "Exit Confirm"],
+  ["按住指南", "Hold Guide"],
+  ["隐藏界面", "Hide HUD"],
+  ["头灯", "Headlamp"],
+  ["前进", "Forward"],
+  ["左转", "Turn Left"],
+  ["后退", "Back"],
+  ["右转", "Turn Right"],
+  ["加速", "Boost"],
+  ["跳跃", "Jump"],
+  ["互动 / 确认", "Interact / Confirm"],
+  ["左 / 右选项", "Left / Right Option"],
+  ["地图", "Map"],
+  ["长按 F", "Hold F"],
+  ["全屏地图", "Full Map"],
+  ["第一 / 第三人称", "First / Third Person"],
+  ["开 / 收缩放枪", "Draw / Holster Scale Gun"],
+  ["枪瞄准", "Gun Aim"],
+  ["枪放大 / 缩小", "Gun Enlarge / Shrink"],
+  ["备用缩放", "Backup Zoom"],
+  ["默认视角", "Default View"],
+  ["照明", "Light"],
+  ["跳", "Jump"],
+];
 
 let yaw = Math.PI * 0.15;
 let pitch = 0.34;
@@ -332,6 +696,7 @@ let orbitYawOffset = 0;
 const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE = 10;
 let cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
 let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number } | null = null;
+let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
 let lastFrameTime = performance.now();
@@ -346,6 +711,8 @@ let missionStep: MainMissionStep = "intro";
 let messageUntil = 0;
 let scorePoints = 0;
 let coins = 0;
+let currentRank: PlayerRankId = "internPatrol";
+let completedAnyTask = false;
 let hudCollapsed = false;
 let mapOpen = false;
 let mapExpanded = false;
@@ -428,6 +795,12 @@ let nextMonolithBeepAt = 0;
 let uiAudioContext: AudioContext | null = null;
 const scaleGunRaycaster = new THREE.Raycaster();
 const scaleGunEffects = new Map<string, ScaleGunEffect>();
+const elevatorSurfaceBoxes = new WeakMap<THREE.Object3D, THREE.Box3>();
+const roverPreviousPositions = new WeakMap<THREE.Object3D, THREE.Vector3>();
+const staticTextSources = new WeakMap<Text, string>();
+const football = createFootball();
+const footballGoal = createFootballGoal(football.normal.clone().negate(), football.normal);
+scene.add(football.group, football.shadow, footballGoal.group);
 
 declare global {
   interface Window {
@@ -776,7 +1149,339 @@ function createRadialShadowTexture() {
   return texture;
 }
 
+function readInitialLanguage(): LanguageCode {
+  return localStorage.getItem(LANG_STORAGE_KEY) === "en-US" ? "en-US" : "zh-CN";
+}
+
+function isEnglish() {
+  return currentLanguage === "en-US";
+}
+
+function tr(key: string, params: Record<string, string | number> = {}) {
+  const value = i18n[currentLanguage][key] ?? i18n["zh-CN"][key] ?? key;
+  return Object.entries(params).reduce((text, [name, replacement]) => text.replaceAll(`{${name}}`, String(replacement)), value);
+}
+
+function localizeText(text: string) {
+  if (!isEnglish()) return text;
+  let translated = exactEnglishTexts[text] ?? i18n["en-US"][text] ?? text;
+  for (const [source, target] of englishPhrasePairs) translated = translated.replaceAll(source, target);
+  translated = translated
+    .replace(/(\d+)号/g, "No. $1")
+    .replace(/(\d+) 人/g, "$1 players")
+    .replace(/(\d+)人/g, "$1 players")
+    .replace(/第\s*(\d+)\s*火星日/g, "Sol $1")
+    .replace(/(\d+)\s*秒后恢复/g, "restores in $1 seconds");
+  return translated;
+}
+
+function localizeLabel(label: string) {
+  return localizeText(label);
+}
+
+function applyLanguage() {
+  document.documentElement.lang = currentLanguage;
+  document.title = isEnglish() ? "Mars Advance Team: The First Human" : "火星先遣队 第一位人类";
+  const metaDescription = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+  if (metaDescription) {
+    metaDescription.content = isEnglish()
+      ? "A browser-based 3D Mars base demo with a red planet outpost, ISRU plant, greenhouse, robots, and landers."
+      : "火星殖民浏览器 3D Demo：红色星球基地、ISRU 工厂、温室、机器人与登陆器。";
+  }
+  document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
+    const key = element.dataset.i18n;
+    if (key) element.textContent = tr(key);
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-attr]").forEach((element) => {
+    const attrConfig = element.dataset.i18nAttr ?? "";
+    for (const pair of attrConfig.split(",")) {
+      const [attr, key] = pair.split(":");
+      if (attr && key) element.setAttribute(attr, tr(key));
+    }
+  });
+  localizeStaticUiText();
+  languageToggle.textContent = tr("language.button");
+  updateRewardReadouts();
+  updateRankReadout();
+  updateMapButtonState();
+  updateTitleActionSelection();
+  updateMissionAfterLanguageChange();
+  updateScaleGunOverlay();
+  for (const item of labels) item.element.textContent = localizeLabel(item.element.dataset.labelSource ?? item.element.textContent);
+  interactionChoiceSignature = "";
+  updateInteractionPrompts();
+  if (activeDialogueNode) renderDialogueNode();
+}
+
+function localizeStaticUiText() {
+  const roots = ["#title-screen", ".hud", ".hud-buttons", "#mission-banner", "#scale-gun-overlay", "#exit-confirm", ".mobile-actions", "#controls-guide"];
+  for (const selector of roots) {
+    const root = document.querySelector(selector);
+    if (!root) continue;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const textNode = node as Text;
+      if (textNode.parentElement?.closest("[data-i18n]")) {
+        node = walker.nextNode();
+        continue;
+      }
+      const source = staticTextSources.get(textNode) ?? textNode.textContent ?? "";
+      if (!staticTextSources.has(textNode)) staticTextSources.set(textNode, source);
+      const trimmed = source.trim();
+      if (trimmed) textNode.textContent = source.replace(trimmed, localizeText(trimmed));
+      node = walker.nextNode();
+    }
+  }
+}
+
+function setLanguage(language: LanguageCode) {
+  currentLanguage = language;
+  localStorage.setItem(LANG_STORAGE_KEY, language);
+  applyLanguage();
+}
+
+function toggleLanguage() {
+  if (started) return;
+  setLanguage(isEnglish() ? "zh-CN" : "en-US");
+}
+
+function createFootball(): FootballState {
+  const texture = createFootballTexture();
+  const bumpTexture = createFootballTexture();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: texture,
+    bumpMap: bumpTexture,
+    bumpScale: 0.018,
+    roughness: 0.46,
+    metalness: 0.02,
+  });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(FOOTBALL_RADIUS, 48, 32), material);
+  ball.castShadow = true;
+  ball.receiveShadow = true;
+
+  const group = new THREE.Group();
+  group.name = "Mars football";
+  group.add(ball);
+
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(FOOTBALL_RADIUS * 1.15, 32),
+    new THREE.MeshBasicMaterial({
+      map: createRadialShadowTexture(),
+      color: 0x140805,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    })
+  );
+  shadow.renderOrder = 2;
+
+  const normal = planetNormal(FOOTBALL_SPAWN_X, FOOTBALL_SPAWN_Z, new THREE.Vector3());
+  const state: FootballState = {
+    group,
+    ball,
+    shadow,
+    normal,
+    velocity: new THREE.Vector3(),
+    altitude: FOOTBALL_REST_ALTITUDE,
+    verticalVelocity: 0,
+    lastPlayerKickAt: -Infinity,
+  };
+  updateFootballVisual(state, 0);
+  return state;
+}
+
+function createFootballGoal(idealNormal: THREE.Vector3, spawnNormal: THREE.Vector3): FootballGoalState {
+  const normal = findSafeFootballGoalNormal(idealNormal.normalize());
+  const group = new THREE.Group();
+  group.name = "Football goal";
+
+  const white = new THREE.MeshStandardMaterial({ color: 0xf4efe1, roughness: 0.54, metalness: 0.08 });
+  const net = new THREE.LineBasicMaterial({ color: 0xcfd8cf, transparent: true, opacity: 0.46 });
+  const postWidth = 0.12;
+  const halfWidth = FOOTBALL_GOAL_WIDTH * 0.5;
+  const postL = new THREE.Mesh(new THREE.BoxGeometry(postWidth, FOOTBALL_GOAL_HEIGHT, postWidth), white);
+  postL.position.set(-halfWidth, FOOTBALL_GOAL_HEIGHT * 0.5, 0);
+  const postR = postL.clone();
+  postR.position.x = halfWidth;
+  const crossbar = new THREE.Mesh(new THREE.BoxGeometry(FOOTBALL_GOAL_WIDTH + postWidth, postWidth, postWidth), white);
+  crossbar.position.set(0, FOOTBALL_GOAL_HEIGHT, 0);
+  const baseL = new THREE.Mesh(new THREE.BoxGeometry(postWidth, postWidth, FOOTBALL_GOAL_DEPTH), white);
+  baseL.position.set(-halfWidth, postWidth * 0.5, FOOTBALL_GOAL_DEPTH * 0.5);
+  const baseR = baseL.clone();
+  baseR.position.x = halfWidth;
+  const backBar = new THREE.Mesh(new THREE.BoxGeometry(FOOTBALL_GOAL_WIDTH, postWidth, postWidth), white);
+  backBar.position.set(0, postWidth * 0.5, FOOTBALL_GOAL_DEPTH);
+  const backTop = backBar.clone();
+  backTop.position.y = FOOTBALL_GOAL_HEIGHT;
+  group.add(postL, postR, crossbar, baseL, baseR, backBar, backTop);
+
+  for (const mesh of [postL, postR, crossbar, baseL, baseR, backBar, backTop]) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+  }
+
+  const netLines = new THREE.BufferGeometry();
+  const points: number[] = [];
+  for (let i = 0; i <= 6; i += 1) {
+    const x = THREE.MathUtils.lerp(-halfWidth, halfWidth, i / 6);
+    points.push(x, 0.12, FOOTBALL_GOAL_DEPTH, x, FOOTBALL_GOAL_HEIGHT, FOOTBALL_GOAL_DEPTH);
+  }
+  for (let i = 1; i <= 5; i += 1) {
+    const y = THREE.MathUtils.lerp(0.12, FOOTBALL_GOAL_HEIGHT, i / 5);
+    points.push(-halfWidth, y, FOOTBALL_GOAL_DEPTH, halfWidth, y, FOOTBALL_GOAL_DEPTH);
+  }
+  for (const x of [-halfWidth, halfWidth]) {
+    for (let i = 1; i <= 4; i += 1) {
+      const y = THREE.MathUtils.lerp(0.12, FOOTBALL_GOAL_HEIGHT, i / 4);
+      points.push(x, y, 0, x, y, FOOTBALL_GOAL_DEPTH);
+    }
+  }
+  netLines.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+  const netMesh = new THREE.LineSegments(netLines, net);
+  group.add(netMesh);
+
+  const faceSpawn = directionTowardNormal(normal, spawnNormal);
+  const yaw = faceSpawn.lengthSq() > 0.000001 ? headingFromForward(normal, faceSpawn) : 0;
+  placeObjectOnPlanetNormal(group, normal, 0.05, yaw);
+  return {
+    group,
+    normal,
+    goals: 0,
+    lastScoredAt: -Infinity,
+  };
+}
+
+function findSafeFootballGoalNormal(idealNormal: THREE.Vector3) {
+  const base = idealNormal.clone().normalize();
+  if (isSafeFootballGoalNormal(base)) return base;
+
+  let tangentA = new THREE.Vector3(0, 1, 0).cross(base);
+  if (tangentA.lengthSq() < 0.000001) tangentA = new THREE.Vector3(1, 0, 0).cross(base);
+  tangentA.normalize();
+  const tangentB = base.clone().cross(tangentA).normalize();
+  for (const angleDegrees of [8, 16, 24, 34, 46]) {
+    const angle = THREE.MathUtils.degToRad(angleDegrees);
+    for (let step = 0; step < 16; step += 1) {
+      const theta = (step / 16) * Math.PI * 2;
+      const candidate = base
+        .clone()
+        .multiplyScalar(Math.cos(angle))
+        .addScaledVector(tangentA, Math.cos(theta) * Math.sin(angle))
+        .addScaledVector(tangentB, Math.sin(theta) * Math.sin(angle))
+        .normalize();
+      if (isSafeFootballGoalNormal(candidate)) return candidate;
+    }
+  }
+  return base;
+}
+
+function isSafeFootballGoalNormal(candidate: THREE.Vector3) {
+  for (const collider of world.colliders) {
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = new THREE.Vector3();
+    if (collider.dynamicObject) collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
+    else planetNormal(collider.center.x, collider.center.y, colliderNormal);
+    if (surfaceDistanceBetween(candidate, colliderNormal) < collider.radius + FOOTBALL_GOAL_SAFE_MARGIN) return false;
+  }
+  return true;
+}
+
+function createFootballTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#f8f6ee";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = "rgba(32, 32, 32, 0.28)";
+    ctx.lineWidth = 3;
+    for (const v of [0.18, 0.34, 0.5, 0.66, 0.82]) {
+      ctx.beginPath();
+      ctx.moveTo(0, v * canvas.height);
+      ctx.bezierCurveTo(canvas.width * 0.25, (v + 0.035) * canvas.height, canvas.width * 0.75, (v - 0.035) * canvas.height, canvas.width, v * canvas.height);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 12; i += 1) {
+      const x = (i / 12) * canvas.width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.bezierCurveTo(x + 34, canvas.height * 0.24, x - 34, canvas.height * 0.76, x, canvas.height);
+      ctx.stroke();
+    }
+
+    const patches: Array<[number, number, number, number]> = [
+      [0.5, 0.5, 52, -Math.PI / 2],
+      [0.16, 0.24, 42, -0.4],
+      [0.37, 0.22, 42, 0.5],
+      [0.63, 0.22, 42, -0.5],
+      [0.84, 0.24, 42, 0.4],
+      [0.17, 0.76, 42, 0.4],
+      [0.38, 0.78, 42, -0.5],
+      [0.62, 0.78, 42, 0.5],
+      [0.83, 0.76, 42, -0.4],
+      [0.03, 0.5, 38, -Math.PI / 2],
+      [0.97, 0.5, 38, -Math.PI / 2],
+    ];
+    for (const [u, v, radius, rotation] of patches) drawFootballPentagon(ctx, u * canvas.width, v * canvas.height, radius, rotation);
+
+    ctx.strokeStyle = "rgba(12, 12, 12, 0.44)";
+    ctx.lineWidth = 2;
+    for (const [u, v, radius] of patches) {
+      drawFootballHexSeams(ctx, u * canvas.width, v * canvas.height, radius * 1.55);
+    }
+
+    const gradient = ctx.createRadialGradient(canvas.width * 0.42, canvas.height * 0.34, 20, canvas.width * 0.42, canvas.height * 0.34, canvas.width * 0.55);
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0.28)");
+    gradient.addColorStop(0.55, "rgba(255, 255, 255, 0)");
+    gradient.addColorStop(1, "rgba(80, 61, 45, 0.16)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  return texture;
+}
+
+function drawFootballPentagon(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, rotation: number) {
+  ctx.beginPath();
+  for (let i = 0; i < 5; i += 1) {
+    const angle = rotation + (i / 5) * Math.PI * 2;
+    const px = x + Math.cos(angle) * radius;
+    const py = y + Math.sin(angle) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#111111";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.72)";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+}
+
+function drawFootballHexSeams(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i += 1) {
+    const angle = Math.PI / 6 + (i / 6) * Math.PI * 2;
+    const px = x + Math.cos(angle) * radius;
+    const py = y + Math.sin(angle) * radius * 0.78;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
 function bindInput() {
+  applyLanguage();
+  languageToggle.addEventListener("click", toggleLanguage);
   updateTitleActionSelection();
   enterButton.addEventListener("click", startGame);
   enterButton.addEventListener("pointerdown", (event) => {
@@ -1293,7 +1998,7 @@ function openMap() {
 
 function updateMapButtonState() {
   mapToggle.setAttribute("aria-pressed", String(mapOpen));
-  mapToggle.setAttribute("aria-label", mapOpen ? "关闭基地地图" : "打开基地地图");
+  mapToggle.setAttribute("aria-label", mapOpen ? tr("map.close") : tr("map.open"));
 }
 
 function setMapExpanded(expanded: boolean) {
@@ -1417,7 +2122,7 @@ function updateScaleGunOverlay() {
   const visible = started && scaleGunAiming && hasScaleGun;
   scaleGunOverlay.classList.toggle("is-visible", visible);
   scaleGunOverlay.setAttribute("aria-hidden", String(!visible));
-  scaleGunTargetLabel.textContent = visible && scaleGunTarget ? scaleGunTarget.label : "未锁定目标";
+  scaleGunTargetLabel.textContent = visible && scaleGunTarget ? localizeLabel(scaleGunTarget.label) : tr("scale.noTarget");
 }
 
 function findScaleGunTarget(): ScaleGunTarget | null {
@@ -1718,6 +2423,7 @@ function animate() {
   updateSuitOxygen(delta);
   updateCamera(delta);
   updateRovers(world.rovers, elapsedTime, world.colliders);
+  updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
   updateCoinGroup(delta);
@@ -2155,8 +2861,211 @@ function updatePlayerContactShadow() {
   playerContactShadow.visible = started;
 }
 
+function updateFootball(delta: number) {
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
+    updateFootballVisual(football, 0);
+    rememberRoverPositions();
+    return;
+  }
+
+  applyPlayerFootballCollision();
+  applyRoverFootballCollisions(delta);
+  integrateFootballMotion(delta);
+  resolveFootballStaticCollisions();
+  checkFootballGoal();
+  updateFootballVisual(football, delta);
+}
+
+function applyPlayerFootballCollision() {
+  const distance = surfaceDistanceBetween(playerNormal, football.normal);
+  if (distance > FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS) return;
+
+  const away = tangentDirectionBetween(playerNormal, football.normal, football.normal);
+  if (away.lengthSq() < 0.000001) return;
+  const playerTowardBall = playerVelocity.dot(away);
+  const ballTowardPlayer = football.velocity.dot(away.clone().negate());
+  const cooldownActive = elapsedTime - football.lastPlayerKickAt < 0.18;
+  if (playerTowardBall <= 0.15 && ballTowardPlayer <= 0.15 && cooldownActive) return;
+
+  const movingKick = Math.max(playerTowardBall, 0);
+  const ballBounce = Math.max(ballTowardPlayer, 0) * 0.42;
+  const impulse = THREE.MathUtils.clamp(Math.max(movingKick * 1.08, ballBounce, movingKick > 0.15 ? 1.15 : 0), 0, FOOTBALL_MAX_SPEED);
+  if (impulse > 0) {
+    football.velocity.addScaledVector(away, impulse);
+    football.verticalVelocity = Math.max(
+      football.verticalVelocity,
+      FOOTBALL_KICK_VERTICAL_MIN + THREE.MathUtils.clamp(impulse * FOOTBALL_KICK_VERTICAL_SCALE, 0, 1.45)
+    );
+    football.altitude = Math.max(football.altitude, FOOTBALL_REST_ALTITUDE + 0.02);
+    football.lastPlayerKickAt = elapsedTime;
+  }
+  separateFootballFromNormal(playerNormal, FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS);
+}
+
+function applyRoverFootballCollisions(delta: number) {
+  const minDelta = Math.max(delta, 0.001);
+  for (const rover of world.rovers) {
+    const previous = roverPreviousPositions.get(rover);
+    const current = new THREE.Vector3();
+    rover.getWorldPosition(current);
+    roverPreviousPositions.set(rover, current.clone());
+    if (!previous) continue;
+
+    const roverNormal = current.clone().normalize();
+    const kind = rover.userData.kind;
+    const size = typeof rover.userData.size === "number" ? rover.userData.size : typeof rover.userData.botSize === "number" ? rover.userData.botSize : 1;
+    const colliderRadius = kind === "bot" ? 0.78 * size : kind === "cargo" ? 2.45 * size : 2.15 * size;
+    if (surfaceDistanceBetween(roverNormal, football.normal) > colliderRadius + FOOTBALL_RADIUS) continue;
+
+    const roverVelocity = current.sub(previous).multiplyScalar(1 / minDelta).projectOnPlane(roverNormal);
+    const away = tangentDirectionBetween(roverNormal, football.normal, football.normal);
+    if (away.lengthSq() < 0.000001) continue;
+    const objectPush = Math.max(roverVelocity.dot(away), 0);
+    const ballIntoObject = Math.max(football.velocity.dot(away.clone().negate()), 0);
+    const minimumPush = objectPush > 0.1 ? (kind === "bot" ? 0.65 : 1.6) : 0;
+    const impulse = THREE.MathUtils.clamp(Math.max(objectPush * (kind === "bot" ? 0.86 : 1.18), ballIntoObject * 0.5, minimumPush), 0, FOOTBALL_MAX_SPEED);
+    if (impulse > 0) {
+      football.velocity.addScaledVector(away, impulse);
+      football.verticalVelocity = Math.max(football.verticalVelocity, 0.28 + Math.min(1.8, impulse * (kind === "bot" ? 0.09 : 0.14)));
+      football.altitude = Math.max(football.altitude, FOOTBALL_REST_ALTITUDE + 0.015);
+    }
+    bounceFootballAwayFrom(away, FOOTBALL_DYNAMIC_RESTITUTION, roverVelocity);
+    separateFootballFromNormal(roverNormal, colliderRadius + FOOTBALL_RADIUS);
+  }
+}
+
+function integrateFootballMotion(delta: number) {
+  const airborne = football.altitude > FOOTBALL_REST_ALTITUDE + 0.01 || football.verticalVelocity > 0.001;
+  const drag = airborne ? FOOTBALL_AIR_DRAG : FOOTBALL_GROUND_FRICTION;
+  football.velocity.multiplyScalar(Math.exp(-drag * delta));
+  if (football.velocity.length() > FOOTBALL_MAX_SPEED) football.velocity.setLength(FOOTBALL_MAX_SPEED);
+  football.velocity.projectOnPlane(football.normal);
+
+  const distance = football.velocity.length() * delta;
+  if (distance > 0.0001) {
+    football.normal.addScaledVector(football.velocity.clone().normalize(), distance / Math.max(PLANET_RADIUS + football.altitude, 1)).normalize();
+    football.velocity.projectOnPlane(football.normal);
+  }
+
+  if (airborne) {
+    football.verticalVelocity -= MARS_GRAVITY * delta;
+    football.altitude += football.verticalVelocity * delta;
+    if (football.altitude <= FOOTBALL_REST_ALTITUDE) {
+      football.altitude = FOOTBALL_REST_ALTITUDE;
+      if (football.verticalVelocity < -0.85) {
+        football.verticalVelocity = Math.abs(football.verticalVelocity) * 0.26;
+        football.velocity.multiplyScalar(0.86);
+      } else {
+        football.verticalVelocity = 0;
+      }
+    }
+  }
+
+  if (football.velocity.lengthSq() < 0.0009) football.velocity.set(0, 0, 0);
+}
+
+function resolveFootballStaticCollisions() {
+  for (const collider of world.colliders) {
+    if (collider.dynamicObject) continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+    const minimumDistance = collider.radius + FOOTBALL_RADIUS;
+    if (surfaceDistanceBetween(colliderNormal, football.normal) >= minimumDistance) continue;
+    const away = tangentDirectionBetween(colliderNormal, football.normal, football.normal);
+    if (away.lengthSq() < 0.000001) continue;
+    bounceFootballAwayFrom(away, FOOTBALL_STATIC_RESTITUTION);
+    separateFootballFromNormal(colliderNormal, minimumDistance);
+  }
+}
+
+function bounceFootballAwayFrom(away: THREE.Vector3, restitution: number, extraVelocity = new THREE.Vector3()) {
+  const relativeVelocity = football.velocity.clone().sub(extraVelocity).projectOnPlane(football.normal);
+  const inward = relativeVelocity.dot(away);
+  if (inward < -0.05) {
+    football.velocity.addScaledVector(away, -(1 + restitution) * inward);
+  } else if (inward < 0.4) {
+    football.velocity.addScaledVector(away, 0.45);
+  }
+  football.velocity.projectOnPlane(football.normal);
+}
+
+function separateFootballFromNormal(obstacleNormal: THREE.Vector3, minimumDistance: number) {
+  const dot = THREE.MathUtils.clamp(football.normal.dot(obstacleNormal), -1, 1);
+  const currentDistance = Math.acos(dot) * PLANET_RADIUS;
+  if (currentDistance >= minimumDistance) return;
+  let away = football.normal.clone().addScaledVector(obstacleNormal, -dot);
+  if (away.lengthSq() < 0.000001) away = football.velocity.clone().projectOnPlane(obstacleNormal);
+  if (away.lengthSq() < 0.000001) away = new THREE.Vector3(1, 0, 0).projectOnPlane(obstacleNormal);
+  if (away.lengthSq() < 0.000001) away = new THREE.Vector3(0, 0, 1).projectOnPlane(obstacleNormal);
+  away.normalize();
+  const targetAngle = minimumDistance / PLANET_RADIUS;
+  football.normal.copy(obstacleNormal).multiplyScalar(Math.cos(targetAngle)).addScaledVector(away, Math.sin(targetAngle)).normalize();
+  football.velocity.projectOnPlane(football.normal);
+}
+
+function updateFootballVisual(state: FootballState, delta: number) {
+  const rollDistance = state.velocity.length() * delta;
+  if (rollDistance > 0.0001) {
+    const rollAxis = state.normal.clone().cross(state.velocity).normalize();
+    if (rollAxis.lengthSq() > 0.000001) state.ball.rotateOnWorldAxis(rollAxis, rollDistance / FOOTBALL_RADIUS);
+  }
+  state.group.position.copy(planetSurfacePointFromNormal(state.normal, state.altitude));
+  placeObjectOnPlanetNormal(state.shadow, state.normal, 0.046, 0);
+  state.shadow.rotateX(-Math.PI / 2);
+  const lift = THREE.MathUtils.clamp((state.altitude - FOOTBALL_REST_ALTITUDE) / 3.2, 0, 1);
+  state.shadow.scale.setScalar(THREE.MathUtils.lerp(1.0, 0.46, lift));
+  state.shadow.material.opacity = THREE.MathUtils.lerp(0.34, 0.1, lift);
+}
+
+function checkFootballGoal() {
+  if (elapsedTime - footballGoal.lastScoredAt < FOOTBALL_GOAL_COOLDOWN_SECONDS) return;
+  const local = footballGoal.group.worldToLocal(football.group.position.clone());
+  const insideWidth = Math.abs(local.x) <= FOOTBALL_GOAL_WIDTH * 0.5 + FOOTBALL_RADIUS * 0.55;
+  const insideHeight = local.y >= FOOTBALL_RADIUS * 0.35 && local.y <= FOOTBALL_GOAL_HEIGHT + FOOTBALL_RADIUS * 0.85;
+  const insideDepth = local.z >= -FOOTBALL_RADIUS * 0.7 && local.z <= FOOTBALL_GOAL_DEPTH + FOOTBALL_RADIUS;
+  if (!insideWidth || !insideHeight || !insideDepth) return;
+
+  footballGoal.goals += 1;
+  footballGoal.lastScoredAt = elapsedTime;
+  awardRepeatableScore(SCORE_FOOTBALL_GOAL, "火星足球进球");
+  showDialogue("火星足球", "进球！足球已回到出生点。", 2.4);
+  respawnFootball();
+}
+
+function respawnFootball() {
+  football.normal.copy(planetNormal(FOOTBALL_SPAWN_X, FOOTBALL_SPAWN_Z, new THREE.Vector3()));
+  football.velocity.set(0, 0, 0);
+  football.altitude = FOOTBALL_REST_ALTITUDE;
+  football.verticalVelocity = 0;
+  football.lastPlayerKickAt = elapsedTime + 0.35;
+  football.ball.quaternion.identity();
+  updateFootballVisual(football, 0);
+}
+
+function rememberRoverPositions() {
+  for (const rover of world.rovers) {
+    const position = new THREE.Vector3();
+    rover.getWorldPosition(position);
+    roverPreviousPositions.set(rover, position);
+  }
+}
+
+function surfaceDistanceBetween(a: THREE.Vector3, b: THREE.Vector3) {
+  return Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)) * PLANET_RADIUS;
+}
+
+function tangentDirectionBetween(from: THREE.Vector3, to: THREE.Vector3, tangentAt: THREE.Vector3) {
+  const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
+  return to.clone().multiplyScalar(dot).sub(from).projectOnPlane(tangentAt).normalize();
+}
+
+function directionTowardNormal(from: THREE.Vector3, to: THREE.Vector3) {
+  return to.clone().addScaledVector(from, -to.dot(from)).projectOnPlane(from).normalize();
+}
+
 function updateCamera(delta: number) {
   if (!started) {
+    cameraObstructionLift = 0;
     const distance = 230;
     const titleYaw = yaw;
     const target = new THREE.Vector3(0, 0, 0);
@@ -2174,6 +3083,7 @@ function updateCamera(delta: number) {
 
   const normal = playerNormal.clone();
   if (cameraDistance <= 0.9 || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
+    cameraObstructionLift = 0;
     const eye = player.position.clone().addScaledVector(normal, insideRocket ? 1.38 : 1.78);
     const lookForward = playerForward
       .clone()
@@ -2200,7 +3110,8 @@ function updateCamera(delta: number) {
 
   if (exitFrontCamera) {
     const exitDistance = player.position.distanceTo(exitFrontCamera.origin);
-    if (exitDistance >= exitFrontCamera.releaseDistance) {
+    const holdUntilElevatorLands = Boolean(ridingElevator && ridingElevator.target === "bottom");
+    if (exitDistance >= exitFrontCamera.releaseDistance && !holdUntilElevatorLands) {
       exitFrontCamera = null;
     } else {
       const distance = Math.max(cameraDistance, 8);
@@ -2225,12 +3136,62 @@ function updateCamera(delta: number) {
   const backDistance = Math.cos(activePitch) * distance * (1 - closeT * 0.92);
   const upDistance = Math.sin(activePitch) * distance + THREE.MathUtils.lerp(2.4, 0.03, closeT);
   const offset = cameraForward.multiplyScalar(-backDistance).addScaledVector(normal, upDistance);
-  const desired = target.clone().add(offset);
+  let desired = target.clone().add(offset);
+  const targetObstructionLift = getThirdPersonCameraObstructionLift(target, desired);
+  cameraObstructionLift = THREE.MathUtils.lerp(cameraObstructionLift, targetObstructionLift, 1 - Math.pow(0.0008, delta));
+  if (cameraObstructionLift > 0.01) desired = desired.addScaledVector(normal, cameraObstructionLift);
   camera.position.lerp(desired, 1 - Math.pow(0.00005, delta));
   camera.up.copy(normal);
   camera.lookAt(closeT > 0.85 ? target.clone().addScaledVector(cameraForward, 20) : target);
   playerRig.visual.visible = cameraDistance > 1.15;
   orbitYawOffset *= Math.pow(0.03, delta);
+}
+
+function getThirdPersonCameraObstructionLift(target: THREE.Vector3, desiredCameraPosition: THREE.Vector3) {
+  if (scaleGunAiming) return 0;
+
+  let lift = 0;
+  for (const collider of world.colliders) {
+    if (collider.enabled && !collider.enabled()) continue;
+    const obstruction = getColliderSightlineObstruction(collider, target, desiredCameraPosition);
+    if (obstruction <= 0) continue;
+    lift = Math.max(lift, THREE.MathUtils.clamp(2.6 + obstruction * 0.82, 3.2, CAMERA_OBSTRUCTION_MAX_LIFT));
+  }
+  return lift;
+}
+
+function getColliderSightlineObstruction(collider: CircleCollider, target: THREE.Vector3, desiredCameraPosition: THREE.Vector3) {
+  const colliderNormal = new THREE.Vector3();
+  if (collider.dynamicObject) {
+    collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
+  } else {
+    planetNormal(collider.center.x, collider.center.y, colliderNormal);
+  }
+
+  const center = colliderNormal.clone().multiplyScalar(PLANET_RADIUS);
+  const right = new THREE.Vector3(0, 1, 0).cross(colliderNormal);
+  if (right.lengthSq() < 0.000001) right.set(1, 0, 0).cross(colliderNormal);
+  right.normalize();
+  const forward = colliderNormal.clone().cross(right).normalize();
+  const targetLocal = new THREE.Vector2(target.clone().sub(center).dot(right), target.clone().sub(center).dot(forward));
+  const cameraLocal = new THREE.Vector2(
+    desiredCameraPosition.clone().sub(center).dot(right),
+    desiredCameraPosition.clone().sub(center).dot(forward)
+  );
+  const segment = cameraLocal.clone().sub(targetLocal);
+  const segmentLengthSq = segment.lengthSq();
+  if (segmentLengthSq < 0.000001) return 0;
+
+  const closestT = THREE.MathUtils.clamp(-targetLocal.dot(segment) / segmentLengthSq, 0, 1);
+  const closest = targetLocal.clone().add(segment.multiplyScalar(closestT));
+  const clearance = collider.radius + CAMERA_OBSTRUCTION_MARGIN;
+  const lateralDepth = clearance - closest.length();
+  if (lateralDepth <= 0) return 0;
+
+  const cameraHeight = desiredCameraPosition.clone().sub(center).dot(colliderNormal);
+  if (cameraHeight > CAMERA_OBSTRUCTION_MAX_LIFT + 2.2) return 0;
+  const endpointPenalty = closestT < 0.08 || closestT > 0.98 ? 0.45 : 1;
+  return lateralDepth * endpointPenalty;
 }
 
 function placePlayerOnPlanet() {
@@ -2451,6 +3412,7 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
     const dot = THREE.MathUtils.clamp(current.dot(colliderNormal), -1, 1);
     const distance = Math.acos(dot) * PLANET_RADIUS;
     if (distance < minDistance) {
+      awardColliderExploration(collider.label);
       let away = current.clone().addScaledVector(colliderNormal, -dot);
       if (away.lengthSq() < 0.000001) {
         const previousDot = THREE.MathUtils.clamp(previousNormal.dot(colliderNormal), -1, 1);
@@ -2515,6 +3477,9 @@ function updateMissionState() {
       activeExplorable = item;
     }
   }
+  if (activeExplorable && !hasExploredBuilding(activeExplorable.id)) {
+    awardBuildingExploration(activeExplorable);
+  }
   activeFufu = findActiveFufu();
   activeRobot = findActiveRobot();
   activeOxygenSupply = findActiveOxygenSupply();
@@ -2526,15 +3491,14 @@ function updateMissionState() {
 
 function buildInteractionActions() {
   const actions: InteractionAction[] = [];
-  if (activeElevator) actions.push({ id: "elevator", label: elevatorPrompt(activeElevator).replace(/^按 E /, "") });
-  if (activeHabitatDoor) actions.push({ id: "habitat", label: world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱" });
-  if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱" });
-  if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: activeInteractable.prompt.replace(/^按 E /, "") });
-  if (activeExplorable && activeExplorable !== activeInteractable && !hasExploredBuilding(activeExplorable.id)) actions.push({ id: "explore", label: `探索 ${activeExplorable.label}` });
-  if (activeFufu) actions.push({ id: "fufu", label: "安抚 福福" });
-  if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
-  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
-  if (pendingMotherCall) actions.push({ id: "motherCall", label: "接听 Mother 呼叫" });
+  if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
+  if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
+  if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
+  if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
+  if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
+  if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
+  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? localizeText(`${activeOxygenSupply} 氧气包已满`) : `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
+  if (pendingMotherCall) actions.push({ id: "motherCall", label: localizeText("接听 Mother 呼叫") });
   return prioritizeInteractionActions(actions).slice(0, 2);
 }
 
@@ -2554,7 +3518,6 @@ function interactionActionPriority(action: InteractionAction) {
     mission: 2,
     robot: 3,
     fufu: 3,
-    explore: 3,
     oxygenSupply: 4,
   };
   return priority[action.id];
@@ -2630,9 +3593,9 @@ function renderTouchInteractionChoice() {
     entryButton.type = "button";
     entryButton.dataset.openInteractions = "true";
     const actionCount = interactionActions.length;
-    const label = actionCount === 1 ? interactionActions[0].label : `${actionCount} 个可互动项`;
+    const label = actionCount === 1 ? interactionActions[0].label : tr("interaction.count", { count: actionCount });
     const title = document.createElement("strong");
-    title.textContent = "互动";
+    title.textContent = tr("interaction.title");
     const detail = document.createElement("span");
     detail.textContent = label;
     entryButton.append(title, detail);
@@ -2641,11 +3604,11 @@ function renderTouchInteractionChoice() {
     const header = document.createElement("div");
     header.className = "interaction-sheet-head";
     const title = document.createElement("span");
-    title.textContent = "选择互动";
+    title.textContent = tr("interaction.choose");
     const closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.dataset.closeInteractions = "true";
-    closeButton.textContent = "收起";
+    closeButton.textContent = tr("interaction.close");
     header.append(title, closeButton);
     interactionChoice.appendChild(header);
 
@@ -2734,11 +3697,6 @@ function executeSelectedInteraction() {
     const scene = pendingMotherCall;
     pendingMotherCall = null;
     openDialogueScene(scene);
-    return;
-  }
-  if (action.id === "explore" && activeExplorable) {
-    awardBuildingExploration(activeExplorable);
-    activeExplorable.completed = true;
     return;
   }
   if (action.id === "mission" && activeInteractable) {
@@ -3128,7 +4086,7 @@ function toggleElevator(elevator: ElevatorControl) {
   if (elevator.moving) return;
   const scale = new THREE.Vector3();
   elevator.car.getWorldScale(scale);
-  elevatorRideLocal.set(0, elevator.surfaceY + PLAYER_ALTITUDE / Math.max(scale.y, 0.001), 0);
+  elevatorRideLocal.set(0, getElevatorPlayerLocalY(elevator, scale), 0);
   ridingElevator = elevator;
   elevator.target = elevator.target === "top" ? "bottom" : "top";
   elevator.moving = true;
@@ -3322,7 +4280,7 @@ function alignPlayerWithElevator(elevator: ElevatorControl, localXDirection: 1 |
 function placePlayerOnElevator(elevator: ElevatorControl) {
   const scale = new THREE.Vector3();
   elevator.car.getWorldScale(scale);
-  elevatorRideLocal.y = elevator.surfaceY + PLAYER_ALTITUDE / Math.max(scale.y, 0.001);
+  elevatorRideLocal.y = getElevatorPlayerLocalY(elevator, scale);
   const worldPosition = elevator.car.localToWorld(elevatorRideLocal.clone());
   const up = new THREE.Vector3(0, 1, 0).transformDirection(elevator.car.matrixWorld).normalize();
   playerNormal.copy(up);
@@ -3339,9 +4297,36 @@ function placePlayerOnElevator(elevator: ElevatorControl) {
   }
 }
 
+function getElevatorPlayerLocalY(elevator: ElevatorControl, worldScale = new THREE.Vector3()) {
+  if (worldScale.lengthSq() === 0) elevator.car.getWorldScale(worldScale);
+  return getElevatorSurfaceLocalY(elevator) + (PLAYER_ALTITUDE + ELEVATOR_FOOT_CLEARANCE) / Math.max(worldScale.y, 0.001);
+}
+
+function getElevatorSurfaceLocalY(elevator: ElevatorControl) {
+  const surface = elevator.surfaceObject;
+  if (!surface) return elevator.surfaceY;
+  const mesh = surface as THREE.Mesh<THREE.BufferGeometry>;
+  const geometry = mesh.geometry;
+  if (!geometry) return elevator.surfaceY;
+  let localBox = elevatorSurfaceBoxes.get(surface);
+  if (!localBox) {
+    geometry.computeBoundingBox();
+    if (!geometry.boundingBox) return elevator.surfaceY;
+    localBox = geometry.boundingBox.clone();
+    elevatorSurfaceBoxes.set(surface, localBox);
+  }
+  surface.updateWorldMatrix(true, false);
+  elevator.car.updateWorldMatrix(true, false);
+  const top = new THREE.Vector3(0, localBox.max.y, 0);
+  surface.localToWorld(top);
+  elevator.car.worldToLocal(top);
+  return top.y;
+}
+
 function addLabel(landmark: Landmark): LabelAnchor {
   const element = document.createElement("div");
   element.className = "label";
+  element.dataset.labelSource = landmark.label;
   element.textContent = landmark.label;
   labelsRoot.appendChild(element);
   return { object: landmark.object, element, distance: landmark.labelDistance };
@@ -3388,7 +4373,7 @@ function updateMap() {
     ...world.landmarks.map((landmark) => {
       const type = mapTypeForLabel(landmark.label);
       return {
-        label: landmark.label,
+        label: localizeLabel(landmark.label),
         object: landmark.object,
         x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
         z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
@@ -3401,7 +4386,7 @@ function updateMap() {
       };
     }),
     ...world.unnumberedObjects.map((item) => ({
-      label: item.label ?? "未知物体",
+      label: localizeLabel(item.label ?? tr("map.unknownObject")),
       object: item.object,
       x: item.x,
       z: item.z,
@@ -3414,7 +4399,7 @@ function updateMap() {
     })),
     ...(showOxygenSupplyTargets
       ? oxygenSupplyPoints.map((point) => ({
-          label: point.label,
+          label: localizeLabel(point.label),
           object: null,
           x: point.x,
           z: point.z,
@@ -3430,7 +4415,7 @@ function updateMap() {
 
   if (currentCoinGroup && currentCoinGroup.coins.some((coin) => !coin.collected)) {
     mapItems.push({
-      label: "金币",
+      label: tr("map.coin"),
       object: null,
       x: currentCoinGroup.centerX,
       z: currentCoinGroup.centerZ,
@@ -3445,7 +4430,7 @@ function updateMap() {
 
   if (!fufuRescued) {
     mapItems.push({
-      label: "未知生命迹象",
+      label: tr("map.unknownLife"),
       object: fufu,
       x: world.fufuRescueSite.x,
       z: world.fufuRescueSite.z,
@@ -3630,12 +4615,12 @@ function renderDialogueNode() {
   const speaker = characters[node.speaker];
 
   dialogueLeftPortrait.src = leftCharacter.portrait;
-  dialogueLeftName.textContent = leftCharacter.name;
-  dialogueLeftCallsign.textContent = leftCharacter.callsign;
+  dialogueLeftName.textContent = localizeText(leftCharacter.name);
+  dialogueLeftCallsign.textContent = localizeText(leftCharacter.callsign);
 
   dialogueRightPortrait.src = rightCharacter.portrait;
-  dialogueRightName.textContent = rightCharacter.name;
-  dialogueRightCallsign.textContent = rightCharacter.callsign;
+  dialogueRightName.textContent = localizeText(rightCharacter.name);
+  dialogueRightCallsign.textContent = localizeText(rightCharacter.callsign);
 
   const leftIsSpeaking = node.speaker === "alex";
   dialogueLeftSlot.classList.toggle("is-speaking", leftIsSpeaking);
@@ -3647,11 +4632,11 @@ function renderDialogueNode() {
   dialogueRightTag.classList.toggle("is-speaking", !leftIsSpeaking);
   dialogueRightTag.classList.toggle("is-listening", leftIsSpeaking);
 
-  dialogueSpeaker.textContent = `${speaker.name} / ${speaker.callsign}`;
-  dialogueStats.textContent = `信任 ${dialogueState.motherTrust} · 基地 ${dialogueState.baseIntegrity} · 自主 ${dialogueState.humanAutonomy}`;
+  dialogueSpeaker.textContent = `${localizeText(speaker.name)} / ${localizeText(speaker.callsign)}`;
+  dialogueStats.textContent = `${localizeText("信任")} ${dialogueState.motherTrust} · ${localizeText("基地")} ${dialogueState.baseIntegrity} · ${localizeText("自主")} ${dialogueState.humanAutonomy}`;
   dialogueItemImage.hidden = !node.image;
   if (node.image) dialogueItemImage.src = node.image;
-  dialogueText.textContent = node.text;
+  dialogueText.textContent = localizeText(node.text);
   dialogueChoices.innerHTML = "";
 
   const choices = node.choices ?? [];
@@ -3662,7 +4647,7 @@ function renderDialogueNode() {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.choiceIndex = String(index);
-    button.textContent = choice.label;
+    button.textContent = localizeText(choice.label);
     button.classList.toggle("is-selected", index === selectedDialogueChoiceIndex);
     dialogueChoices.appendChild(button);
   }
@@ -3751,7 +4736,10 @@ function applyDialogueEffect(effect: DialogueEffect) {
 }
 
 function awardTaskScore(eventId: string, label: string, points = SCORE_MAIN_TASK) {
-  awardScore(`task:${eventId}`, points, label, "task");
+  if (awardScore(`task:${eventId}`, points, label, "task")) {
+    completedAnyTask = true;
+    updatePlayerRank();
+  }
 }
 
 function awardSideTaskScore(eventId: string, label: string) {
@@ -3777,14 +4765,29 @@ function applyScorePenalty(eventId: string, label: string, points = SCORE_FUNNY_
 }
 
 function awardScore(eventId: string, points: number, label: string, kind: "task" | "explore" | "funny" | "penalty") {
-  if (awardedEvents.has(eventId)) return;
+  if (awardedEvents.has(eventId)) return false;
   awardedEvents.add(eventId);
+  if (points === 0) return true;
+  scorePoints += points;
+  updateRewardReadouts();
+  updatePlayerRank();
+  pulseRewardReadout(scoreReadout, points < 0);
+  if (kind !== "explore") {
+    showRewardFloat(`${points > 0 ? "+" : ""}${points} 积分`, points < 0);
+    if (points > 0) playScoreRewardSound(kind === "task" ? 4 : 2);
+    else playPenaltySound();
+  }
+  return true;
+}
+
+function awardRepeatableScore(points: number, label: string) {
   if (points === 0) return;
   scorePoints += points;
   updateRewardReadouts();
+  updatePlayerRank();
   pulseRewardReadout(scoreReadout, points < 0);
-  showRewardFloat(`${points > 0 ? "+" : ""}${points} 积分`, points < 0);
-  if (points > 0) playScoreRewardSound(kind === "task" ? 4 : 2);
+  showRewardFloat(`${points > 0 ? "+" : ""}${points} 积分 · ${label}`, points < 0);
+  if (points > 0) playScoreRewardSound(3);
   else playPenaltySound();
 }
 
@@ -3796,8 +4799,46 @@ function awardCoins(amount: number) {
 }
 
 function updateRewardReadouts() {
-  coinReadout.textContent = `金币 ${coins}`;
-  scoreReadout.textContent = `积分 ${scorePoints}`;
+  coinReadout.textContent = `${tr("reward.coins")} ${coins}`;
+  scoreReadout.textContent = `${tr("reward.score")} ${scorePoints}`;
+}
+
+function updateRankReadout() {
+  rankReadout.textContent = tr(`rank.${currentRank}`);
+}
+
+function updatePlayerRank(silent = false) {
+  const nextRank = determinePlayerRank();
+  if (rankIndex(nextRank) <= rankIndex(currentRank)) {
+    updateRankReadout();
+    return;
+  }
+  currentRank = nextRank;
+  updateRankReadout();
+  if (silent || !started) return;
+  const rankLabel = tr(`rank.${currentRank}`);
+  showRewardFloat(tr("rank.promoted", { rank: rankLabel }), false);
+  pulseRewardReadout(rankReadout, false);
+  playScoreRewardSound(3);
+}
+
+function determinePlayerRank(): PlayerRankId {
+  if (isFirstResidentRankUnlocked()) return "firstResident";
+  let nextRank: PlayerRankId = "internPatrol";
+  for (const rule of rankRules) {
+    if (rule.storyOnly) continue;
+    if (rule.taskRequired && !(completedAnyTask || scorePoints >= rule.score)) continue;
+    if (scorePoints >= rule.score || rule.taskRequired && completedAnyTask) nextRank = rule.id;
+  }
+  return nextRank;
+}
+
+function isFirstResidentRankUnlocked() {
+  return missionStep === "complete" && dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4;
+}
+
+function rankIndex(rank: PlayerRankId) {
+  return rankRules.findIndex((rule) => rule.id === rank);
 }
 
 function pulseRewardReadout(element: HTMLElement, penalty: boolean) {
@@ -3832,6 +4873,27 @@ function hasExploredBuilding(id: Interactable["id"]) {
   return exploredBuildings.has(id);
 }
 
+function awardColliderExploration(colliderLabel: string) {
+  if (!canUseFlightMode()) return;
+  const rule = colliderExplorationRules.find((item) => colliderLabel.includes(item.match));
+  if (!rule) return;
+
+  if (rule.interactableId) {
+    const interactable = world.interactables.find((item) => item.id === rule.interactableId);
+    if (!interactable) return;
+    if (isExplorableBuilding(interactable)) {
+      awardBuildingExploration(interactable);
+      return;
+    }
+    awardExplorationScore(`facility:${interactable.id}`, interactable.label, SCORE_BUILDING_EXPLORE);
+    return;
+  }
+
+  if (rule.label) {
+    awardExplorationScore(`collider:${rule.key}`, rule.label, SCORE_BUILDING_EXPLORE);
+  }
+}
+
 function updateHiddenDiscoveries() {
   if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) return;
   const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number }> = [
@@ -3845,7 +4907,7 @@ function updateHiddenDiscoveries() {
       radius: item.label ? 18 : 34,
     });
   }
-  if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "未知生命迹象", object: fufu, radius: 13 });
+  if (!fufuRescued) targets.push({ id: "unknown:fufu", label: tr("map.unknownLife"), object: fufu, radius: 13 });
 
   for (const target of targets) {
     if (hiddenDiscoveries.has(target.id)) continue;
@@ -4113,12 +5175,15 @@ function resetQuestState() {
   elonDialogueIndex = 0;
   scorePoints = 0;
   coins = 0;
+  currentRank = "internPatrol";
+  completedAnyTask = false;
   awardedEvents.clear();
   exploredBuildings.clear();
   hiddenDiscoveries.clear();
   clearCoinGroup();
   nextCoinRefreshAt = elapsedTime;
   updateRewardReadouts();
+  updatePlayerRank(true);
   for (const item of world.interactables) item.completed = false;
   world.oxygenLight.color.set(0xff3d2f);
   world.solarLight.color.set(0xff3d2f);
@@ -4388,11 +5453,17 @@ function setCurrentMissionText() {
 }
 
 function setMission(text: string) {
-  missionText.textContent = text;
+  missionText.dataset.sourceText = text;
+  missionText.textContent = localizeText(text);
+}
+
+function updateMissionAfterLanguageChange() {
+  if (missionText.dataset.sourceText) missionText.textContent = localizeText(missionText.dataset.sourceText);
+  else setCurrentMissionText();
 }
 
 function showDialogue(speaker: string, text: string, seconds: number) {
-  dialogueBox.innerHTML = `<strong>${speaker}</strong><span>${text}</span>`;
+  dialogueBox.innerHTML = `<strong>${localizeText(speaker)}</strong><span>${localizeText(text)}</span>`;
   messageUntil = performance.now() + seconds * 1000;
 }
 
@@ -4415,7 +5486,7 @@ function updateReadouts() {
     powerReadout.textContent = `${Math.round(value)}%`;
   }
   if (onlineCountReadout) {
-    onlineCountReadout.textContent = `${multiplayer.onlineCount}人`;
+    onlineCountReadout.textContent = isEnglish() ? `${multiplayer.onlineCount} players` : `${multiplayer.onlineCount}人`;
   }
 }
 

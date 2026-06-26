@@ -97,6 +97,7 @@ export type MonolithSite = {
 
 export type ElevatorControl = {
   car: THREE.Object3D;
+  surfaceObject?: THREE.Object3D;
   rocketDoorPanel?: THREE.Object3D;
   rocketDoorPortal?: THREE.Object3D;
   rocketInterior?: THREE.Object3D;
@@ -184,8 +185,9 @@ export type Meteor = {
   wobbleAmount: number;
 };
 
-export const PLANET_RADIUS = 88;
-const LAYOUT_SPREAD = 2;
+export const WORLD_EXPANSION = 1.5;
+export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
+const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -214,6 +216,10 @@ let dustFogTexture: THREE.CanvasTexture | null = null;
 
 function spread(value: number) {
   return value * LAYOUT_SPREAD;
+}
+
+export function expandWorldCoordinate(value: number) {
+  return value * WORLD_EXPANSION;
 }
 
 function mat(color: number, roughness = 0.76, metalness = 0.08, emissive = 0x000000) {
@@ -302,8 +308,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   addLanderSite("02 飞船 货运飞船", spread(124.1), spread(0), -0.55, true);
   addLanderSite("03 飞船 返回飞船", spread(-62), spread(107.4), 0.94, true);
 
-  const monolithX = -360;
-  const monolithZ = -300;
+  const monolithX = expandWorldCoordinate(-360);
+  const monolithZ = expandWorldCoordinate(-300);
   const monolith = createBlackMonolith();
   placeObjectOnPlanet(monolith, monolithX, monolithZ, 0.05, -0.38);
   base.add(monolith);
@@ -372,7 +378,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   placeObjectOnPlanet(greenhouse, greenhouseX, greenhouseZ, -0.86, greenhouseYaw);
   base.add(greenhouse);
   landmarks.push(landmark("02 建筑 温室生态舱", greenhouse, greenhouseX, greenhouseZ, 46, 260));
-  addMaintenanceBot("02 机器人 温室维修工", greenhouseX, greenhouseZ, greenhouseYaw, -11.4, -6.8, "02 建筑 温室生态舱", "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。");
+  addMaintenanceBot("02 机器人 温室维修工", greenhouseX, greenhouseZ, greenhouseYaw, 0, -18.8, "02 建筑 温室生态舱", "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。");
   interactables.push({
     id: "greenhouse",
     label: "02 建筑 温室生态舱",
@@ -1142,6 +1148,7 @@ function createLander() {
   group.add(elevatorRoot);
   group.userData.elevator = {
     car: elevatorCar,
+    surfaceObject: carFloor,
     rocketDoorPanel: hatchDoorPanel,
     rocketDoorPortal: hatchPortal,
     rocketInterior,
@@ -2379,7 +2386,7 @@ function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: Circ
       if (collider.enabled && !collider.enabled()) continue;
       const away = point.clone().sub(collider.center);
       let distance = away.length();
-      const minDistance = collider.radius + 2.4;
+      const minDistance = collider.radius + 3.4;
       if (distance >= minDistance) continue;
       if (distance < 0.0001) {
         away.set(1, 0);
@@ -2395,7 +2402,7 @@ function isBotPointInsideFixedCollider(x: number, z: number, colliders: CircleCo
   for (const collider of colliders) {
     if (collider.dynamicObject || collider.radius < 1.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
-    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 1.8) return true;
+    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 2.8) return true;
   }
   return false;
 }
