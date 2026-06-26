@@ -19,7 +19,6 @@ type RemoteAvatar = {
   player: RemotePlayer;
   rig: PlayerRig;
   label: HTMLDivElement;
-  helmetLight: THREE.PointLight;
   targetPosition: THREE.Vector3;
   targetQuaternion: THREE.Quaternion;
   lastStateAt: number;
@@ -31,7 +30,6 @@ type LocalSnapshotInput = {
   quaternion: THREE.Quaternion;
   speed: number;
   flying: boolean;
-  lampOn: boolean;
   insideState: PlayerInsideState;
 };
 
@@ -121,13 +119,11 @@ export class MultiplayerClient {
       const remoteCanBeShown = remote.player.snapshot.insideState === "surface" || remote.player.snapshot.insideState === "elevator";
       const visible = localCanSeeRemote && remoteCanBeShown && remote.hasFreshState;
       remote.rig.group.visible = visible;
-      remote.helmetLight.visible = visible && remote.player.snapshot.lampOn;
       remote.label.classList.toggle("is-visible", visible && this.updateLabel(remote, local.position));
       if (!visible) continue;
 
       remote.rig.group.position.lerp(remote.targetPosition, 1 - Math.pow(0.0002, delta));
       remote.rig.group.quaternion.slerp(remote.targetQuaternion, 1 - Math.pow(0.00008, delta));
-      remote.helmetLight.position.copy(remote.rig.group.position).addScaledVector(remote.rig.group.position.clone().normalize(), 1.72);
       updateMarsEngineer(remote.rig, remote.player.snapshot.speed, elapsed, remote.player.snapshot.flying, remote.player.snapshot.flying);
     }
   }
@@ -231,9 +227,7 @@ export class MultiplayerClient {
 
     tintRemoteSuit(rig.visual, colorFromPlayerId(player.playerId));
 
-    const helmetLight = new THREE.PointLight(0xffd36c, 0.95, 6.5);
-    helmetLight.visible = false;
-    this.scene.add(rig.group, helmetLight);
+    this.scene.add(rig.group);
 
     const label = document.createElement("div");
     label.className = "label multiplayer-label";
@@ -244,7 +238,6 @@ export class MultiplayerClient {
       player,
       rig,
       label,
-      helmetLight,
       targetPosition: new THREE.Vector3().fromArray(player.snapshot.position),
       targetQuaternion: new THREE.Quaternion().fromArray(player.snapshot.quaternion),
       lastStateAt: performance.now() / 1000,
@@ -255,10 +248,9 @@ export class MultiplayerClient {
   private removeRemote(playerId: string) {
     const remote = this.remotes.get(playerId);
     if (!remote) return;
-    this.scene.remove(remote.rig.group, remote.helmetLight);
+    this.scene.remove(remote.rig.group);
     remote.label.remove();
     disposeObject(remote.rig.group);
-    remote.helmetLight.dispose();
     this.remotes.delete(playerId);
   }
 
@@ -285,7 +277,6 @@ function toSnapshot(local: LocalSnapshotInput): PlayerSnapshot {
     quaternion: local.quaternion.toArray() as [number, number, number, number],
     speed: Number(local.speed.toFixed(3)),
     flying: local.flying,
-    lampOn: local.lampOn,
     insideState: local.insideState,
   };
 }
