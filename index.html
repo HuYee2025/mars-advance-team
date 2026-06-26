@@ -11,78 +11,79 @@
     <title>火星先遣队 第一位人类</title>
   </head>
   <body>
-    <main id="app" aria-label="火星先遣队 3D Demo">
+    <main id="app" aria-label="火星先遣队 3D Demo" data-i18n-attr="aria-label:app.aria">
       <div id="scene-root"></div>
-      <section id="title-screen" aria-label="进入火星基地">
+      <button id="language-toggle" type="button" aria-label="Switch language">English</button>
+      <section id="title-screen" aria-label="进入火星基地" data-i18n-attr="aria-label:title.aria">
         <div class="title-copy">
-          <p class="eyebrow">2050 年 / 第 30 火星日</p>
+          <p class="eyebrow" data-i18n="title.eyebrow">2050 年 / 第 30 火星日</p>
           <h1>
-            <span>火星先遣队</span>
-            <span>第一位人类</span>
+            <span data-i18n="title.name">火星先遣队</span>
+            <span data-i18n="title.subtitle">第一位人类</span>
           </h1>
-          <p class="title-text">终于，火星基地迎来了第一位人类居民。</p>
+          <p class="title-text" data-i18n="title.text">终于，火星基地迎来了第一位人类居民。</p>
           <div class="title-actions">
-            <button id="enter-base" class="title-action title-action-primary" type="button">进入基地</button>
-            <button id="story-summary" class="title-action title-action-secondary" type="button">故事概要</button>
+            <button id="enter-base" class="title-action title-action-primary" type="button" data-i18n="title.enter">进入基地</button>
+            <button id="story-summary" class="title-action title-action-secondary" type="button" data-i18n="title.story">故事概要</button>
           </div>
         </div>
       </section>
-      <section class="hud" aria-label="基地状态">
+      <section class="hud" aria-label="基地状态" data-i18n-attr="aria-label:hud.aria">
         <div class="hud-title">
           <p class="eyebrow">MARS ADVANCE TEAM</p>
-          <h1>火星先遣队</h1>
+          <h1 data-i18n="title.name">火星先遣队</h1>
         </div>
         <div class="status-grid">
-          <section class="status-group" aria-label="基地指标">
-            <h2>基地</h2>
+          <section class="status-group" aria-label="基地指标" data-i18n-attr="aria-label:hud.baseAria">
+            <h2 data-i18n="hud.base">基地</h2>
             <dl>
               <div>
-                <dt>制氧量</dt>
+                <dt data-i18n="hud.oxygenProduction">制氧量</dt>
                 <dd id="oxygen-readout">72%</dd>
               </div>
               <div>
-                <dt>能量</dt>
+                <dt data-i18n="hud.power">能量</dt>
                 <dd id="power-readout">89%</dd>
               </div>
               <div>
-                <dt>机器人</dt>
+                <dt data-i18n="hud.robots">机器人</dt>
                 <dd>15</dd>
               </div>
               <div>
-                <dt>在线人数</dt>
+                <dt data-i18n="hud.online">在线人数</dt>
                 <dd id="online-count-readout">1人</dd>
               </div>
             </dl>
           </section>
-          <section class="status-group" aria-label="人员指标">
-            <h2>人员</h2>
+          <section class="status-group" aria-label="人员指标" data-i18n-attr="aria-label:hud.peopleAria">
+            <h2 data-i18n="hud.people">人员</h2>
             <dl>
               <div>
                 <dt>Alex</dt>
-                <dd>巡航员</dd>
+                <dd id="rank-readout">实习巡航员</dd>
               </div>
               <div>
-                <dt>氧气</dt>
+                <dt data-i18n="hud.suitOxygen">氧气</dt>
                 <dd id="suit-oxygen-readout">100%</dd>
               </div>
               <div>
-                <dt>体能</dt>
+                <dt data-i18n="hud.stamina">体能</dt>
                 <dd id="stamina-readout">100%</dd>
               </div>
             </dl>
           </section>
         </div>
       </section>
-      <div class="hud-buttons" aria-label="界面显示控制">
-        <button id="hud-toggle" type="button" aria-label="隐藏界面信息" aria-pressed="false">V</button>
+      <div class="hud-buttons" aria-label="界面显示控制" data-i18n-attr="aria-label:hudButtons.aria">
+        <button id="hud-toggle" type="button" aria-label="隐藏界面信息" aria-pressed="false" data-i18n-attr="aria-label:hudToggle.hide">V</button>
         <div id="reward-readout" aria-live="polite">
           <span id="coin-readout">金币 0</span>
           <span id="score-readout">积分 0</span>
         </div>
-        <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false">F</button>
+        <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false" data-i18n-attr="aria-label:map.open">F</button>
       </div>
-      <section id="mission-banner" aria-label="当前任务">
-        <span>当前任务</span>
+      <section id="mission-banner" aria-label="当前任务" data-i18n-attr="aria-label:mission.aria">
+        <span data-i18n="mission.current">当前任务</span>
         <p id="mission-text"></p>
       </section>
       <div id="labels" aria-hidden="true"></div>
@@ -111,11 +112,11 @@
         </div>
         <div class="scale-readout">
           <strong id="scale-gun-target">未锁定目标</strong>
-          <span>WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）</span>
+          <span data-i18n="scale.instructions">WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）</span>
         </div>
         <div class="scale-actions">
-          <button id="scale-gun-shrink" type="button">缩小</button>
-          <button id="scale-gun-grow" type="button">放大</button>
+          <button id="scale-gun-shrink" type="button" data-i18n="scale.shrink">缩小</button>
+          <button id="scale-gun-grow" type="button" data-i18n="scale.grow">放大</button>
         </div>
       </section>
       <div id="dialogue-box" aria-live="polite"></div>
@@ -143,17 +144,17 @@
           <img id="dialogue-item-image" alt="" hidden />
           <p id="dialogue-text"></p>
           <div id="dialogue-choices" class="dialogue-choices"></div>
-          <button id="dialogue-continue" type="button">继续</button>
+          <button id="dialogue-continue" type="button" data-i18n="dialogue.continue">继续</button>
         </div>
       </section>
       <section id="exit-confirm" aria-label="退出游戏确认" aria-hidden="true">
         <div class="exit-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title">
           <p class="exit-confirm-kicker">SYSTEM</p>
-          <h2 id="exit-confirm-title">要退出当前游戏吗？</h2>
-          <p class="exit-confirm-text">退出会返回主页，当前巡检进度不会保留。</p>
+          <h2 id="exit-confirm-title" data-i18n="exit.title">要退出当前游戏吗？</h2>
+          <p class="exit-confirm-text" data-i18n="exit.text">退出会返回主页，当前巡检进度不会保留。</p>
           <div class="exit-confirm-actions">
-            <button id="exit-resume" class="exit-confirm-action is-selected" type="button">返回游戏</button>
-            <button id="exit-title" class="exit-confirm-action" type="button">退出游戏</button>
+            <button id="exit-resume" class="exit-confirm-action is-selected" type="button" data-i18n="exit.resume">返回游戏</button>
+            <button id="exit-title" class="exit-confirm-action" type="button" data-i18n="exit.quit">退出游戏</button>
           </div>
         </div>
       </section>
