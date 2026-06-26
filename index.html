@@ -48,6 +48,10 @@
                 <dt>机器人</dt>
                 <dd>15</dd>
               </div>
+              <div>
+                <dt>在线人数</dt>
+                <dd id="online-count-readout">1人</dd>
+              </div>
             </dl>
           </section>
           <section class="status-group" aria-label="人员指标">
@@ -56,10 +60,6 @@
               <div>
                 <dt>Alex</dt>
                 <dd>巡航员</dd>
-              </div>
-              <div>
-                <dt>在线人数</dt>
-                <dd id="online-count-readout">1人</dd>
               </div>
               <div>
                 <dt>氧气</dt>
@@ -75,6 +75,10 @@
       </section>
       <div class="hud-buttons" aria-label="界面显示控制">
         <button id="hud-toggle" type="button" aria-label="隐藏界面信息" aria-pressed="false">V</button>
+        <div id="reward-readout" aria-live="polite">
+          <span id="coin-readout">金币 0</span>
+          <span id="score-readout">积分 0</span>
+        </div>
         <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false">F</button>
       </div>
       <section id="mission-banner" aria-label="当前任务">

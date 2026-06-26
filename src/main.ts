@@ -39,7 +39,7 @@ type LabelAnchor = {
 };
 
 type InteractionAction = {
-  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission";
+  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "explore";
   label: string;
 };
 
@@ -56,6 +56,8 @@ const storySummaryButton = must<HTMLButtonElement>("#story-summary");
 const titleActionButtons = [enterButton, storySummaryButton] as const;
 const hudToggle = must<HTMLButtonElement>("#hud-toggle");
 const mapToggle = must<HTMLButtonElement>("#map-toggle");
+const coinReadout = must<HTMLElement>("#coin-readout");
+const scoreReadout = must<HTMLElement>("#score-readout");
 const missionText = must<HTMLDivElement>("#mission-text");
 const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
@@ -186,6 +188,17 @@ const STAMINA_MOVE_DRAIN_PER_SECOND = 0.18;
 const STAMINA_JUMP_COST = 4;
 const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_JUMP_COST;
 const STAMINA_LOW_THRESHOLD = 20;
+const SCORE_MAIN_TASK = 100;
+const SCORE_SIDE_TASK = 40;
+const SCORE_BUILDING_EXPLORE = 10;
+const SCORE_HIDDEN_DISCOVERY = 30;
+const SCORE_ALL_BUILDINGS_EXPLORED = 100;
+const SCORE_FUNNY_DEFAULT = 10;
+const SCORE_FUNNY_PENALTY = -10;
+const COIN_GROUP_SIZE = 5;
+const COIN_REFRESH_SECONDS = 4 * 60 * 60;
+const COIN_COLLECT_RADIUS = 1.45;
+const COIN_SAFE_MARGIN = 3.2;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
@@ -209,6 +222,20 @@ type ScaleGunTarget = {
 type ScaleGunEffect = {
   baseScale: THREE.Vector3;
   factor: number;
+  expiresAt: number;
+};
+
+type CoinPickup = {
+  group: THREE.Group;
+  normal: THREE.Vector3;
+  collected: boolean;
+};
+
+type CoinGroup = {
+  coins: CoinPickup[];
+  centerNormal: THREE.Vector3;
+  centerX: number;
+  centerZ: number;
   expiresAt: number;
 };
 
@@ -284,6 +311,18 @@ const oxygenSupplyPoints = [
   { label: "登陆飞船补给舱", x: 59, z: 21.4, radius: 14, mapRange: 240 },
 ];
 
+const explorableBuildingIds = new Set<Interactable["id"]>([
+  "habitatCheck",
+  "greenhouse",
+  "oxygen",
+  "methane",
+  "garage",
+  "tower",
+  "lab",
+  "storehouse",
+  "medical",
+]);
+
 const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_mother_1", "elon_fufu_1", "elon_robots_1"];
 
 let yaw = Math.PI * 0.15;
@@ -298,11 +337,14 @@ let lastFrameTime = performance.now();
 let elapsedTime = 0;
 let started = false;
 let activeInteractable: Interactable | null = null;
+let activeExplorable: Interactable | null = null;
 let activeElevator: ElevatorControl | null = null;
 let activeHabitatDoor: HabitatDoorControl | null = null;
 let ridingElevator: ElevatorControl | null = null;
 let missionStep: MainMissionStep = "intro";
 let messageUntil = 0;
+let scorePoints = 0;
+let coins = 0;
 let hudCollapsed = false;
 let mapOpen = false;
 let mapExpanded = false;
@@ -360,6 +402,11 @@ let selectedInteractionIndex = 0;
 let interactionChoiceOpen = false;
 let interactionChoiceSignature = "";
 let selectedDialogueChoiceIndex = 0;
+let currentCoinGroup: CoinGroup | null = null;
+let nextCoinRefreshAt = 0;
+const awardedEvents = new Set<string>();
+const exploredBuildings = new Set<Interactable["id"]>();
+const hiddenDiscoveries = new Set<string>();
 const dialogueState = {
   motherTrust: 0,
   baseIntegrity: 0,
@@ -1427,6 +1474,7 @@ function fireScaleGun(mode: "shrink" | "grow") {
   scaleGunTarget.object.scale.copy(effect.baseScale).multiplyScalar(nextFactor);
   showDialogue("缩放枪", `${scaleGunTarget.label} ${mode === "grow" ? "放大" : "缩小"}到 ${nextFactor.toFixed(2)}x，60 秒后恢复。`, 2.2);
   playUiBeep();
+  if (scaleGunTarget.label === "太阳") awardFunnyScore(`scale_sun_${mode}`, mode === "grow" ? "放大太阳" : "缩小太阳");
 }
 
 function getScaleGunEffect(object: THREE.Object3D) {
@@ -1671,6 +1719,8 @@ function animate() {
   updateRovers(world.rovers, elapsedTime, world.colliders);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
+  updateCoinGroup(delta);
+  updateHiddenDiscoveries();
   updateHabitatOccupancy();
   updateLabels();
   updateMap();
@@ -2422,6 +2472,7 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 function updateMissionState() {
   if (dialogueOpen) {
     activeInteractable = null;
+    activeExplorable = null;
     activeElevator = null;
     activeHabitatDoor = null;
     activeGreenhouseDoor = null;
@@ -2440,6 +2491,7 @@ function updateMissionState() {
     return;
   }
   activeInteractable = null;
+  activeExplorable = null;
   activeElevator = findActiveElevator();
   activeHabitatDoor = findActiveHabitatDoor();
   activeGreenhouseDoor = findActiveGreenhouseDoor();
@@ -2447,6 +2499,7 @@ function updateMissionState() {
   activeFufu = false;
   activeOxygenSupply = null;
   let bestDistance = Infinity;
+  let bestExploreDistance = Infinity;
   for (const item of world.interactables) {
     const pos = new THREE.Vector3();
     item.object.getWorldPosition(pos);
@@ -2455,6 +2508,10 @@ function updateMissionState() {
     if (matchesMission && distance < item.radius && distance < bestDistance) {
       bestDistance = distance;
       activeInteractable = item;
+    }
+    if (isExplorableBuilding(item) && distance < item.radius && distance < bestExploreDistance) {
+      bestExploreDistance = distance;
+      activeExplorable = item;
     }
   }
   activeFufu = findActiveFufu();
@@ -2472,6 +2529,7 @@ function buildInteractionActions() {
   if (activeHabitatDoor) actions.push({ id: "habitat", label: world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱" });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱" });
   if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: activeInteractable.prompt.replace(/^按 E /, "") });
+  if (activeExplorable && activeExplorable !== activeInteractable && !hasExploredBuilding(activeExplorable.id)) actions.push({ id: "explore", label: `探索 ${activeExplorable.label}` });
   if (activeFufu) actions.push({ id: "fufu", label: "安抚 福福" });
   if (activeRobot) actions.push({ id: "robot", label: "与维修机器人通话" });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? `${activeOxygenSupply} 氧气包已满` : `更换氧气背包（${activeOxygenSupply}）` });
@@ -2495,6 +2553,7 @@ function interactionActionPriority(action: InteractionAction) {
     mission: 2,
     robot: 3,
     fufu: 3,
+    explore: 3,
     oxygenSupply: 4,
   };
   return priority[action.id];
@@ -2676,6 +2735,11 @@ function executeSelectedInteraction() {
     openDialogueScene(scene);
     return;
   }
+  if (action.id === "explore" && activeExplorable) {
+    awardBuildingExploration(activeExplorable);
+    activeExplorable.completed = true;
+    return;
+  }
   if (action.id === "mission" && activeInteractable) {
     interactMission(activeInteractable);
   }
@@ -2718,6 +2782,7 @@ function openRobotBriefing(robot: THREE.Group) {
 }
 
 function interactMission(interactable: Interactable) {
+  awardBuildingExploration(interactable);
   if (interactable.id === "monolith") {
     openDialogueScene("monolith");
   } else if (isElonSideQuestTarget(interactable.id)) {
@@ -3331,6 +3396,7 @@ function updateMap() {
         unknown: type === "unknown",
         missionTarget: isMissionTargetLabel(landmark.label),
         oxygenSupplyTarget: false,
+        coinTarget: false,
       };
     }),
     ...world.unnumberedObjects.map((item) => ({
@@ -3343,6 +3409,7 @@ function updateMap() {
       unknown: true,
       missionTarget: false,
       oxygenSupplyTarget: false,
+      coinTarget: false,
     })),
     ...(showOxygenSupplyTargets
       ? oxygenSupplyPoints.map((point) => ({
@@ -3355,9 +3422,25 @@ function updateMap() {
           unknown: false,
           missionTarget: false,
           oxygenSupplyTarget: true,
+          coinTarget: false,
         }))
       : []),
   ];
+
+  if (currentCoinGroup && currentCoinGroup.coins.some((coin) => !coin.collected)) {
+    mapItems.push({
+      label: "金币",
+      object: null,
+      x: currentCoinGroup.centerX,
+      z: currentCoinGroup.centerZ,
+      mapRange: PLANET_RADIUS * Math.PI,
+      type: "coin",
+      unknown: false,
+      missionTarget: false,
+      oxygenSupplyTarget: false,
+      coinTarget: true,
+    });
+  }
 
   if (!fufuRescued) {
     mapItems.push({
@@ -3370,6 +3453,7 @@ function updateMap() {
       unknown: true,
       missionTarget: false,
       oxygenSupplyTarget: false,
+      coinTarget: false,
     });
   }
 
@@ -3386,8 +3470,14 @@ function updateMap() {
       const forward = tangent.dot(playerForward);
       return { item, distance, lateral, forward };
     })
-    .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
-    .sort((a, b) => Number(b.item.missionTarget) - Number(a.item.missionTarget) || Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) || a.distance - b.distance)
+    .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.item.coinTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
+    .sort(
+      (a, b) =>
+        Number(b.item.missionTarget) - Number(a.item.missionTarget) ||
+        Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) ||
+        Number(b.item.coinTarget) - Number(a.item.coinTarget) ||
+        a.distance - b.distance
+    )
     .slice(0, mapExpanded ? 80 : 24);
 
   nearby.forEach((entry, index) => {
@@ -3643,6 +3733,8 @@ function applyDialogueEffects(choice: DialogueChoice) {
   for (const effect of choice.effects ?? []) {
     applyDialogueEffect(effect);
   }
+  if (choice.next === "oxygen_fast") applyScorePenalty("funny_oxygen_fast_restart", "压缩机暴躁重启");
+  if (choice.next === "solar_comms") applyScorePenalty("funny_solar_comms_priority", "氧气站余量被借走");
 }
 
 function applyDialogueEffect(effect: DialogueEffect) {
@@ -3657,6 +3749,359 @@ function applyDialogueEffect(effect: DialogueEffect) {
   if (effect === "acquireScaleGun") setScaleGunOwned(true);
 }
 
+function awardTaskScore(eventId: string, label: string, points = SCORE_MAIN_TASK) {
+  awardScore(`task:${eventId}`, points, label, "task");
+}
+
+function awardSideTaskScore(eventId: string, label: string) {
+  awardTaskScore(eventId, label, SCORE_SIDE_TASK);
+}
+
+function awardExplorationScore(eventId: string, label: string, points = SCORE_BUILDING_EXPLORE) {
+  awardScore(`explore:${eventId}`, points, label, "explore");
+}
+
+function awardHiddenDiscovery(eventId: string, label: string) {
+  if (hiddenDiscoveries.has(eventId)) return;
+  hiddenDiscoveries.add(eventId);
+  awardExplorationScore(`hidden:${eventId}`, `发现 ${label}`, SCORE_HIDDEN_DISCOVERY);
+}
+
+function awardFunnyScore(eventId: string, label: string, points = SCORE_FUNNY_DEFAULT) {
+  awardScore(`funny:${eventId}`, points, label, "funny");
+}
+
+function applyScorePenalty(eventId: string, label: string, points = SCORE_FUNNY_PENALTY) {
+  awardScore(`penalty:${eventId}`, points, label, "penalty");
+}
+
+function awardScore(eventId: string, points: number, label: string, kind: "task" | "explore" | "funny" | "penalty") {
+  if (awardedEvents.has(eventId)) return;
+  awardedEvents.add(eventId);
+  if (points === 0) return;
+  scorePoints += points;
+  updateRewardReadouts();
+  pulseRewardReadout(scoreReadout, points < 0);
+  showRewardFloat(`${points > 0 ? "+" : ""}${points} 积分`, points < 0);
+  if (points > 0) playScoreRewardSound(kind === "task" ? 4 : 2);
+  else playPenaltySound();
+}
+
+function awardCoins(amount: number) {
+  if (amount <= 0) return;
+  coins += amount;
+  updateRewardReadouts();
+  pulseRewardReadout(coinReadout, false);
+}
+
+function updateRewardReadouts() {
+  coinReadout.textContent = `金币 ${coins}`;
+  scoreReadout.textContent = `积分 ${scorePoints}`;
+}
+
+function pulseRewardReadout(element: HTMLElement, penalty: boolean) {
+  element.classList.remove("is-burst", "is-penalty");
+  void element.offsetWidth;
+  element.classList.add(penalty ? "is-penalty" : "is-burst");
+}
+
+function showRewardFloat(text: string, penalty: boolean) {
+  const node = document.createElement("div");
+  node.className = `reward-float${penalty ? " is-penalty" : ""}`;
+  node.textContent = text;
+  document.body.appendChild(node);
+  window.setTimeout(() => node.remove(), 1050);
+}
+
+function awardBuildingExploration(interactable: Interactable) {
+  if (!isExplorableBuilding(interactable)) return;
+  if (hasExploredBuilding(interactable.id)) return;
+  exploredBuildings.add(interactable.id);
+  awardExplorationScore(`building:${interactable.id}`, interactable.label, SCORE_BUILDING_EXPLORE);
+  if (exploredBuildings.size >= explorableBuildingIds.size) {
+    awardExplorationScore("building:all", "全部建筑探索完成", SCORE_ALL_BUILDINGS_EXPLORED);
+  }
+}
+
+function isExplorableBuilding(interactable: Interactable) {
+  return explorableBuildingIds.has(interactable.id);
+}
+
+function hasExploredBuilding(id: Interactable["id"]) {
+  return exploredBuildings.has(id);
+}
+
+function updateHiddenDiscoveries() {
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) return;
+  const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number }> = [
+    { id: "monolith", label: "黑色方碑", object: world.monolith.object, radius: 22 },
+  ];
+  for (const [index, item] of world.unnumberedObjects.entries()) {
+    targets.push({
+      id: item.label ? `unknown:${item.label}` : `unknown:wreck:${index}`,
+      label: item.label ?? "坠毁飞船残骸",
+      object: item.object,
+      radius: item.label ? 18 : 34,
+    });
+  }
+  if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "未知生命迹象", object: fufu, radius: 13 });
+
+  for (const target of targets) {
+    if (hiddenDiscoveries.has(target.id)) continue;
+    const position = new THREE.Vector3();
+    target.object.getWorldPosition(position);
+    if (position.distanceTo(player.position) <= target.radius) awardHiddenDiscovery(target.id, target.label);
+  }
+}
+
+function updateCoinGroup(delta: number) {
+  if (!started) return;
+  if (!currentCoinGroup) {
+    if (elapsedTime >= nextCoinRefreshAt) spawnCoinGroup();
+    return;
+  }
+  if (elapsedTime >= currentCoinGroup.expiresAt) {
+    clearCoinGroup();
+    spawnCoinGroup();
+    return;
+  }
+
+  for (const coin of currentCoinGroup.coins) {
+    if (coin.collected) continue;
+    coin.group.rotateY(delta * 2.6);
+    if (coin.group.position.distanceTo(player.position) <= COIN_COLLECT_RADIUS) collectCoin(coin);
+  }
+}
+
+function spawnCoinGroup() {
+  clearCoinGroup();
+  const group = createSafeCoinGroup();
+  if (!group) {
+    nextCoinRefreshAt = elapsedTime + 60;
+    return;
+  }
+  currentCoinGroup = group;
+  nextCoinRefreshAt = group.expiresAt;
+}
+
+function createSafeCoinGroup(): CoinGroup | null {
+  for (let attempt = 0; attempt < 140; attempt += 1) {
+    const centerNormal = randomCoinSurfaceNormal();
+    const center = mapCoordinatesFromNormal(centerNormal);
+    if (!isSafeCoinNormal(centerNormal, COIN_SAFE_MARGIN + 2.6)) continue;
+
+    const tangentA = new THREE.Vector3(-centerNormal.z, 0, centerNormal.x);
+    if (tangentA.lengthSq() < 0.0001) tangentA.set(1, 0, 0);
+    tangentA.normalize();
+    const tangentB = tangentA.clone().cross(centerNormal).normalize();
+    const coinsForGroup: CoinPickup[] = [];
+    let safe = true;
+
+    for (let index = 0; index < COIN_GROUP_SIZE; index += 1) {
+      const angle = (index / COIN_GROUP_SIZE) * Math.PI * 2 + Math.random() * 0.18;
+      const radius = 1.55 + Math.random() * 1.2;
+      const coinNormal = centerNormal
+        .clone()
+        .addScaledVector(tangentA, Math.cos(angle) * radius / PLANET_RADIUS)
+        .addScaledVector(tangentB, Math.sin(angle) * radius / PLANET_RADIUS)
+        .normalize();
+      if (!isSafeCoinNormal(coinNormal, COIN_SAFE_MARGIN)) {
+        safe = false;
+        break;
+      }
+      const coin = createCoinPickup(coinNormal, angle);
+      coinsForGroup.push(coin);
+    }
+
+    if (!safe) {
+      for (const coin of coinsForGroup) scene.remove(coin.group);
+      continue;
+    }
+
+    return {
+      coins: coinsForGroup,
+      centerNormal,
+      centerX: center.x,
+      centerZ: center.z,
+      expiresAt: elapsedTime + COIN_REFRESH_SECONDS,
+    };
+  }
+  return null;
+}
+
+function randomCoinSurfaceNormal() {
+  const y = THREE.MathUtils.randFloat(0.22, 0.98);
+  const radial = Math.sqrt(Math.max(0, 1 - y * y));
+  const angle = Math.random() * Math.PI * 2;
+  return new THREE.Vector3(Math.cos(angle) * radial, y, Math.sin(angle) * radial).normalize();
+}
+
+function createCoinPickup(normal: THREE.Vector3, yaw: number): CoinPickup {
+  const group = createCoinVisual();
+  placeObjectOnPlanetNormal(group, normal, 0.82, yaw);
+  scene.add(group);
+  return { group, normal: normal.clone(), collected: false };
+}
+
+function createCoinVisual() {
+  const group = new THREE.Group();
+  const coinMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffd84f,
+    roughness: 0.28,
+    metalness: 0.78,
+    emissive: 0x8a4e00,
+    emissiveIntensity: 0.28,
+  });
+  const rimMaterial = new THREE.MeshStandardMaterial({
+    color: 0xfff0a6,
+    roughness: 0.22,
+    metalness: 0.82,
+    emissive: 0xffb02e,
+    emissiveIntensity: 0.34,
+  });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.16, 32), coinMaterial);
+  body.rotation.x = Math.PI / 2;
+  body.castShadow = true;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.73, 0.055, 8, 32), rimMaterial);
+  rim.rotation.x = Math.PI / 2;
+  const mark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.72, 0.035), rimMaterial);
+  mark.position.z = 0.09;
+  group.add(body, rim, mark);
+  group.userData.label = "金币";
+  return group;
+}
+
+function isSafeCoinNormal(normal: THREE.Vector3, margin: number) {
+  if (Math.abs(normal.y) < 0.16) return false;
+  const point = mapCoordinatesFromNormal(normal);
+  for (const collider of world.colliders) {
+    if (collider.enabled && !collider.enabled()) continue;
+    if (Math.hypot(point.x - collider.center.x, point.z - collider.center.y) < collider.radius + margin) return false;
+  }
+  return true;
+}
+
+function mapCoordinatesFromNormal(normal: THREE.Vector3) {
+  const projectedY = Math.max(Math.abs(normal.y), 0.001);
+  return {
+    x: (normal.x / projectedY) * PLANET_RADIUS,
+    z: (normal.z / projectedY) * PLANET_RADIUS,
+  };
+}
+
+function collectCoin(coin: CoinPickup) {
+  if (coin.collected) return;
+  coin.collected = true;
+  const worldPosition = new THREE.Vector3();
+  coin.group.getWorldPosition(worldPosition);
+  scene.remove(coin.group);
+  playCoinDing();
+  animateCoinToReadout(worldPosition, () => awardCoins(1));
+
+  const allCollected = currentCoinGroup?.coins.every((item) => item.collected) ?? false;
+  if (allCollected) {
+    clearCoinGroup();
+    nextCoinRefreshAt = elapsedTime + COIN_REFRESH_SECONDS;
+  }
+}
+
+function animateCoinToReadout(worldPosition: THREE.Vector3, onArrive: () => void) {
+  const projected = worldPosition.clone().project(camera);
+  const startX = (projected.x * 0.5 + 0.5) * window.innerWidth;
+  const startY = (-projected.y * 0.5 + 0.5) * window.innerHeight;
+  const targetRect = coinReadout.getBoundingClientRect();
+  const targetX = targetRect.left + targetRect.width / 2;
+  const targetY = targetRect.top + targetRect.height / 2;
+  const node = document.createElement("div");
+  node.className = "coin-fly";
+  node.style.transform = `translate(${startX}px, ${startY}px) translate(-50%, -50%) scale(1.45) rotateY(0deg)`;
+  document.body.appendChild(node);
+  const animation = node.animate(
+    [
+      { transform: `translate(${startX}px, ${startY}px) translate(-50%, -50%) scale(1.45) rotateY(0deg)`, opacity: 1 },
+      { transform: `translate(${(startX + targetX) / 2}px, ${Math.min(startY, targetY) - 82}px) translate(-50%, -50%) scale(1.05) rotateY(210deg)`, opacity: 1 },
+      { transform: `translate(${targetX}px, ${targetY}px) translate(-50%, -50%) scale(0.22) rotateY(420deg)`, opacity: 0.24 },
+    ],
+    { duration: 680, easing: "cubic-bezier(0.16, 0.9, 0.22, 1)", fill: "forwards" }
+  );
+  animation.onfinish = () => {
+    node.remove();
+    onArrive();
+  };
+}
+
+function clearCoinGroup() {
+  if (!currentCoinGroup) return;
+  for (const coin of currentCoinGroup.coins) scene.remove(coin.group);
+  currentCoinGroup = null;
+}
+
+function playScoreRewardSound(notes = 4) {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+  const now = context.currentTime;
+  const frequencies = [523.25, 659.25, 783.99, 1046.5, 1318.51];
+  for (let index = 0; index < notes; index += 1) {
+    const start = now + index * 0.085;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "triangle";
+    oscillator.frequency.setValueAtTime(frequencies[index % frequencies.length], start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.088, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.14);
+  }
+}
+
+function playCoinDing() {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(1480, now);
+  oscillator.frequency.exponentialRampToValueAtTime(1975, now + 0.055);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.095, now + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.18);
+}
+
+function playPenaltySound() {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sawtooth";
+  oscillator.frequency.setValueAtTime(220, now);
+  oscillator.frequency.exponentialRampToValueAtTime(138, now + 0.18);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.22);
+}
+
 function resetQuestState() {
   missionStep = "intro";
   fufuSideStep = "available";
@@ -3666,6 +4111,14 @@ function resetQuestState() {
   elonElevatorRepaired = false;
   elonMet = false;
   elonDialogueIndex = 0;
+  scorePoints = 0;
+  coins = 0;
+  awardedEvents.clear();
+  exploredBuildings.clear();
+  hiddenDiscoveries.clear();
+  clearCoinGroup();
+  nextCoinRefreshAt = elapsedTime;
+  updateRewardReadouts();
   for (const item of world.interactables) item.completed = false;
   world.oxygenLight.color.set(0xff3d2f);
   world.solarLight.color.set(0xff3d2f);
@@ -3695,6 +4148,7 @@ function completeOxygenMission() {
   world.oxygenLight.color.set(0x66d9ff);
   const item = world.interactables.find((interactable) => interactable.id === "oxygen");
   if (item) item.completed = true;
+  awardTaskScore("main_m1_oxygen", "氧气生产站稳定");
   setCurrentMissionText();
 }
 
@@ -3703,6 +4157,7 @@ function completeSolarMission() {
   world.solarLight.color.set(0x66ff9b);
   const item = world.interactables.find((interactable) => interactable.id === "solarC");
   if (item) item.completed = true;
+  awardTaskScore("main_m1_solarC", "太阳能阵列 C 校准");
   setCurrentMissionText();
 }
 
@@ -3711,6 +4166,7 @@ function completeGarageMission() {
     missionStep = "m2_greenhouse";
     const item = world.interactables.find((interactable) => interactable.id === "garage");
     if (item) item.completed = true;
+    awardTaskScore("main_m1_garage", "生命支持验收完成");
     showDialogue("Mother", "生命支持验收完成。下一项：启动温室生态舱。", 4.6);
     setCurrentMissionText();
     return;
@@ -3718,12 +4174,14 @@ function completeGarageMission() {
   const item = world.interactables.find((interactable) => interactable.id === "garage");
   if (item) item.completed = true;
   missionStep = "complete";
+  awardTaskScore("main_garage_final", "机器人调度完成");
   setCurrentMissionText();
 }
 
 function advanceWorldQuest(id: Interactable["id"]) {
   if (advanceSideQuest(id)) return;
   if (mainMissionTargets[missionStep] !== id) return;
+  const previousStep = missionStep;
 
   if (missionStep === "m1_habitat") {
     completeInteractable(id);
@@ -3770,11 +4228,13 @@ function advanceWorldQuest(id: Interactable["id"]) {
     showDialogue("Mother", ending, 6);
   }
   completeInteractable(id);
+  awardTaskScore(`main_${previousStep}`, missionLabel(id));
   setCurrentMissionText();
 }
 
 function advanceSideQuest(id: Interactable["id"]) {
   if (isElonSideQuestTarget(id)) {
+    const previousStep = elonSideStep;
     if (elonSideStep === "cargoShip") {
       elonSideStep = "solarC";
       showDialogue("02 飞船 货运飞船", "发现备用执行器驱动轴。外壳有轻微沙尘磨损，结构完整。下一项：去太阳能阵列 C 处理高功率继电器。", 5.4);
@@ -3793,11 +4253,13 @@ function advanceSideQuest(id: Interactable["id"]) {
       dialogueState.baseIntegrity += 1;
       showDialogue("科研舱", "校准密钥生成完成。03 飞船升降梯维修记录已写入 Mother 安全边界。可返回 03 飞船升降梯，上行至 Elon 所在高空廊道。", 6.4);
     }
+    awardSideTaskScore(`side_elon_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
     return true;
   }
 
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) {
+    const previousStep = fufuSideStep;
     if (fufuSideStep === "medical") {
       fufuSideStep = "habitat";
       dialogueState.motherTrust += 1;
@@ -3807,12 +4269,14 @@ function advanceSideQuest(id: Interactable["id"]) {
       dialogueState.humanAutonomy += 1;
       showDialogue("Mother", "未登记生命体已进入观察名单。记录：非效率陪伴对象可能提高长期任务稳定性。暂不构成基地风险，可继续观察。", 6);
     }
+    awardSideTaskScore(`side_fufu_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
     return true;
   }
 
   const cargoStep = cargoSideStep === "available" ? "cargoShip" : cargoSideStep;
   if (cargoSideStep !== "complete" && isCargoAvailable() && sideMissionTargets.cargo[cargoStep] === id) {
+    const previousStep = cargoStep;
     if (cargoSideStep === "available") cargoSideStep = "cargoShip";
     if (cargoSideStep === "cargoShip") {
       cargoSideStep = "garage";
@@ -3828,12 +4292,14 @@ function advanceSideQuest(id: Interactable["id"]) {
       dialogueState.baseIntegrity += 1;
       showDialogue("物资仓", "错位货箱归档完成。后续温室与通信维修获得备用密封件。", 5);
     }
+    awardSideTaskScore(`side_cargo_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
     return true;
   }
 
   const patrolStep = patrolSideStep === "available" ? "solarA" : patrolSideStep;
   if (patrolSideStep !== "complete" && isPatrolAvailable() && sideMissionTargets.patrol[patrolStep] === id) {
+    const previousStep = patrolStep;
     if (patrolSideStep === "available") patrolSideStep = "solarA";
     if (patrolSideStep === "solarA") {
       patrolSideStep = "tower";
@@ -3846,6 +4312,7 @@ function advanceSideQuest(id: Interactable["id"]) {
       dialogueState.baseIntegrity += 1;
       showDialogue("科研舱", "外围巡逻数据完成。主线风暴协议获得提前预警。", 5);
     }
+    awardSideTaskScore(`side_patrol_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
     return true;
   }

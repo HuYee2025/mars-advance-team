@@ -649,8 +649,11 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   function addShipMaintenanceBot(label: string, x: number, z: number, yaw: number, facilityLabel: string, briefing: string) {
     const radial = new THREE.Vector2(x, z);
     if (radial.lengthSq() < 0.0001) radial.set(Math.cos(yaw), Math.sin(yaw));
-    radial.normalize().multiplyScalar(34);
-    const local = worldOffsetToLocal(yaw, radial.x, radial.y);
+    radial.normalize();
+    const tangent = new THREE.Vector2(-radial.y, radial.x);
+    const side = label.includes("02 ") ? 1 : -1;
+    const worldOffset = radial.multiplyScalar(42).add(tangent.multiplyScalar(side * 16));
+    const local = worldOffsetToLocal(yaw, worldOffset.x, worldOffset.y);
     addMaintenanceBot(label, x, z, yaw, local.x, local.z, facilityLabel, briefing);
   }
 
@@ -2376,7 +2379,7 @@ function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: Circ
       if (collider.enabled && !collider.enabled()) continue;
       const away = point.clone().sub(collider.center);
       let distance = away.length();
-      const minDistance = collider.radius + 1.15;
+      const minDistance = collider.radius + 2.4;
       if (distance >= minDistance) continue;
       if (distance < 0.0001) {
         away.set(1, 0);
@@ -2392,7 +2395,7 @@ function isBotPointInsideFixedCollider(x: number, z: number, colliders: CircleCo
   for (const collider of colliders) {
     if (collider.dynamicObject || collider.radius < 1.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
-    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 0.92) return true;
+    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 1.8) return true;
   }
   return false;
 }
