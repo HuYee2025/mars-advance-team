@@ -198,7 +198,8 @@ const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.42;
 const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.5;
 const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
 const STAMINA_MAX = 100;
-const STAMINA_WALK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND / 2;
+const STAMINA_DRAIN_TUNING_MULTIPLIER = 1.75;
+const STAMINA_WALK_DRAIN_PER_SECOND = (SUIT_OXYGEN_WALK_DRAIN_PER_SECOND / 2) * STAMINA_DRAIN_TUNING_MULTIPLIER;
 const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 2;
 const STAMINA_JUMP_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
 const STAMINA_JUMP_COST = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
@@ -2146,7 +2147,7 @@ function activateSelectedTitleAction() {
 function openStorySummary() {
   playUiBeep();
   window.setTimeout(() => {
-    window.location.href = "/story-overview.html";
+    window.location.href = `/story-overview.html?lang=${encodeURIComponent(currentLanguage)}`;
   }, 110);
 }
 
@@ -4141,6 +4142,7 @@ function openRobotBriefing(robot: THREE.Group) {
 function interactMission(interactable: Interactable) {
   awardBuildingExploration(interactable);
   if (interactable.id === "monolith") {
+    awardHiddenDiscovery("monolith", "黑色方碑");
     openDialogueScene("monolith");
   } else if (isElonSideQuestTarget(interactable.id)) {
     advanceSideQuest(interactable.id);
@@ -4537,6 +4539,8 @@ function startElonElevatorRepairQuest() {
 function openElonDialogue() {
   if (!elonMet) {
     elonMet = true;
+    const elonLandmark = world.landmarks.find((landmark) => landmark.label.includes("Elon"));
+    if (elonLandmark) awardHiddenDiscovery(`unknown:${elonLandmark.label}`, elonLandmark.label);
     openDialogueScene("elon", "elon_intro_1");
     return;
   }
@@ -4779,7 +4783,8 @@ function updateMap() {
     ...world.landmarks.map((landmark) => {
       const missionTarget = isMissionTargetLabel(landmark.label);
       const mysteryId = missionTarget ? null : mysteryDiscoveryIdForLabel(landmark.label);
-      const type = mysteryId ? "unknown" : mapTypeForLabel(landmark.label);
+      const mysteryDiscovered = Boolean(mysteryId && hiddenDiscoveries.has(mysteryId));
+      const type = mysteryId && !mysteryDiscovered ? "unknown" : mapTypeForLabel(landmark.label);
       return {
         label: mysteryId ? mysteryMapLabel(mysteryId, landmark.label) : localizeLabel(landmark.label),
         object: landmark.object,
@@ -4787,7 +4792,7 @@ function updateMap() {
         z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
         mapRange: landmark.mapRange,
         type,
-        unknown: Boolean(mysteryId),
+        unknown: Boolean(mysteryId && !mysteryDiscovered),
         missionTarget,
         oxygenSupplyTarget: false,
         coinTarget: false,
@@ -4796,14 +4801,15 @@ function updateMap() {
     ...world.unnumberedObjects.map((item, index) => {
       const mysteryId = unnumberedMysteryDiscoveryId(item.label, index);
       const trueLabel = item.label ?? "坠毁飞船残骸";
+      const mysteryDiscovered = hiddenDiscoveries.has(mysteryId);
       return {
         label: mysteryMapLabel(mysteryId, trueLabel),
         object: item.object,
         x: item.x,
         z: item.z,
         mapRange: item.mapRange,
-        type: "unknown",
-        unknown: true,
+        type: mysteryDiscovered ? mapTypeForLabel(trueLabel) : "unknown",
+        unknown: !mysteryDiscovered,
         missionTarget: false,
         oxygenSupplyTarget: false,
         coinTarget: false,
@@ -4831,8 +4837,8 @@ function updateMap() {
     x: FOOTBALL_SPAWN_X,
     z: FOOTBALL_SPAWN_Z,
     mapRange: 220,
-    type: "unknown",
-    unknown: true,
+    type: hiddenDiscoveries.has("football") ? "vehicle" : "unknown",
+    unknown: !hiddenDiscoveries.has("football"),
     missionTarget: false,
     oxygenSupplyTarget: false,
     coinTarget: false,
@@ -4854,14 +4860,15 @@ function updateMap() {
   }
 
   if (!fufuRescued) {
+    const fufuDiscovered = hiddenDiscoveries.has("unknown:fufu");
     mapItems.push({
       label: mysteryMapLabel("unknown:fufu", "福福", "map.unknownLife"),
       object: fufu,
       x: world.fufuRescueSite.x,
       z: world.fufuRescueSite.z,
       mapRange: 220,
-      type: "unknown",
-      unknown: true,
+      type: fufuDiscovered ? "robot" : "unknown",
+      unknown: !fufuDiscovered,
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: false,
