@@ -55,6 +55,7 @@ const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
 const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
 const titleScreen = must<HTMLDivElement>("#title-screen");
+const titleDateReadout = must<HTMLElement>("[data-i18n='title.eyebrow']");
 const enterButton = must<HTMLButtonElement>("#enter-base");
 const storySummaryButton = must<HTMLButtonElement>("#story-summary");
 const titleActionButtons = [enterButton, storySummaryButton] as const;
@@ -136,6 +137,11 @@ const STORM_DURATION_SECONDS = 1500;
 const STORM_FADE_SECONDS = 260;
 const TITLE_PLANET_VIEW_SCALE = 0.7;
 const TITLE_CAMERA_DISTANCE = 230 / TITLE_PLANET_VIEW_SCALE;
+const MARS_SOL_MILLISECONDS = 88775.244 * 1000;
+const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
+const ARES_CALENDAR_BASE_YEAR = 2050;
+const ARES_CALENDAR_BASE_SOL = 30;
+const ARES_SOLS_PER_YEAR = 669;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
@@ -426,7 +432,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
   "zh-CN": {
     "app.aria": "火星先遣队 3D Demo",
     "title.aria": "进入火星基地",
-    "title.eyebrow": "2050 年 / 第 30 火星日",
+    "title.eyebrow": "{year} 年 / 第 {sol} 火星日",
     "title.name": "火星先遣队",
     "title.subtitle": "第一位人类",
     "title.text": "终于，火星基地迎来了第一位人类居民。",
@@ -485,7 +491,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
   "en-US": {
     "app.aria": "Mars Advance Team 3D Demo",
     "title.aria": "Enter Mars Base",
-    "title.eyebrow": "Year 2050 / Sol 30",
+    "title.eyebrow": "Year {year} / Sol {sol}",
     "title.name": "Mars Advance Team",
     "title.subtitle": "The First Human",
     "title.text": "At last, the Mars base welcomes its first human resident.",
@@ -861,6 +867,8 @@ resetFufu();
 bindInput();
 onResize();
 setMission("点击 ENTER BASE 进入《火星先遣队》。");
+updateTitleDateReadout();
+window.setInterval(updateTitleDateReadout, 60_000);
 startBackgroundMusic();
 animate();
 
@@ -1163,6 +1171,25 @@ function tr(key: string, params: Record<string, string | number> = {}) {
   return Object.entries(params).reduce((text, [name, replacement]) => text.replaceAll(`{${name}}`, String(replacement)), value);
 }
 
+function currentAresCalendarDate(now = Date.now()) {
+  const elapsedSols = Math.max(0, Math.floor((now - ARES_CALENDAR_EPOCH_UTC) / MARS_SOL_MILLISECONDS));
+  const absoluteSol = ARES_CALENDAR_BASE_SOL + elapsedSols;
+  const yearOffset = Math.floor((absoluteSol - 1) / ARES_SOLS_PER_YEAR);
+  return {
+    year: ARES_CALENDAR_BASE_YEAR + yearOffset,
+    sol: ((absoluteSol - 1) % ARES_SOLS_PER_YEAR) + 1,
+  };
+}
+
+function titleDateText() {
+  const date = currentAresCalendarDate();
+  return tr("title.eyebrow", date);
+}
+
+function updateTitleDateReadout() {
+  titleDateReadout.textContent = titleDateText();
+}
+
 function localizeText(text: string) {
   if (!isEnglish()) return text;
   let translated = exactEnglishTexts[text] ?? i18n["en-US"][text] ?? text;
@@ -1193,6 +1220,7 @@ function applyLanguage() {
     const key = element.dataset.i18n;
     if (key) element.textContent = tr(key);
   });
+  updateTitleDateReadout();
   document.querySelectorAll<HTMLElement>("[data-i18n-attr]").forEach((element) => {
     const attrConfig = element.dataset.i18nAttr ?? "";
     for (const pair of attrConfig.split(",")) {
@@ -1201,7 +1229,10 @@ function applyLanguage() {
     }
   });
   localizeStaticUiText();
-  languageToggle.textContent = tr("language.button");
+  languageToggle.textContent = "";
+  languageToggle.dataset.flag = isEnglish() ? "cn" : "us";
+  languageToggle.setAttribute("aria-label", tr("language.button"));
+  languageToggle.setAttribute("title", tr("language.button"));
   updateRewardReadouts();
   updateRankReadout();
   updateMapButtonState();
