@@ -1063,10 +1063,12 @@ body:not(.hud-collapsed) #hud-toggle,
 .map-marker.type-meteor {
   width: 10px;
   height: 10px;
-  color: #65d9ff;
-  background: #65d9ff;
-  border-color: rgba(177, 239, 255, 0.92);
-  box-shadow: none;
+  color: #2f3336;
+  background: #2f3336;
+  border-color: rgba(214, 220, 222, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.58),
+    0 0 0 1px rgba(255, 245, 225, 0.2);
 }
 
 .map-marker.is-mission-target {
@@ -1172,8 +1174,8 @@ body:not(.hud-collapsed) #hud-toggle,
 }
 
 .map-expanded .map-marker.type-meteor {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 .map-expanded .map-player {
