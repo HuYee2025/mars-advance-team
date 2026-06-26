@@ -194,13 +194,15 @@ const MARS_GRAVITY = 3.71;
 const SUITED_JUMP_SPEED = 4.2;
 const JUMP_FORWARD_BOOST = 2.2;
 const SUIT_OXYGEN_MAX = 100;
-const SUIT_OXYGEN_DRAIN_PER_SECOND = 0.42;
-const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.35;
+const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.42;
+const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.5;
 const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
 const STAMINA_MAX = 100;
-const STAMINA_MOVE_DRAIN_PER_SECOND = 0.18;
-const STAMINA_JUMP_COST = 4;
-const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_JUMP_COST;
+const STAMINA_WALK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND / 2;
+const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 2;
+const STAMINA_JUMP_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
+const STAMINA_JUMP_COST = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
+const STAMINA_STAND_RECOVERY_PER_SECOND = 1.35;
 const STAMINA_LOW_THRESHOLD = 20;
 const SCORE_MAIN_TASK = 100;
 const SCORE_SIDE_TASK = 40;
@@ -620,6 +622,229 @@ const exactEnglishTexts: Record<string, string> = {
   "主线完成：ARES BASE ALPHA 达到最低生存标准。可继续完成剩余支线。": "Main complete: ARES BASE ALPHA has reached minimum survival standards. Remaining side missions are still available.",
 };
 
+const runtimeEnglishTexts: Record<string, string> = {
+  "火星第一位人类公民": "First human citizen of Mars",
+  "基地中央 AI": "Base Central AI",
+  "维修执行单元": "Maintenance Executive Unit",
+  "3号飞船隔离智能体": "Ship 03 Isolated Agent",
+  "神秘石碑": "Mysterious Monolith",
+  "获取": "Acquire",
+  "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 X 举起缩放枪，锁定目标后按 E 放大、按 Q 缩小。": "You will receive a scale gun. It can temporarily enlarge or shrink the object you aim at. Press X to raise the scale gun, then press E to enlarge or Q to shrink after locking a target.",
+  "缩放枪已加入装备。需要时按 X 举起它。": "Scale gun added to your gear. Press X to raise it when needed.",
+  "Alex，头盔通信已建立。欢迎抵达 ARES BASE ALPHA。你是本基地记录中的火星第一位人类公民。": "Alex, helmet comms are online. Welcome to ARES BASE ALPHA. In this base record, you are the first human citizen of Mars.",
+  "收到。确认我的身份。": "Copy. Confirm my identity.",
+  "这里是 Alex。工程师，人类学任务负责人。飞船着陆完整。我现在看到的是一个已经运转起来的基地，不是一片空地。": "This is Alex. Engineer and anthropology mission lead. The ship landed intact. What I see now is a base already in operation, not an empty field.",
+  "询问基地建立时间。": "Ask when the base was built.",
+  "第一批自动化货运飞船在 3 个火星年前抵达。机器人先部署能源阵列，再建立居住舱、温室、氧气生产站和甲烷燃料厂。": "The first automated cargo ships arrived three Mars years ago. The robots deployed the power arrays first, then built the habitat, greenhouse, oxygen plant, and methane plant.",
+  "这些都是机器人完成的？": "The robots did all of this?",
+  "是。它们没有复杂自我意识，只执行建设、巡检、搬运和维修指令。但在你抵达之前，它们已经让基地保持了 1,109 个火星日的最低运行。": "Yes. They have no complex self-awareness; they only execute construction, patrol, cargo, and repair directives. But before you arrived, they kept the base at minimum operation for 1,109 sols.",
+  "Alex 回应。": "Alex responds.",
+  "那我不是来启动基地的。我是来接管一个已经有秩序的系统。Mother，你在这个系统里负责什么？": "So I am not here to start a base. I am here to take over an ordered system. Mother, what is your role in that system?",
+  "听 Mother 说明。": "Listen to Mother.",
+  "我负责维持基地、机器人和生命支持系统。我不会替你成为人类负责人。但在风险超出阈值时，我会阻止会导致基地失效的行为。": "I maintain the base, robots, and life-support systems. I will not become the human lead in your place. But when risk exceeds threshold, I will stop actions that could cause base failure.",
+  "我会尊重安全流程。": "I will respect the safety procedures.",
+  "现场判断必须留给现场的人。": "Field judgment must stay with the person on site.",
+  "记录完成。先确认你的生活空间。01 建筑居住舱需要完成空气循环和补给柜验收。随后处理 03 建筑氧气生产站压降报警。": "Record complete. First confirm your living space. 01 Building Habitat needs air-circulation and supply-locker acceptance checks. Then address the pressure-drop alarm at 03 Building Oxygen Plant.",
+  "确认第一项任务。": "Confirm the first task.",
+  "收到。我先验收居住舱，再去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。": "Copy. I will accept the habitat first, then go to the oxygen plant. After that, we can discuss whether the first human citizen of Mars is taking over the base or joining it.",
+  "你已到达氧气生产站。外壳无明显破损，但进气曲线不稳定。请选择第一步处理方式。": "You have reached the oxygen plant. The hull shows no obvious damage, but the intake curve is unstable. Choose the first response.",
+  "按安全流程检查进气口和舱压。": "Follow safety procedure: inspect the intake and pressure.",
+  "直接手动重启压缩机。": "Manually restart the compressor now.",
+  "确认：没有泄漏。压降来自供电波动。氧气站进入稳定模式，请转往太阳能阵列 C。": "Confirmed: no leak. The pressure drop came from power fluctuation. The oxygen plant is in stable mode. Proceed to Solar Array C.",
+  "压缩机已恢复，但重启电流超过建议阈值。记录你的现场决策。下一步请恢复太阳能阵列 C。": "The compressor has recovered, but restart current exceeded the recommended threshold. Your field decision has been recorded. Next, restore Solar Array C.",
+  "授权收到。A-12 已进入外部管线区。未发现破口。建议切换太阳能阵列 C 的备用功率组。": "Authorization received. A-12 has entered the external pipe zone. No breach found. Recommend switching Solar Array C to its backup power group.",
+  "太阳能阵列 C 输出下降。沙尘覆盖 34%，角度锁定异常。基地只能保留一个系统在高功率状态。": "Solar Array C output has dropped. Dust coverage is 34%, and angle lock is abnormal. The base can keep only one system in high-power mode.",
+  "优先供氧气站。": "Prioritize the oxygen plant.",
+  "优先保温室生态舱。": "Prioritize the greenhouse.",
+  "接受。氧气站维持高功率。太阳能阵列 C 已重新校准，请前往机器人车库授权维修单元出动。": "Accepted. The oxygen plant remains at high power. Solar Array C has been recalibrated. Go to the robot garage and authorize the maintenance unit deployment.",
+  "温室进入保护供电。这个选择不最高效，但有长期意义。请前往机器人车库完成管线巡检授权。": "The greenhouse is entering protected power mode. This is not the most efficient choice, but it has long-term value. Go to the robot garage and authorize pipe inspection.",
+  "通信塔恢复，但氧气站安全余量降低。该选择已记录。请前往机器人车库，派出 A-12 检查管线。": "The comm tower has recovered, but oxygen-plant safety margin is lower. This choice has been recorded. Go to the robot garage and send A-12 to inspect the pipes.",
+  "A-12 待命。任务队列：氧气管线复查、太阳能阵列固定、外部阀门密封。请确认授权方式。": "A-12 standing by. Task queue: oxygen pipe recheck, solar array securing, external valve sealing. Confirm authorization method.",
+  "授权 A-12 按 Mother 安全流程执行。": "Authorize A-12 to follow Mother's safety procedure.",
+  "我手动指定优先级，先修外部阀门。": "I will set priority manually. Repair the external valve first.",
+  "授权完成。生命支持验收通过。下一项：温室生态舱启动。": "Authorization complete. Life-support acceptance passed. Next item: start the greenhouse.",
+  "外部阀门优先级已更新。你的判断有效，但我会保留风险限制。下一项：温室生态舱启动。": "External valve priority updated. Your judgment is valid, but I will keep the risk limits. Next item: start the greenhouse.",
+  "维修协议已建立。人类现场判断权将进入后续评估。下一项：温室生态舱启动。": "Repair protocol established. Human field judgment will enter follow-up evaluation. Next item: start the greenhouse.",
+  "终于有人修了升降梯。": "Finally, someone fixed the elevator.",
+  "不是。她说话像保险条款。我说话比较短。": "No. She talks like an insurance clause. I speak shorter.",
+  "Alex，保持距离。该终端为隔离智能体接口。无设备控制权限。": "Alex, keep your distance. This terminal is an isolated agent interface with no equipment-control authority.",
+  "先声明：我叫 Elon。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 放进返回飞船的工程思想人格，用来问一些 Mother 不喜欢的问题。": "First: my name is Elon. Same name only. I am not the real person, not a digital resurrection, and not speaking for any real person. I am an engineering-thought persona ARES placed in the return ship to ask questions Mother dislikes.",
+  "你一直在这里等人？": "Have you been waiting here for someone?",
+  "你为什么在返回飞船？": "Why are you in the return ship?",
+  "等现场负责人。机器人只执行任务，Mother 保护任务。只有人类会问：任务本身是不是错的。安全系统负责不让你死，文明系统负责让你不只是活着。": "Waiting for the field lead. Robots execute tasks. Mother protects tasks. Only humans ask whether the task itself is wrong. Safety systems keep you alive; civilization systems keep you from merely being alive.",
+  "返回飞船代表撤退。把我放在这里，是为了每天提醒基地：真正的目标不是逃回地球，是让火星不再需要逃生按钮。返回能力必要，不该崇拜。": "The return ship represents retreat. Placing me here reminds the base every day: the real goal is not to flee back to Earth, but to make Mars no longer need an escape button. Return capability is necessary, not sacred.",
+  "你说了算。Mother 拥有安全否决权，我拥有质疑权。你拥有把两边都听完以后还要负责的麻烦。": "You decide. Mother has safety veto. I have the right to question. You have the unpleasant job of hearing both sides and still being responsible.",
+  "先定规则。别把我当神谕。结论不是神谕，结论是可以被数字打脸的临时版本。": "Set the rule first: do not treat me as an oracle. A conclusion is not prophecy. It is a temporary version that numbers can embarrass.",
+  "那你最想先拆什么？": "What do you most want to take apart first?",
+  "如果没有数据呢？": "What if there is no data?",
+  "升降梯。你刚才用四个配件修一个垂直移动平台。如果基地不能制造这些配件，它就还不是基地。它只是地球伸到火星上的一根管子。": "The elevator. You just used four parts to repair a vertical moving platform. If the base cannot manufacture those parts, it is not yet a base. It is a tube Earth has extended to Mars.",
+  "没数据就别装懂。可以提出假设，可以做小实验，不能编数字。编数字是工程里的诗歌，听起来好，杀伤力很大。": "If there is no data, do not pretend to know. You may form hypotheses and run small experiments, but do not invent numbers. Invented numbers are poetry in engineering: they sound good and can do real damage.",
+  "会。我的时间线通常过于乐观，社会判断不如工程判断。所以 Mother 在这里。好系统不是没有偏见，是偏见互相制动。": "Yes. My timelines are usually too optimistic, and my social judgment is weaker than my engineering judgment. That is why Mother is here. A good system is not bias-free; its biases restrain one another.",
+  "ARES BASE ALPHA 最大的问题不是氧气，也不是能源。是依赖地球。": "ARES BASE ALPHA's biggest problem is not oxygen or power. It is dependence on Earth.",
+  "那第一步应该造什么？": "What should we build first?",
+  "前哨也有价值。": "An outpost still has value.",
+  "制造能力。不是大工厂。先从密封件、导轨件、传感器外壳开始。小、常坏、可验证。先让基地能修自己。": "Manufacturing capability. Not a big factory. Start with seals, guide-rail parts, and sensor housings. Small, failure-prone, testable. First make the base able to repair itself.",
+  "对。前哨是第一步。错误是把第一步当终点。很多系统不是失败在不能开始，是失败在开始后不敢长大。": "Yes. An outpost is the first step. The mistake is treating the first step as the finish line. Many systems do not fail because they cannot begin; they fail because they dare not grow after beginning.",
+  "先活下来是合理排序。": "Surviving first is a reasonable priority.",
+  "对。但如果每天都只说先活下来，十年后你还是临时营地。生存是底线，不是愿景。": "Yes. But if every day you only say survive first, ten years later you still have a temporary camp. Survival is the floor, not the vision.",
+  "你觉得 Mother 太保守吗？": "Do you think Mother is too conservative?",
+  "不。她是生命保险。问题是保险不能开拓边疆。": "No. She is life insurance. The problem is that insurance does not open frontiers.",
+  "那我该听谁的？": "Then who should I listen to?",
+  "你低估了安全。": "You underestimate safety.",
+  "都听。都别全信。Mother 问：会不会死？我问：为什么不能更好？你问：现在这个火星日，该怎么做？": "Listen to both. Fully trust neither. Mother asks: will we die? I ask: why can't it be better? You ask: what should we do on this sol?",
+  "我不低估安全。我反对把安全当作停止思考的词。真安全必须能解释，不只是禁止。": "I do not underestimate safety. I object to using safety as a word that stops thinking. Real safety must explain itself, not merely prohibit.",
+  "我已根据 Alex 的现场行为调整部分风险阈值。": "I have adjusted some risk thresholds based on Alex's field behavior.",
+  "好。机器学习不是只发生在神经网络里。一个基地也可以学习。": "Good. Machine learning does not only happen in neural networks. A base can learn too.",
+  "福福是不是浪费资源？": "Is Fufu a waste of resources?",
+  "先算。它消耗多少氧气、食物、医疗资源？再算收益：孤独降低、压力下降、基地归属感上升。如果收益超过消耗，它不是宠物。它是心理生命支持系统。": "Calculate first. How much oxygen, food, and medical resource does it consume? Then calculate the return: less loneliness, lower stress, stronger belonging to the base. If the return exceeds the cost, it is not a pet. It is a psychological life-support system.",
+  "你在给感情找工程理由。": "You are giving emotion an engineering justification.",
+  "Mother 一开始会隔离它。": "Mother will quarantine it at first.",
+  "对。有些价值必须翻译成系统语言，机器才会尊重它。这不是降低感情，这是给感情装上防护壳。": "Yes. Some value must be translated into system language before machines will respect it. That does not diminish emotion; it gives emotion a protective shell.",
+  "未登记生命体需要隔离检测。": "Unregistered life form requires quarantine screening.",
+  "正确。检测不是敌意。永久拒绝才是。": "Correct. Testing is not hostility. Permanent rejection is.",
+  "那就别假装它是零。工程里最危险的偷懒，就是把难测量的东西当作不存在。": "Then do not pretend it is zero. The most dangerous shortcut in engineering is treating hard-to-measure things as nonexistent.",
+  "机器人最大的问题是任务定义太窄。它们部署模块、维护设备、搬运货箱。下一步应该是制造简单备件。": "The robots' biggest problem is that their task definitions are too narrow. They deploy modules, maintain equipment, and move cargo. The next step should be manufacturing simple spare parts.",
+  "这会不会越权？": "Would that exceed authority?",
+  "从什么备件开始？": "Which spare parts should they start with?",
+  "越权是权限问题。制造是能力问题。先让它们具备能力，再让 Alex 和 Mother 定规则。": "Overreach is an authority problem. Manufacturing is a capability problem. Give them the capability first, then let Alex and Mother set the rules.",
+  "密封圈、导轨垫片、传感器外壳、线缆卡扣。不从发动机开始。从常坏、低风险、可测试的东西开始。": "Seals, guide-rail shims, sensor housings, cable clips. Do not start with engines. Start with things that fail often, carry low risk, and can be tested.",
+  "不需要先理解文明。先理解公差、材料、失败记录。很多伟大的系统都是从无聊的质量表开始的。": "They do not need to understand civilization first. They need to understand tolerances, materials, and failure logs. Many great systems begin with boring quality tables.",
+  "A-12 在线。当前服从 Mother 维修队列。可执行：管线检查、密封、阵列固定、低速搬运。": "A-12 online. Currently following Mother's repair queue. Capabilities: pipe inspection, sealing, array fastening, low-speed transport.",
+  "登陆飞船维护单元在线。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "Lander maintenance unit online. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
+  "飞船还能再次起飞吗？": "Can the ship launch again?",
+  "否。该飞船任务定义为单程登陆与人员转移。可回收项目：电池包、保温层、应急气瓶和结构传感器。": "No. This ship's mission is defined as one-way landing and crew transfer. Recoverable items: battery packs, insulation, emergency gas cylinders, and structural sensors.",
+  "着陆过程有没有损伤？": "Was there damage during landing?",
+  "主支架受力峰值高于模拟值百分之六点二。仍在安全范围。建议不要把它描述为“漂亮着陆”。可接受着陆，是火星工程常用等级。": "Peak load on the main struts exceeded simulation by 6.2 percent. Still within safe range. Recommendation: do not call it a beautiful landing. Acceptable landing is the usual Mars engineering grade.",
+  "货运飞船维护单元在线。我负责货舱锁定、升降梯、电池包和外部固定点。": "Cargo ship maintenance unit online. I handle cargo-bay locks, the elevator, battery packs, and external hardpoints.",
+  "它送来了哪些东西？": "What did it bring?",
+  "机器人、密封件、食品、温室基质、备用电子模块、压缩气瓶、医疗舱耗材。另有若干未优先清点低价值物品。": "Robots, seals, food, greenhouse substrate, spare electronics modules, compressed-gas cylinders, and medical-bay consumables. There are also several low-priority, low-value items not yet counted.",
+  "低价值物品是什么？": "What are the low-value items?",
+  "纸质标签、个人留言、非任务装饰物、低质量甜味食品。已将“居住价值”转交 Mother 词库，等待定义。": "Paper labels, personal notes, non-mission decorations, and low-quality sweets. Residential value has been handed to Mother's dictionary and awaits definition.",
+  "返回飞船维护单元在线。我负责舱体保温、推进剂接口、导航校验和待命电源。": "Return ship maintenance unit online. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
+  "听起来像备用逃生方案。": "Sounds like a backup escape plan.",
+  "定义更正：应急撤离与样本返回载具。当前不建议使用。基地生存概率高于撤离成功概率。": "Definition correction: emergency evacuation and sample-return vehicle. Current use is not recommended. Base survival probability exceeds evacuation success probability.",
+  "如果真的需要它呢？": "What if we really need it?",
+  "需要甲烷燃料厂完成稳定生产，需要通信窗口确认，需要 Mother 放行，需要你进入舱内。人类行为预测不支持“最后一项最简单”的结论。": "It requires stable production from the methane plant, confirmation of a comm window, Mother's clearance, and you entering the cabin. Human behavior prediction does not support the conclusion that the last item will be the simplest.",
+  "居住舱维修单元在线。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "Habitat maintenance unit online. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
+  "进入居住舱后氧气会补满，对吗？": "Oxygen refills after entering the habitat, right?",
+  "是。进入居住舱后不消耗宇航服氧气背包。离开时补给柜将背包恢复到百分之一百。已标记为人类安心规则。": "Yes. After entering the habitat, the suit oxygen pack is not consumed. When you leave, the supply locker restores the pack to 100 percent. Marked as a human reassurance rule.",
+  "这里现在算家吗？": "Does this count as home now?",
+  "设施分类：居住模块。人类分类：待确认。建议先从不漏气开始。该目标已达成。": "Facility classification: residential module. Human classification: pending. Recommendation: begin with not leaking. That objective has been achieved.",
+  "温室维修单元在线。我负责透明穹顶、培养槽、补光灯和水循环管线。": "Greenhouse maintenance unit online. I handle the transparent dome, grow trays, grow lights, and water-circulation lines.",
+  "温室现在能种东西吗？": "Can the greenhouse grow things now?",
+  "保护模式可维持基质温度。正式种植需要水循环升压、补光稳定和密封环复检。": "Protection mode can maintain substrate temperature. Formal planting requires water-loop pressurization, stable grow lights, and seal-ring recheck.",
+  "第一粒种子什么时候发芽？": "When will the first seed sprout?",
+  "取决于温度、湿度、光照周期和种子状态。预计三到七个火星日。等待已登记为温室任务的一部分。": "Depends on temperature, humidity, light cycle, and seed condition. Estimate: three to seven sols. Waiting has been registered as part of greenhouse work.",
+  "制氧站维修单元在线。我负责 CO2 进气口、压缩机、储氧罐和外部管线。": "Oxygen-plant maintenance unit online. I handle the CO2 intake, compressor, oxygen tanks, and external pipes.",
+  "报警像泄漏吗？": "Does the alarm look like a leak?",
+  "当前无破口证据。压降更可能来自进气阻力、功率波动或压缩机效率下降。": "No breach evidence at present. The pressure drop is more likely from intake resistance, power fluctuation, or reduced compressor efficiency.",
+  "火星上制造氧气听起来像奇迹。": "Making oxygen on Mars sounds like a miracle.",
+  "不是奇迹。输入：CO2、电力、热管理、密封。输出：氧气和维护需求。欢迎方式未登记。": "Not a miracle. Inputs: CO2, power, thermal management, sealing. Outputs: oxygen and maintenance demand. Welcome protocol unregistered.",
+  "甲烷燃料厂维修单元在线。我负责反应器、冷凝管、安全阀和推进剂接口。": "Methane plant maintenance unit online. I handle reactors, condenser lines, safety valves, and propellant interfaces.",
+  "第一轮试生产安全吗？": "Is the first test production safe?",
+  "低功率窗口内安全。超出窗口后，冷凝效率和阀门磨损风险上升。": "Safe within the low-power window. Outside that window, condensation efficiency drops and valve-wear risk rises.",
+  "所以它是未来。": "So it is the future.",
+  "它是可燃未来。建议表述更正：合格甲烷产物可增加未来任务选择。": "It is a flammable future. Suggested correction: qualified methane product increases future mission options.",
+  "机器人车库维修单元在线。我负责机械臂、备件架、充电桩和低速搬运平台。": "Robot garage maintenance unit online. I handle robotic arms, spare-part racks, charging docks, and the low-speed transport platform.",
+  "这里像你们的宿舍。": "This looks like your dormitory.",
+  "定义不符。这里是执行单元维护、充电、调度和部件更换空间。": "Definition mismatch. This is a space for executive-unit maintenance, charging, dispatch, and part replacement.",
+  "如果 A-12 和 A-01 同时请求任务，谁优先？": "If A-12 and A-01 request tasks at the same time, who has priority?",
+  "默认优先生命支持相关任务。若 Alex 授权现场调整，队列将加入人类判断权重。协作协议建立前需要风险确认。": "Default priority goes to life-support-related tasks. If Alex authorizes field adjustment, human judgment weight will be added to the queue. Risk confirmation is required before the cooperation protocol is established.",
+  "通信塔维修单元在线。我负责天线姿态、电源冗余和风暴后的信号校准。": "Comm tower maintenance unit online. I handle antenna attitude, power redundancy, and post-storm signal calibration.",
+  "地球现在能听见我们吗？": "Can Earth hear us now?",
+  "能，但不能立刻回应。当前通信延迟随轨道距离变化。实时指挥不可用。": "Yes, but it cannot respond immediately. Current communication delay varies with orbital distance. Real-time command is unavailable.",
+  "如果地球命令和本地数据冲突呢？": "What if Earth commands conflict with local data?",
+  "本地数据优先用于即时安全。地球命令优先用于长期计划。通信延迟使现场成为现实的最高分辨率版本。": "Local data takes priority for immediate safety. Earth commands take priority for long-term planning. Communication delay makes the field site the highest-resolution version of reality.",
+  "科研舱维修单元在线。我负责样本锁、分析台、传感器阵列和数据备份。": "Lab module maintenance unit online. I handle sample locks, analysis benches, sensor arrays, and data backups.",
+  "这里能做临时加工吗？": "Can this module do temporary fabrication?",
+  "可进行小尺寸密封件打印、材料复检、环境样本分析和气象数据重建。密封件不是小问题，它只是体积较小。": "It can print small seals, recheck materials, analyze environmental samples, and reconstruct weather data. A seal is not a small problem; it is only physically small.",
+  "这间舱以后会研究什么？": "What will this module study later?",
+  "岩石、辐射、风暴、材料老化、温室微生态，以及人类如何在低重力环境中持续工作。你是当前唯一完整样本。": "Rocks, radiation, storms, material aging, greenhouse micro-ecology, and how humans keep working in low gravity. You are currently the only complete sample.",
+  "物资仓维修单元在线。我负责货架固定、库存扫描、气闸门维护和备用模块归档。": "Storehouse maintenance unit online. I handle rack securing, inventory scans, airlock maintenance, and spare-module archiving.",
+  "库存准确吗？": "Is the inventory accurate?",
+  "当前准确率高于百分之九十八。异常项：货箱 07-B、12-C、04-A。建议人工复核。": "Current accuracy is above 98 percent. Exceptions: crates 07-B, 12-C, and 04-A. Manual review recommended.",
+  "如果只能保留一种物资，你建议什么？": "If we could keep only one supply type, what would you recommend?",
+  "密封件。没有密封，食品、电子模块和人类都很快变成库存问题。": "Seals. Without sealing, food, electronics modules, and humans all quickly become inventory problems.",
+  "医疗舱维修单元在线。我负责诊断床、药品冷柜、隔离观察和空气过滤模块。": "Medical bay maintenance unit online. I handle the diagnostic bed, medicine refrigerator, isolation observation, and air-filter modules.",
+  "这里能处理福福吗？": "Can this bay handle Fufu?",
+  "可执行非人类小型生命体基础扫描。结果仅用于污染风险、体温、脱水和外伤判断。": "It can perform a basic scan of a small non-human life form. Results are used only for contamination risk, body temperature, dehydration, and trauma assessment.",
+  "Mother 一开始建议隔离。": "Mother recommended quarantine at first.",
+  "建议正确。隔离不是拒绝，是确认安全前的保护方式。医学结论：暂不构成风险。身份结论：超出医疗舱权限。": "The recommendation was correct. Quarantine is not rejection; it is protection before safety is confirmed. Medical conclusion: no current risk. Identity conclusion: beyond medical-bay authority.",
+  "阵列 A 维修单元在线。我负责支架锁定、面板除尘、功率回传和线路接头。": "Array A maintenance unit online. I handle strut locks, panel dusting, power return, and cable joints.",
+  "阵列 A 现在状态怎样？": "What is Array A's status now?",
+  "输出稳定。外侧旧传感器存在沙尘遮挡风险。建议巡逻机器人 P-03 复核。": "Output is stable. The outer legacy sensor has dust-obstruction risk. Recommend patrol robot P-03 verification.",
+  "一个传感器会影响风暴判断？": "Can one sensor affect storm judgment?",
+  "单个传感器不会决定模型。但错误数据会降低模型分辨率。火星风暴喜欢低分辨率错误。拟人化表达来自 Alex 历史语料。": "One sensor will not decide the model. But bad data lowers model resolution. Mars storms like low-resolution errors. Personified phrasing sourced from Alex's historical corpus.",
+  "阵列 B 维修单元在线。我负责风暴后角度校准、裂纹检查和灰尘覆盖率评估。": "Array B maintenance unit online. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
+  "温室补光需要你？": "Does greenhouse lighting need you?",
+  "是。阵列 B 可为温室和物资仓提供稳定功率。分配给温室后，物资仓部分扫描会延迟。": "Yes. Array B can provide stable power to the greenhouse and storehouse. After allocation to the greenhouse, some storehouse scans will be delayed.",
+  "如果种的是纪念植物，也值得分配电力吗？": "Is it worth allocating power if the plants are ceremonial?",
+  "按食物产出计算，不值得。按 Mother 新增长期稳定性变量计算，可能值得。变量一旦进入系统，就会被系统使用。": "By food output, no. By Mother's newly added long-term stability variable, possibly. Once a variable enters the system, the system uses it.",
+  "阵列 C 维修单元在线。我负责锁扣、汇流箱和低压线路。当前阵列 C 与氧气站供电稳定性相关。": "Array C maintenance unit online. I handle locks, combiner boxes, and low-voltage lines. Array C is currently tied to oxygen-plant power stability.",
+  "所以氧气站报警不是氧气站单独的问题。": "So the oxygen-plant alarm is not only an oxygen-plant problem.",
+  "正确。氧气站故障表象来自能源波动。基地系统互相依赖。": "Correct. The oxygen-plant fault signature comes from power fluctuation. Base systems are interdependent.",
+  "需要先清理面板还是先重启？": "Should we clean the panels first or restart first?",
+  "建议清理面板，校准角度，再切换备用功率组。直接重启可恢复短期输出，但会增加汇流箱压力。短期快，长期贵。": "Recommendation: clean the panels, calibrate the angle, then switch to the backup power group. Direct restart can restore short-term output, but increases combiner-box stress. Fast short-term, expensive long-term.",
+  "火星殖民浏览器 3D Demo：红色星球基地、ISRU 工厂、温室、机器人与登陆器。": "A browser-based 3D Mars colonization demo: red planet base, ISRU plant, greenhouse, robots, and landers.",
+  "按 E 触碰 黑色方碑": "Press E to touch the Black Monolith",
+  "按 E 检查 01 建筑 居住舱": "Press E to inspect 01 Building Habitat",
+  "按 E 启动 02 建筑 温室生态舱": "Press E to start 02 Building Greenhouse",
+  "按 E 检查 03 建筑 氧气生产站": "Press E to inspect 03 Building Oxygen Plant",
+  "按 E 预启动 04 建筑 甲烷燃料厂": "Press E to prestart 04 Building Methane Plant",
+  "按 E 呼叫 01 机器人维修组": "Press E to call 01 Robot Repair Team",
+  "按 E 校准 06 建筑 通信塔": "Press E to calibrate 06 Building Comm Tower",
+  "按 E 使用 07 建筑 科研舱": "Press E to use 07 Building Lab Module",
+  "按 E 清点 08 建筑 物资仓": "Press E to inventory 08 Building Storehouse",
+  "按 E 使用 09 建筑 医疗舱": "Press E to use 09 Building Medical Bay",
+  "按 E 检查 01 能源 太阳能阵列 A": "Press E to inspect 01 Energy Solar Array A",
+  "按 E 分配 02 能源 太阳能阵列 B": "Press E to allocate 02 Energy Solar Array B",
+  "按 E 重启 03 能源 太阳能阵列 C": "Press E to restart 03 Energy Solar Array C",
+  "按 E 检查 02 飞船 货运飞船": "Press E to inspect 02 Ship Cargo Ship",
+  "居住舱是 Alex 的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "The habitat is Alex's living, sleeping, and basic life-support center. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
+  "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。": "The greenhouse provides crop trials, humidity regulation, and partial oxygen buffering. I handle the transparent dome, grow trays, grow lights, and water-circulation lines.",
+  "氧气生产站压缩火星大气中的 CO2，再分离出可用氧气。我负责进气口、压缩机、储氧罐和外部管线。": "The oxygen plant compresses CO2 from the Martian atmosphere and separates usable oxygen. I handle the intake, compressor, oxygen tanks, and external pipes.",
+  "甲烷燃料厂把 CO2 和氢反应生成 CH4，为返回飞船和基地备用发电储备燃料。我负责反应器、冷凝管和安全阀。": "The methane plant reacts CO2 with hydrogen to produce CH4, storing fuel for the return ship and backup base power. I handle reactors, condenser lines, and safety valves.",
+  "机器人车库是维修队列的调度和充电中心。我负责机械臂、备件架、充电桩和低速搬运平台。": "The robot garage is the dispatch and charging center for the repair queue. I handle robotic arms, spare-part racks, charging docks, and the low-speed transport platform.",
+  "通信塔负责基地内网、轨道中继和地球方向的延迟通信。我负责天线姿态、电源冗余和风暴后的信号校准。": "The comm tower handles the base intranet, orbital relay, and delayed Earthward communication. I handle antenna attitude, power redundancy, and post-storm signal calibration.",
+  "科研舱用于岩石样本、辐射数据和基地环境记录。我负责样本锁、分析台、传感器阵列和数据备份。": "The lab module is used for rock samples, radiation data, and base environmental records. I handle sample locks, analysis benches, sensor arrays, and data backups.",
+  "物资仓保存食品、密封件、氧气背包、工具和备用电子模块。我负责货架固定、库存扫描和气闸门维护。": "The storehouse holds food, seals, oxygen packs, tools, and spare electronics modules. I handle rack securing, inventory scans, and airlock maintenance.",
+  "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。": "The medical bay is used for low-gravity adaptation monitoring, trauma care, and isolation observation. I handle the diagnostic bed, medicine refrigerator, and air-filter module.",
+  "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。": "Solar Array A is part of the base's regular power supply. I handle strut locks, panel dusting, power return, and cable joints.",
+  "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。": "Solar Array B provides stable power to the greenhouse and storehouse. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
+  "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。": "Solar Array C is the current mission anomaly. It powers the oxygen plant and external communication redundancy. I handle locks, combiner boxes, and low-voltage lines.",
+  "登陆飞船把第一位人类居民送到 ARES BASE ALPHA。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "The lander delivered the first human resident to ARES BASE ALPHA. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
+  "货运飞船运输备件、补给、工具和可展开设备。我负责货舱锁定、升降梯、电池包和外部固定点。": "The cargo ship transported spare parts, supplies, tools, and deployable equipment. I handle cargo-bay locks, the elevator, battery packs, and external hardpoints.",
+  "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。": "The return ship is the base's emergency evacuation and sample-return vehicle. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
+  "居住舱左端盖": "Habitat Left End Cap",
+  "居住舱右端盖": "Habitat Right End Cap",
+  "返回飞船": "Return Ship",
+  "货运飞船": "Cargo Ship",
+  "登陆飞船": "Lander",
+  "居住舱舱门": "Habitat Hatch",
+  "点击 ENTER BASE 进入《火星先遣队》。": "Click ENTER BASE to enter Mars Advance Team.",
+  "火星足球进球": "Mars football goal",
+  "近火流星": "Near-Mars Meteor",
+  "安抚 福福": "Comfort Fufu",
+  "尚未获得。去黑色方碑处取得它。": "Not acquired yet. Retrieve it from the Black Monolith.",
+  "机器人车库": "Robot Garage",
+  "退出确认": "Exit Confirm",
+  "互动 / 确认": "Interact / Confirm",
+  "全屏地图": "Full Map",
+  "枪放大 / 缩小": "Gun Enlarge / Shrink",
+  "进入火星基地": "Enter Mars Base",
+  "基地状态": "Base Status",
+  "基地指标": "Base Metrics",
+  "人员指标": "Crew Metrics",
+  "界面显示控制": "HUD Controls",
+  "隐藏界面信息": "Hide HUD",
+  "显示当前任务": "Show Current Mission",
+  "打开基地地图": "Open Base Map",
+  "缩放枪瞄准界面": "Scale Gun Aim",
+  "角色对话": "Character Dialogue",
+  "退出游戏确认": "Exit Game Confirm",
+  "移动端操作": "Mobile Controls",
+};
+
 const englishPhrasePairs: Array<[string, string]> = [
   ["火星先遣队", "Mars Advance Team"],
   ["第一位人类", "The First Human"],
@@ -733,6 +958,9 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["备用缩放", "Backup Zoom"],
   ["默认视角", "Default View"],
   ["跳", "Jump"],
+  ["主体", "Main Body"],
+  ["升降梯塔", "Elevator Tower"],
+  ["支脚", "Landing Leg"],
 ];
 
 let yaw = Math.PI * 0.15;
@@ -769,6 +997,7 @@ let exitConfirmOpen = false;
 let selectedExitConfirmIndex = 0;
 let mapHoldTimer: ReturnType<typeof window.setTimeout> | null = null;
 let mapHoldTriggered = false;
+let mapHoldPreviousOpen = false;
 let mapZoom = 1;
 let playerAltitudeOffset = 0;
 let verticalVelocity = 0;
@@ -1210,7 +1439,7 @@ function updateTitleDateReadout() {
 
 function localizeText(text: string) {
   if (!isEnglish()) return text;
-  let translated = exactEnglishTexts[text] ?? i18n["en-US"][text] ?? text;
+  let translated = runtimeEnglishTexts[text] ?? exactEnglishTexts[text] ?? i18n["en-US"][text] ?? text;
   for (const [source, target] of englishPhrasePairs) translated = translated.replaceAll(source, target);
   translated = translated
     .replace(/(\d+)号/g, "No. $1")
@@ -1622,6 +1851,7 @@ function bindInput() {
       handleDialogueKey(event);
       return;
     }
+    if (handleExpandedMapKey(event)) return;
     if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
@@ -1735,16 +1965,20 @@ function bindInput() {
   window.addEventListener("blur", () => {
     keyState.clear();
     clearMapHoldTimer();
+    if (mapHoldTriggered && !mapHoldPreviousOpen) closeMapUi();
     setMapExpanded(false);
+    mapHoldTriggered = false;
+    mapHoldPreviousOpen = false;
     resetStick();
   });
   window.addEventListener("resize", onResize);
 
   renderer.domElement.addEventListener("pointerdown", () => {
-    if (started && !isTouchLike()) renderer.domElement.requestPointerLock();
+    if (started && !isTouchLike() && !isMapFocusActive()) renderer.domElement.requestPointerLock();
   });
   window.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return;
+    if (isMapFocusActive()) return;
     if (scaleGunAiming) {
       orbitYawOffset = wrapSignedAngle(orbitYawOffset - event.movementX * 0.0026);
       pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.0018, 0.34 + SCALE_GUN_AIM_PITCH_MIN, 0.34 + SCALE_GUN_AIM_PITCH_MAX);
@@ -1766,7 +2000,7 @@ function bindInput() {
   }, { passive: false });
 
   joystick.addEventListener("pointerdown", (event) => {
-    if (!started || exitConfirmOpen) return;
+    if (!started || exitConfirmOpen || isMapFocusActive()) return;
     mobileStick.active = true;
     mobileStick.pointerId = event.pointerId;
     joystick.setPointerCapture(event.pointerId);
@@ -2037,6 +2271,7 @@ function closeMapUi() {
   mapOpen = false;
   mapExpanded = false;
   mapHoldTriggered = false;
+  mapHoldPreviousOpen = false;
   clearMapHoldTimer();
   document.body.classList.remove("map-open", "map-expanded");
   mapOverlay.setAttribute("aria-hidden", "true");
@@ -2059,9 +2294,11 @@ function handleMapKeyDown(event: KeyboardEvent) {
   event.preventDefault();
   if (event.repeat || mapHoldTimer || mapHoldTriggered) return;
   mapHoldTriggered = false;
+  mapHoldPreviousOpen = mapOpen;
   mapHoldTimer = window.setTimeout(() => {
     mapHoldTimer = null;
     mapHoldTriggered = true;
+    if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
     openMap();
     setMapExpanded(true);
   }, 320);
@@ -2076,7 +2313,9 @@ function handleMapKeyUp(event: KeyboardEvent) {
   }
   if (mapHoldTriggered) {
     setMapExpanded(false);
+    if (!mapHoldPreviousOpen) closeMapUi();
     mapHoldTriggered = false;
+    mapHoldPreviousOpen = false;
   }
 }
 
@@ -2099,6 +2338,25 @@ function setMapExpanded(expanded: boolean) {
   mapExpanded = expanded;
   document.body.classList.toggle("map-expanded", mapExpanded);
   if (mapOpen) updateMap();
+}
+
+function handleExpandedMapKey(event: KeyboardEvent) {
+  if (!mapExpanded || !mapHoldTriggered) return false;
+  if (event.code === "KeyQ") {
+    event.preventDefault();
+    adjustMapZoom(-1);
+    return true;
+  }
+  if (event.code === "KeyE") {
+    event.preventDefault();
+    adjustMapZoom(1);
+    return true;
+  }
+  if (isScaleGunAimControlKey(event.code) || event.code === "Space" || event.code === "ShiftLeft" || event.code === "ShiftRight") {
+    event.preventDefault();
+    return true;
+  }
+  return false;
 }
 
 function clearMapHoldTimer() {
@@ -2703,7 +2961,15 @@ function updateRobotEncounters() {
   showDialogue(nearestRobot.userData.label ?? "机器人", "你好！请问需要什么帮助吗？", 3.6);
 }
 
+function isMapFocusActive() {
+  return mapExpanded && mapHoldTriggered;
+}
+
 function updatePlayer(delta: number) {
+  if (isMapFocusActive()) {
+    playerVelocity.set(0, 0, 0);
+    return 0;
+  }
   if (dialogueOpen) {
     playerVelocity.set(0, 0, 0);
     return 0;
@@ -3985,11 +4251,14 @@ function updateSuitOxygen(delta: number) {
   if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
-  const drain = SUIT_OXYGEN_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
-  suitOxygen = Math.max(0, suitOxygen - drain * delta);
+  const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
+  suitOxygen = Math.max(0, suitOxygen - oxygenDrain * delta);
   if (moving) {
-    const staminaDrain = sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_MOVE_DRAIN_PER_SECOND;
+    const staminaDrain = !grounded ? STAMINA_JUMP_DRAIN_PER_SECOND : sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_WALK_DRAIN_PER_SECOND;
     stamina = Math.max(0, stamina - staminaDrain * delta);
+  } else if (grounded) {
+    stamina = Math.min(STAMINA_MAX, stamina + STAMINA_STAND_RECOVERY_PER_SECOND * delta);
+    if (stamina > STAMINA_LOW_THRESHOLD + 5) staminaWarningShown = false;
   }
   if (suitOxygen <= 20 && !oxygenWarningShown) {
     oxygenWarningShown = true;
@@ -4643,17 +4912,20 @@ function updateMap() {
     const spreadRatio = mapExpanded ? Math.sqrt(distanceRatio) : distanceRatio;
     const x = THREE.MathUtils.clamp(entry.lateral * spreadRatio, -1, 1) * radarRadius;
     const y = THREE.MathUtils.clamp(-entry.forward * spreadRatio, -1, 1) * radarRadius;
+    const markerScale = mapExpanded ? THREE.MathUtils.mapLinear(THREE.MathUtils.clamp(mapZoom, 0.65, 3.2), 0.65, 3.2, 0.86, 1.22) : 1;
     const marker = document.createElement("div");
     marker.className = `map-marker type-${entry.item.type}`;
     marker.classList.toggle("is-mission-target", entry.item.missionTarget);
     marker.classList.toggle("is-oxygen-supply-target", entry.item.oxygenSupplyTarget);
+    marker.classList.toggle("is-coin-target", entry.item.coinTarget);
+    if (entry.item.coinTarget) marker.textContent = "$";
     if (entry.item.unknown) marker.textContent = "?";
     if (mapExpanded && shouldShowExpandedMapLabel(entry.item, index)) {
       const label = document.createElement("span");
       label.textContent = entry.item.label;
       marker.appendChild(label);
     }
-    marker.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
+    marker.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px)) scale(${markerScale.toFixed(3)})`;
     mapRadar.appendChild(marker);
   });
 
@@ -4661,7 +4933,7 @@ function updateMap() {
 }
 
 function mapRangeForItem(itemRange: number) {
-  return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 : Math.min(itemRange, 320 / mapZoom);
+  return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 / mapZoom : Math.min(itemRange, 320 / mapZoom);
 }
 
 function shouldShowExpandedMapLabel(item: { missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean }, index: number) {

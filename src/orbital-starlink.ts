@@ -34,6 +34,7 @@ const RELEASE_INTERVAL_SOLS = 24;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchPosition = new THREE.Vector3();
 const scratchForward = new THREE.Vector3();
+let starlinkGlintTexture: THREE.CanvasTexture | null = null;
 
 export function createStarlinkConstellation(planetRadius: number) {
   const lowOrbitAltitude = LOW_ORBIT_KM * (planetRadius / MARS_RADIUS_KM);
@@ -92,8 +93,8 @@ export function updateStarlinkConstellation(constellation: StarlinkConstellation
     satellite.object.quaternion.setFromUnitVectors(WORLD_UP, scratchPosition.clone().normalize());
     satellite.object.rotateY(Math.atan2(scratchForward.x, scratchForward.z));
 
-    const glint = 0.72 + Math.sin(elapsedSeconds * 1.7 + index * 0.83) * 0.22;
-    satellite.light.intensity = (satellite.layer === "relay" ? 0.34 : 0.24) * stormDimming * glint;
+    const glint = 0.72 + Math.sin(elapsedSeconds * 1.7 + index * 0.83) * 0.18;
+    satellite.light.intensity = (satellite.layer === "relay" ? 0.12 : 0.09) * stormDimming * glint;
     satellite.object.visible = stormStrength < 0.96 || index % 3 === 0;
   });
 }
@@ -119,17 +120,28 @@ function generateStarlinkBatch(constellation: StarlinkConstellation, seedOffset:
   const orbitUnitPerKm = constellation.planetRadius / MARS_RADIUS_KM;
   const lowOrbitAltitude = LOW_ORBIT_KM * orbitUnitPerKm;
   const relayOrbitAltitude = RELAY_ORBIT_KM * orbitUnitPerKm;
-  const configs: Array<{ layer: StarlinkSatellite["layer"]; altitude: number; inclination: number }> = [
-    ...Array.from({ length: 6 }, () => ({ layer: "coverage" as const, altitude: lowOrbitAltitude, inclination: THREE.MathUtils.degToRad(28) })),
-    ...Array.from({ length: 2 }, () => ({ layer: "polar" as const, altitude: lowOrbitAltitude, inclination: THREE.MathUtils.degToRad(82) })),
-    ...Array.from({ length: 2 }, () => ({ layer: "relay" as const, altitude: relayOrbitAltitude, inclination: THREE.MathUtils.degToRad(48) })),
+  const configs: Array<{ layer: StarlinkSatellite["layer"]; altitude: number; inclination: number; trainIndex: number; memberIndex: number }> = [
+    ...Array.from({ length: 5 }, (_, memberIndex) => ({
+      layer: "coverage" as const,
+      altitude: lowOrbitAltitude,
+      inclination: THREE.MathUtils.degToRad(28),
+      trainIndex: 0,
+      memberIndex,
+    })),
+    ...Array.from({ length: 5 }, (_, memberIndex) => ({
+      layer: "relay" as const,
+      altitude: relayOrbitAltitude,
+      inclination: THREE.MathUtils.degToRad(48),
+      trainIndex: 1,
+      memberIndex,
+    })),
   ];
 
   configs.forEach((config, index) => {
     if (constellation.satellites.length >= constellation.maxSatellites) return;
     const absoluteIndex = seedOffset + index;
-    const raan = (absoluteIndex * 0.91 + batchIndex * 0.47) % (Math.PI * 2);
-    const phase = (index / configs.length) * Math.PI * 2 + batchIndex * 0.37;
+    const raan = (batchIndex * 0.47 + config.trainIndex * 1.34) % (Math.PI * 2);
+    const phase = batchIndex * 0.37 + config.trainIndex * Math.PI + config.memberIndex * 0.046;
     const orbitAxis = orbitAxisFromInclination(config.inclination, raan);
     const orbitRight = new THREE.Vector3(Math.cos(raan), 0, Math.sin(raan)).normalize();
     const orbitForward = orbitAxis.clone().cross(orbitRight).normalize();
@@ -141,7 +153,7 @@ function generateStarlinkBatch(constellation: StarlinkConstellation, seedOffset:
       orbitForward,
       orbitRadius: constellation.planetRadius + config.altitude,
       phase,
-      angularSpeed: (config.layer === "relay" ? 0.011 : 0.016) * (index % 2 === 0 ? 1 : -1),
+      angularSpeed: (config.layer === "relay" ? 0.011 : 0.016) * (config.trainIndex === 0 ? 1 : -1),
     });
     constellation.satellites.push(satellite);
     constellation.group.add(satellite.object);
@@ -173,7 +185,7 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     metalness: 0.32,
   });
 
-  const visibleScale = data.layer === "relay" ? 0.82 : 0.68;
+  const visibleScale = data.layer === "relay" ? 0.18 : 0.16;
   const bus = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.15), bodyMaterial);
   const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.012, 0.12), antennaMaterial);
   antenna.position.y = -0.026;
@@ -182,14 +194,26 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
   const rightPanel = leftPanel.clone();
   rightPanel.position.x = 0.36;
   const glint = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: getStarlinkGlintTexture(),
     color: data.layer === "relay" ? 0xb8e8ff : 0xf4fbff,
     transparent: true,
-    opacity: data.layer === "relay" ? 0.8 : 0.62,
+    opacity: data.layer === "relay" ? 0.52 : 0.44,
     depthWrite: false,
   }));
-  glint.scale.setScalar(data.layer === "relay" ? 1.35 : 1.0);
+  glint.scale.setScalar(data.layer === "relay" ? 0.34 : 0.28);
 
-  object.add(bus, antenna, leftPanel, rightPanel, glint);
+  const hitArea = new THREE.Mesh(
+    new THREE.SphereGeometry(4.1, 8, 6),
+    new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      colorWrite: false,
+      depthWrite: false,
+    })
+  );
+  hitArea.name = `${data.id} scale gun hit area`;
+
+  object.add(bus, antenna, leftPanel, rightPanel, glint, hitArea);
   object.scale.setScalar(visibleScale);
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
@@ -199,9 +223,31 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     }
   });
 
-  const light = new THREE.PointLight(data.layer === "relay" ? 0x9fe2ff : 0xf7fbff, data.layer === "relay" ? 0.34 : 0.24, 22);
+  const light = new THREE.PointLight(data.layer === "relay" ? 0x9fe2ff : 0xf7fbff, data.layer === "relay" ? 0.12 : 0.09, 18);
   object.add(light);
   return { ...data, object, light };
+}
+
+function getStarlinkGlintTexture() {
+  if (starlinkGlintTexture) return starlinkGlintTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    starlinkGlintTexture = new THREE.CanvasTexture(canvas);
+    return starlinkGlintTexture;
+  }
+  const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.32, "rgba(224,246,255,0.74)");
+  gradient.addColorStop(0.7, "rgba(154,220,255,0.16)");
+  gradient.addColorStop(1, "rgba(154,220,255,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+  starlinkGlintTexture = new THREE.CanvasTexture(canvas);
+  starlinkGlintTexture.colorSpace = THREE.SRGBColorSpace;
+  return starlinkGlintTexture;
 }
 
 function orbitAxisFromInclination(inclination: number, raan: number) {
