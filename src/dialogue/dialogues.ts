@@ -173,7 +173,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "按安全流程检查进气口和舱压。", next: "oxygen_safe", effects: ["trustUp", "integrityUp", "completeOxygen"] },
       { label: "直接手动重启压缩机。", next: "oxygen_fast", effects: ["autonomyUp", "integrityDown", "completeOxygen"] },
-      { label: "先授权 A-12 进入管线区。", next: "oxygen_robot", effects: ["trustUp", "integrityUp", "completeOxygen"] },
     ],
   },
   oxygen_safe: {
@@ -209,7 +208,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "优先供氧气站。", next: "solar_oxygen", effects: ["trustUp", "integrityUp", "completeSolar"] },
       { label: "优先保温室生态舱。", next: "solar_greenhouse", effects: ["autonomyUp", "completeSolar"] },
-      { label: "优先恢复通信塔。", next: "solar_comms", effects: ["autonomyUp", "integrityDown", "completeSolar"] },
     ],
   },
   solar_oxygen: {
@@ -245,7 +243,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "授权 A-12 按 Mother 安全流程执行。", next: "garage_authorize", effects: ["trustUp", "integrityUp", "completeGarage"] },
       { label: "我手动指定优先级，先修外部阀门。", next: "garage_manual", effects: ["autonomyUp", "completeGarage"] },
-      { label: "让 Mother 和 A-12 共同生成维修协议。", next: "garage_protocol", effects: ["trustUp", "autonomyUp", "integrityUp", "completeGarage"] },
     ],
   },
   garage_authorize: {
@@ -313,7 +310,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "你一直在这里等人？", next: "elon_intro_wait" },
       { label: "你为什么在返回飞船？", next: "elon_intro_ship" },
-      { label: "你和 Mother 谁说了算？", next: "elon_intro_authority" },
     ],
   },
   elon_intro_wait: {
@@ -349,7 +345,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "那你最想先拆什么？", next: "elon_rules_elevator" },
       { label: "如果没有数据呢？", next: "elon_rules_data" },
-      { label: "你会犯错吗？", next: "elon_rules_wrong" },
     ],
   },
   elon_rules_elevator: {
@@ -385,7 +380,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "那第一步应该造什么？", next: "elon_base_make" },
       { label: "前哨也有价值。", next: "elon_base_outpost" },
-      { label: "Mother 会说先活下来。", next: "elon_base_survive" },
     ],
   },
   elon_base_make: {
@@ -437,7 +431,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "那我该听谁的？", next: "elon_mother_both" },
       { label: "你低估了安全。", next: "elon_mother_safety" },
-      { label: "Mother 也在学习。", next: "elon_mother_learning" },
     ],
   },
   elon_mother_both: {
@@ -489,7 +482,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "你在给感情找工程理由。", next: "elon_fufu_value" },
       { label: "Mother 一开始会隔离它。", next: "elon_fufu_quarantine" },
-      { label: "如果算不出收益呢？", next: "elon_fufu_unknown" },
     ],
   },
   elon_fufu_value: {
@@ -533,7 +525,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "这会不会越权？", next: "elon_robots_authority" },
       { label: "从什么备件开始？", next: "elon_robots_parts" },
-      { label: "机器人会理解这个目标吗？", next: "elon_robots_understand" },
     ],
   },
   elon_robots_authority: {

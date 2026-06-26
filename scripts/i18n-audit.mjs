@@ -12,7 +12,8 @@ const html = readFileSync(join(root, "index.html"), "utf8");
 
 const zhI18n = extractRecord(main, '"zh-CN": {', '\n  "en-US": {');
 const enI18n = extractRecord(main, '"en-US": {', '\n};\n\nconst exactEnglishTexts');
-const exactEnglishTexts = extractRecord(main, "const exactEnglishTexts: Record<string, string> = {", "\n};\n\nconst englishPhrasePairs");
+const exactEnglishTexts = extractRecord(main, "const exactEnglishTexts: Record<string, string> = {", "\n};\n\nconst runtimeEnglishTexts");
+const runtimeEnglishTexts = extractRecord(main, "const runtimeEnglishTexts: Record<string, string> = {", "\n};\n\nconst englishPhrasePairs");
 const phraseSources = extractPhraseSources(main);
 const i18nKeys = extractHtmlI18nKeys(html);
 
@@ -31,7 +32,7 @@ for (const key of enI18n.keys()) {
   if (!zhI18n.has(key)) errors.push(`i18n key "${key}" 只有 en-US，没有 zh-CN。`);
 }
 
-const knownChinese = new Set([...zhI18n.values(), ...exactEnglishTexts.keys(), ...phraseSources]);
+const knownChinese = new Set([...zhI18n.values(), ...exactEnglishTexts.keys(), ...runtimeEnglishTexts.keys(), ...phraseSources]);
 const baseline = readBaseline();
 const suspectedAll = collectChineseStrings(sourceFiles)
   .filter((item) => !knownChinese.has(item.text))

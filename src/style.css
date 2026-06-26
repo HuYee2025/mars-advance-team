@@ -956,43 +956,43 @@ body:not(.hud-collapsed) #hud-toggle,
   border-left: 8px solid transparent;
   border-right: 8px solid transparent;
   border-bottom: 18px solid #ff3d2f;
-  filter: drop-shadow(0 0 10px rgba(255, 61, 47, 0.8));
+  filter: none;
   transform: translate(-50%, -65%);
 }
 
 .map-marker {
-  width: 7px;
-  height: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  background: rgba(255, 239, 187, 0.96);
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 245, 225, 0.72);
+  background: #ffeebb;
   border-radius: 50%;
-  box-shadow: 0 0 10px currentColor;
+  box-shadow: none;
   transform: translate(-50%, -50%);
 }
 
 .map-marker.type-ship {
-  color: #ffcf7a;
-  background: #ffcf7a;
+  color: #e6b06b;
+  background: #e6b06b;
 }
 
 .map-marker.type-building {
-  color: #79d9ff;
-  background: #79d9ff;
+  color: #7fd6f0;
+  background: #7fd6f0;
 }
 
 .map-marker.type-energy {
-  color: #f7f06b;
-  background: #f7f06b;
+  color: #d7c85c;
+  background: #d7c85c;
 }
 
 .map-marker.type-vehicle {
-  color: #9cff9b;
-  background: #9cff9b;
+  color: #8ecf90;
+  background: #8ecf90;
 }
 
 .map-marker.type-robot {
-  color: #d7d2c6;
-  background: #d7d2c6;
+  color: #c9c7bd;
+  background: #c9c7bd;
 }
 
 .map-marker.type-unknown {
@@ -1008,49 +1008,58 @@ body:not(.hud-collapsed) #hud-toggle,
   font-weight: 900;
   line-height: 18px;
   text-align: center;
-  text-shadow: 0 0 8px rgba(255, 217, 90, 0.92);
+  text-shadow: none;
 }
 
 .map-marker.type-oxygen {
-  color: #ff9f36;
-  background: #ff9f36;
+  color: #82dc72;
+  background: #82dc72;
 }
 
 .map-marker.type-orbital {
-  width: 10px;
-  height: 10px;
-  color: #aeeeff;
-  background: #d9fbff;
-  border-color: rgba(209, 250, 255, 0.95);
-  box-shadow:
-    0 0 0 5px rgba(105, 210, 255, 0.12),
-    0 0 18px rgba(139, 232, 255, 0.86);
+  width: 7px;
+  height: 7px;
+  color: #d4f6ff;
+  background: #d4f6ff;
+  border-color: rgba(209, 250, 255, 0.8);
+  box-shadow: none;
 }
 
 .map-marker.is-mission-target {
   z-index: 2;
   width: 13px;
   height: 13px;
-  border-color: rgba(215, 255, 201, 0.96);
-  background: #8cff86;
-  color: #8cff86;
-  box-shadow:
-    0 0 0 6px rgba(118, 255, 110, 0.14),
-    0 0 22px rgba(118, 255, 110, 0.9);
-  animation: mission-target-glow 1.15s ease-in-out infinite alternate;
+  border-color: rgba(255, 245, 170, 0.95);
+  background: #f3de49;
+  color: #f3de49;
+  box-shadow: none;
+  animation: none;
 }
 
 .map-marker.is-oxygen-supply-target {
   z-index: 2;
   width: 13px;
   height: 13px;
-  border-color: rgba(255, 211, 143, 0.96);
-  background: #ff9f36;
-  color: #ff9f36;
-  box-shadow:
-    0 0 0 6px rgba(255, 159, 54, 0.14),
-    0 0 22px rgba(255, 159, 54, 0.9);
-  animation: oxygen-supply-glow 1.15s ease-in-out infinite alternate;
+  border-color: rgba(174, 245, 154, 0.95);
+  background: #75d767;
+  color: #75d767;
+  box-shadow: none;
+  animation: none;
+}
+
+.map-marker.is-coin-target {
+  width: 10px;
+  height: 10px;
+  display: grid;
+  place-items: center;
+  border-color: rgba(111, 65, 22, 0.82);
+  background: #d89b34;
+  color: #4d2c0b;
+  box-shadow: none;
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 @keyframes mission-target-glow {
@@ -1099,6 +1108,12 @@ body:not(.hud-collapsed) #hud-toggle,
 .map-expanded .map-marker.is-oxygen-supply-target {
   width: 13px;
   height: 13px;
+}
+
+.map-expanded .map-marker.is-coin-target {
+  width: 10px;
+  height: 10px;
+  font-size: 7px;
 }
 
 .map-expanded .map-marker.type-unknown {
