@@ -195,10 +195,11 @@ const SCORE_HIDDEN_DISCOVERY = 30;
 const SCORE_ALL_BUILDINGS_EXPLORED = 100;
 const SCORE_FUNNY_DEFAULT = 10;
 const SCORE_FUNNY_PENALTY = -10;
-const COIN_GROUP_SIZE = 5;
+const COIN_GROUP_SIZE = 10;
 const COIN_REFRESH_SECONDS = 4 * 60 * 60;
 const COIN_COLLECT_RADIUS = 1.45;
 const COIN_SAFE_MARGIN = 3.2;
+const COIN_LINE_SPACING = 2.05;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
@@ -3894,22 +3895,23 @@ function createSafeCoinGroup(): CoinGroup | null {
     if (tangentA.lengthSq() < 0.0001) tangentA.set(1, 0, 0);
     tangentA.normalize();
     const tangentB = tangentA.clone().cross(centerNormal).normalize();
+    const lineAngle = Math.random() * Math.PI * 2;
+    const lineDirection = tangentA.clone().multiplyScalar(Math.cos(lineAngle)).addScaledVector(tangentB, Math.sin(lineAngle)).normalize();
+    const lineYaw = Math.atan2(lineDirection.x, lineDirection.z);
     const coinsForGroup: CoinPickup[] = [];
     let safe = true;
 
     for (let index = 0; index < COIN_GROUP_SIZE; index += 1) {
-      const angle = (index / COIN_GROUP_SIZE) * Math.PI * 2 + Math.random() * 0.18;
-      const radius = 1.55 + Math.random() * 1.2;
+      const offset = (index - (COIN_GROUP_SIZE - 1) / 2) * COIN_LINE_SPACING;
       const coinNormal = centerNormal
         .clone()
-        .addScaledVector(tangentA, Math.cos(angle) * radius / PLANET_RADIUS)
-        .addScaledVector(tangentB, Math.sin(angle) * radius / PLANET_RADIUS)
+        .addScaledVector(lineDirection, offset / PLANET_RADIUS)
         .normalize();
       if (!isSafeCoinNormal(coinNormal, COIN_SAFE_MARGIN)) {
         safe = false;
         break;
       }
-      const coin = createCoinPickup(coinNormal, angle);
+      const coin = createCoinPickup(coinNormal, lineYaw);
       coinsForGroup.push(coin);
     }
 
@@ -3962,11 +3964,9 @@ function createCoinVisual() {
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.16, 32), coinMaterial);
   body.rotation.x = Math.PI / 2;
   body.castShadow = true;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.73, 0.055, 8, 32), rimMaterial);
-  rim.rotation.x = Math.PI / 2;
   const mark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.72, 0.035), rimMaterial);
   mark.position.z = 0.09;
-  group.add(body, rim, mark);
+  group.add(body, mark);
   group.userData.label = "金币";
   return group;
 }
