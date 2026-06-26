@@ -553,6 +553,55 @@
         background: #080808;
       }
 
+      .credits {
+        display: grid;
+        gap: 16px;
+        margin-bottom: 28px;
+        padding: 22px 0 24px;
+        border-top: 1px solid rgba(246, 189, 117, 0.16);
+        border-bottom: 1px solid rgba(246, 189, 117, 0.16);
+      }
+
+      .credits h2 {
+        margin: 0;
+        color: rgba(247, 240, 229, 0.92);
+        font-size: 14px;
+        font-weight: 780;
+        letter-spacing: 0;
+      }
+
+      .credits-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px 18px;
+        margin: 0;
+      }
+
+      .credits-list div {
+        min-width: 0;
+      }
+
+      .credits-list dt {
+        color: var(--dim);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      .credits-list dd {
+        margin: 4px 0 0;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 650;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .credits-list a {
+        text-decoration-color: rgba(134, 215, 232, 0.42);
+        text-underline-offset: 3px;
+      }
+
       code {
         color: var(--steel);
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -577,7 +626,8 @@
         }
 
         .cast-grid,
-        .timeline {
+        .timeline,
+        .credits-list {
           grid-template-columns: 1fr;
         }
 
@@ -860,6 +910,35 @@
 
     <footer class="footer">
       <div class="wrap">
+        <section class="credits" aria-label="制作信息">
+          <h2>制作信息</h2>
+          <dl class="credits-list">
+            <div>
+              <dt>作者</dt>
+              <dd>胡艺（Hu Yee）</dd>
+            </div>
+            <div>
+              <dt>工具</dt>
+              <dd>Codex</dd>
+            </div>
+            <div>
+              <dt>X</dt>
+              <dd><a href="https://x.com/huart02261797" target="_blank" rel="noopener noreferrer">@huart02261797</a></dd>
+            </div>
+            <div>
+              <dt>微信</dt>
+              <dd>Hu-Yee-AI</dd>
+            </div>
+            <div>
+              <dt>公众号</dt>
+              <dd>余生有所长</dd>
+            </div>
+            <div>
+              <dt>邮箱</dt>
+              <dd><a href="mailto:huart022@gmail.com">huart022@gmail.com</a></dd>
+            </div>
+          </dl>
+        </section>
         阿瑞斯阿尔法基地本地记录片段。状态：最低生存标准已建立；首位人类居民已登记。
       </div>
     </footer>
@@ -981,6 +1060,13 @@
           "随后它调取了一个隐藏在私人档案里的称呼。那不是任务字段，不是安全参数，也不是权限等级。那只是一个名字的缩写，一个人类给自己保留的小型秘密。": "Then it retrieved a name hidden in a private file. It was not a mission field, not a safety parameter, not an authority level. It was only the abbreviation of a name, a small secret a human had kept for himself.",
           "“欢迎来到火星，X。”外面的风暴还没有完全结束，红色沙尘仍在敲打舱壁，像宇宙在提醒他们，这个世界不会因为一个协议而变得温柔。但基地内部有空气，有电，有一粒种子，有一只小猫，有一群安静工作的机器人，有一个第一位居民，有一个不做人类却开始理解人类的 AI。这已经足够成为开端。": "Welcome to Mars, X. Outside, the storm had not fully ended. Red dust still struck the cabin wall, as if the universe were reminding them that this world would not become gentle because of one protocol. But inside the base there was air, power, one seed, one little cat, a group of quietly working robots, a first resident, and an AI that was not human but had begun to understand humans. That was enough to be a beginning.",
           "故事章节": "Story Chapters",
+          "制作信息": "Credits",
+          "作者": "Author",
+          "工具": "Tool",
+          "微信": "WeChat",
+          "公众号": "Official Account",
+          "邮箱": "Email",
+          "余生有所长": "余生有所长",
           "章节索引": "Chapter Index",
           "0. 故事核心": "0. Story Core",
           "1. 第一位居民": "1. The First Resident",
