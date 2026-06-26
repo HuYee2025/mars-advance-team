@@ -197,8 +197,7 @@ export const WORLD_EXPANSION = 1.5;
 export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
 const CLOSE_METEOR_FLYBY_SECONDS = 90;
-const CLOSE_METEOR_MIN_ALTITUDE = 170;
-const CLOSE_METEOR_SURFACE_ARC = 0.92;
+const CLOSE_METEOR_ORBIT_ALTITUDE = 230;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -2334,13 +2333,14 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     map: getDustFogTexture(),
     color: isCloseFlyby ? 0x53cfff : 0x7c726b,
     transparent: true,
-    opacity: isCloseFlyby ? 0.22 : 0.08,
+    opacity: isCloseFlyby ? 0 : 0.08,
     depthWrite: false,
     depthTest: !isCloseFlyby,
     blending: isCloseFlyby ? THREE.AdditiveBlending : THREE.NormalBlending,
   }));
   coma.scale.set(isCloseFlyby ? 24 : 1.8, isCloseFlyby ? 17 : 1.25, 1);
   coma.userData.baseOpacity = coma.material.opacity;
+  coma.visible = !isCloseFlyby;
   coma.renderOrder = 2;
   trail.add(coma);
   trail.renderOrder = 2;
@@ -2364,10 +2364,10 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     starIndex,
     startDirection: flybyCenterDirection,
     orbitAxis,
-    orbitMin: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_MIN_ALTITUDE : PLANET_RADIUS + 980 + randomA * 460,
-    orbitMax: isCloseFlyby ? PLANET_RADIUS + 1550 : PLANET_RADIUS + 1460 + randomB * 820,
+    orbitMin: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_ORBIT_ALTITUDE : PLANET_RADIUS + 980 + randomA * 460,
+    orbitMax: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_ORBIT_ALTITUDE : PLANET_RADIUS + 1460 + randomB * 820,
     orbitSpeed: (isCloseFlyby ? (Math.PI * 2) / CLOSE_METEOR_FLYBY_SECONDS : (Math.PI * 2) / (420 + randomC * 260)) * (order === 1 ? -1 : 1),
-    phase: isCloseFlyby ? -0.16 : (randomA - 0.5) * 0.46,
+    phase: isCloseFlyby ? 0 : (randomA - 0.5) * 0.46,
     tailAngle: isCloseFlyby ? 0.12 : 0.035 + randomB * 0.055,
     tailLength: isCloseFlyby ? 195 : 18 + randomB * 24,
     wobbleAxis,
@@ -2901,8 +2901,7 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     const aheadPosition = meteorPositionAtAngle(meteor, angle + orbitDirection * 0.006, elapsed);
     const motionDirection = aheadPosition.sub(headPosition).normalize();
     const radialDirection = headPosition.clone().normalize();
-    const altitude = headPosition.length() - PLANET_RADIUS;
-    const closeness = meteor.closeFlyby ? 1 - THREE.MathUtils.smoothstep(altitude, CLOSE_METEOR_MIN_ALTITUDE + 90, 1180) : 1;
+    const closeness = 1;
     const scaleGunFactor = typeof meteor.head.userData.meteorScaleFactor === "number" ? meteor.head.userData.meteorScaleFactor : 1;
     const headScale = (meteor.closeFlyby ? THREE.MathUtils.lerp(0.1, 1, closeness) : 1) * scaleGunFactor;
 
@@ -2913,8 +2912,8 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     const headMaterial = meteor.head.material;
     if (meteor.closeFlyby && headMaterial instanceof THREE.MeshStandardMaterial) {
       headMaterial.opacity = THREE.MathUtils.lerp(0.18, 1, closeness);
-      headMaterial.emissive.setHex(0x0f5f8f);
-      headMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.04, 0.18, closeness);
+      headMaterial.emissive.setHex(0x171310);
+      headMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.01, 0.035, closeness);
     }
     meteor.trail.position.copy(headPosition);
     meteor.trail.visible = !meteor.closeFlyby || closeness > 0.08;
@@ -2937,6 +2936,7 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
       }
     });
     if (meteor.closeFlyby) {
+      meteor.trailComa.visible = false;
       meteor.trailComa.position
         .copy(motionDirection)
         .multiplyScalar(-18)
@@ -2959,18 +2959,12 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
 
 function meteorPositionAtAngle(meteor: Meteor, angle: number, elapsed: number) {
   if (meteor.closeFlyby) {
-    const distanceT = (1 - Math.cos(angle)) * 0.5;
-    const altitude = THREE.MathUtils.lerp(CLOSE_METEOR_MIN_ALTITUDE, meteor.orbitMax - PLANET_RADIUS, distanceT);
-    const surfaceAngle = Math.sin(angle) * CLOSE_METEOR_SURFACE_ARC;
-    const wobble = Math.sin(elapsed * meteor.wobbleSpeed + meteor.phase * 3.1) * meteor.wobbleAmount * 18;
     const trackNormal = meteor.startDirection
       .clone()
-      .multiplyScalar(Math.cos(surfaceAngle))
-      .addScaledVector(meteor.flybyTangent, Math.sin(surfaceAngle))
+      .multiplyScalar(Math.cos(angle))
+      .addScaledVector(meteor.flybyTangent, Math.sin(angle))
       .normalize();
-    return trackNormal
-      .multiplyScalar(PLANET_RADIUS + altitude)
-      .addScaledVector(meteor.wobbleAxis, wobble);
+    return trackNormal.multiplyScalar(meteor.orbitMin);
   }
   const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, 0.5 + Math.sin(angle * 0.47 + meteor.phase) * 0.5);
   const center = meteor.startDirection.clone().multiplyScalar(radius);

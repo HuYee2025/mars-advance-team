@@ -94,7 +94,7 @@ export function updateStarlinkConstellation(constellation: StarlinkConstellation
     satellite.object.rotateY(Math.atan2(scratchForward.x, scratchForward.z));
 
     const glint = 0.72 + Math.sin(elapsedSeconds * 1.7 + index * 0.83) * 0.18;
-    satellite.light.intensity = (satellite.layer === "relay" ? 0.12 : 0.09) * stormDimming * glint;
+    satellite.light.intensity = (satellite.layer === "relay" ? 0.18 : 0.14) * stormDimming * glint;
     satellite.object.visible = stormStrength < 0.96 || index % 3 === 0;
   });
 }
@@ -185,7 +185,7 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     metalness: 0.32,
   });
 
-  const visibleScale = data.layer === "relay" ? 0.18 : 0.16;
+  const visibleScale = data.layer === "relay" ? 0.25 : 0.22;
   const bus = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.15), bodyMaterial);
   const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.012, 0.12), antennaMaterial);
   antenna.position.y = -0.026;
@@ -197,10 +197,10 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     map: getStarlinkGlintTexture(),
     color: data.layer === "relay" ? 0xb8e8ff : 0xf4fbff,
     transparent: true,
-    opacity: data.layer === "relay" ? 0.52 : 0.44,
+    opacity: data.layer === "relay" ? 0.66 : 0.58,
     depthWrite: false,
   }));
-  glint.scale.setScalar(data.layer === "relay" ? 0.34 : 0.28);
+  glint.scale.setScalar(data.layer === "relay" ? 0.48 : 0.42);
 
   const hitArea = new THREE.Mesh(
     new THREE.SphereGeometry(4.1, 8, 6),
