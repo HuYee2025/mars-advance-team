@@ -510,6 +510,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.unknownLife": "未知生命迹象",
     "map.unknownObject": "未知物体",
     "map.coin": "金币",
+    "map.headingLabel": "方位",
     "interaction.title": "互动",
     "interaction.choose": "选择互动",
     "interaction.close": "收起",
@@ -571,6 +572,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.unknownLife": "Unknown life sign",
     "map.unknownObject": "Unknown object",
     "map.coin": "Coin",
+    "map.headingLabel": "HDG",
     "interaction.title": "Interact",
     "interaction.choose": "Choose Interaction",
     "interaction.close": "Close",
@@ -5381,7 +5383,7 @@ function formatMapCoordinate(value: number) {
 function updateMapCompass(radarSize: number) {
   const heading = normalizedHeadingDegrees();
   const roundedHeading = Math.round(heading) % 360;
-  mapHeading.textContent = `HDG ${roundedHeading.toString().padStart(3, "0")}°`;
+  mapHeading.textContent = `${tr("map.headingLabel")} ${roundedHeading.toString().padStart(3, "0")}°`;
   const radius = radarSize * 0.405;
   mapCompass.querySelectorAll<HTMLElement>("[data-bearing]").forEach((tick) => {
     const bearing = Number(tick.dataset.bearing ?? 0);
