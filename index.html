@@ -9,6 +9,64 @@
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>火星先遣队 第一位人类</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #1c0d09;
+        color: #f7efe3;
+      }
+
+      html,
+      body,
+      #app {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body {
+        min-width: 320px;
+        background: #1c0d09;
+      }
+
+      #app {
+        position: relative;
+        background:
+          radial-gradient(circle at 50% 12%, rgba(255, 183, 108, 0.14), transparent 24%),
+          linear-gradient(180deg, #24100d 0%, #4f2015 54%, #1e0e0a 100%);
+      }
+
+      #scene-root {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+      }
+
+      #title-screen {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+      }
+
+      body:not(.is-playing) .hud,
+      body:not(.is-playing) .hud-buttons,
+      body:not(.is-playing) #mission-banner,
+      body:not(.is-playing) #labels,
+      body:not(.is-playing) #map-overlay,
+      body:not(.is-playing) #interaction-prompt,
+      body:not(.is-playing) #interaction-choice,
+      body:not(.is-playing) #scale-gun-overlay,
+      body:not(.is-playing) #camera-overlay,
+      body:not(.is-playing) #photo-viewer,
+      body:not(.is-playing) #dialogue-stage,
+      body:not(.is-playing) #exit-confirm,
+      body:not(.is-playing) #joystick,
+      body:not(.is-playing) .mobile-actions,
+      body:not(.is-playing) #controls-guide {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <main id="app" aria-label="火星先遣队 3D Demo" data-i18n-attr="aria-label:app.aria">
@@ -97,11 +155,18 @@
           <div class="map-radar" id="map-radar">
             <div class="map-ring ring-a"></div>
             <div class="map-ring ring-b"></div>
+            <div class="map-compass" id="map-compass" aria-hidden="true">
+              <span data-bearing="0">N</span>
+              <span data-bearing="90">E</span>
+              <span data-bearing="180">S</span>
+              <span data-bearing="270">W</span>
+            </div>
             <div class="map-cross x"></div>
             <div class="map-cross y"></div>
             <div class="map-player" aria-hidden="true"></div>
           </div>
           <div class="map-coordinates" id="map-coordinates">X 000 / Z 000</div>
+          <div class="map-heading" id="map-heading">HDG 000°</div>
           <div class="map-list" id="map-list"></div>
         </div>
       </section>
@@ -118,6 +183,26 @@
         <div class="scale-actions">
           <button id="scale-gun-shrink" type="button" data-i18n="scale.shrink">缩小</button>
           <button id="scale-gun-grow" type="button" data-i18n="scale.grow">放大</button>
+        </div>
+      </section>
+      <section id="camera-overlay" aria-label="相机取景框" aria-hidden="true">
+        <div class="camera-reticle" aria-hidden="true">
+          <span></span>
+        </div>
+        <div class="camera-readout">
+          <strong id="camera-zoom-readout">CAM 1.0x</strong>
+          <span data-i18n="camera.instructions">A/D 转向 / W/S 缩放 / E 或 Enter 拍照 / G 收起</span>
+        </div>
+      </section>
+      <section id="photo-viewer" aria-label="照片墙查看器" aria-hidden="true">
+        <div class="photo-viewer-panel" role="dialog" aria-modal="true">
+          <div class="photo-viewer-head">
+            <strong id="photo-viewer-title">PHOTO 01 / 07</strong>
+            <span data-i18n="photoViewer.instructions">A/D 切换 / W 放大 / S 恢复 / E 下载 / Q 退出</span>
+          </div>
+          <div class="photo-viewer-stage">
+            <img id="photo-viewer-image" alt="火星照片" />
+          </div>
         </div>
       </section>
       <div id="dialogue-box" aria-live="polite"></div>

@@ -175,6 +175,7 @@ export type Meteor = {
   head: THREE.Mesh;
   trail: THREE.Group;
   trailPuffs: THREE.Sprite[];
+  trailComa: THREE.Sprite;
   starAttribute: THREE.BufferAttribute;
   starIndex: number;
   startDirection: THREE.Vector3;
@@ -196,7 +197,8 @@ export const WORLD_EXPANSION = 1.5;
 export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
 const CLOSE_METEOR_FLYBY_SECONDS = 90;
-const CLOSE_METEOR_MIN_ALTITUDE = 105;
+const CLOSE_METEOR_MIN_ALTITUDE = 170;
+const CLOSE_METEOR_SURFACE_ARC = 0.92;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -235,6 +237,12 @@ function spread(value: number) {
 export function expandWorldCoordinate(value: number) {
   return value * WORLD_EXPANSION;
 }
+
+const CLOSE_METEOR_CENTER_NORMAL = planetNormal(expandWorldCoordinate(-18), expandWorldCoordinate(-124), new THREE.Vector3());
+const CLOSE_METEOR_LOOK_NORMAL = planetNormal(expandWorldCoordinate(18), expandWorldCoordinate(18), new THREE.Vector3());
+const CLOSE_METEOR_FORWARD = CLOSE_METEOR_LOOK_NORMAL.clone().sub(CLOSE_METEOR_CENTER_NORMAL).projectOnPlane(CLOSE_METEOR_CENTER_NORMAL).normalize();
+const CLOSE_METEOR_FLYBY_TANGENT = CLOSE_METEOR_FORWARD.clone().cross(CLOSE_METEOR_CENTER_NORMAL).normalize();
+const CLOSE_METEOR_WOBBLE_AXIS = CLOSE_METEOR_CENTER_NORMAL.clone().cross(CLOSE_METEOR_FLYBY_TANGENT).normalize();
 
 function mat(color: number, roughness = 0.76, metalness = 0.08, emissive = 0x000000) {
   return new THREE.MeshStandardMaterial({
@@ -2278,6 +2286,7 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
   const randomB = seededNoise(starIndex, 41.77);
   const randomC = seededNoise(starIndex, 89.31);
   const isCloseFlyby = order === 0;
+  const flybyCenterDirection = isCloseFlyby ? CLOSE_METEOR_CENTER_NORMAL.clone() : direction.clone();
   const meteorColor = isCloseFlyby ? 0x8a8680 : order === 1 ? 0x6f6d68 : 0x79746e;
   const headRadius = isCloseFlyby ? 13.2 : 0.62 + randomA * 0.32;
   const head = new THREE.Mesh(
@@ -2309,12 +2318,12 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
       map: getDustFogTexture(),
       color: isCloseFlyby ? 0x65d9ff : order === 1 ? 0x8e8075 : 0x9a7b68,
       transparent: true,
-      opacity: (isCloseFlyby ? 0.76 : 0.18) * Math.pow(1 - t, isCloseFlyby ? 0.74 : 1.08),
+      opacity: (isCloseFlyby ? 0.46 : 0.18) * Math.pow(1 - t, isCloseFlyby ? 0.78 : 1.08),
       depthWrite: false,
       depthTest: !isCloseFlyby,
       blending: isCloseFlyby ? THREE.AdditiveBlending : THREE.NormalBlending,
     }));
-    const scale = (isCloseFlyby ? 8.4 : 1.15) * (1.05 + t * (isCloseFlyby ? 3.35 : 2.65));
+    const scale = (isCloseFlyby ? 7.2 : 1.15) * (1.05 + t * (isCloseFlyby ? 3.2 : 2.65));
     puff.scale.set(scale, scale * (isCloseFlyby ? 0.82 : 0.72), scale);
     puff.userData.baseOpacity = puff.material.opacity;
     puff.renderOrder = 2;
@@ -2325,34 +2334,35 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     map: getDustFogTexture(),
     color: isCloseFlyby ? 0x53cfff : 0x7c726b,
     transparent: true,
-    opacity: isCloseFlyby ? 0.58 : 0.08,
+    opacity: isCloseFlyby ? 0.22 : 0.08,
     depthWrite: false,
     depthTest: !isCloseFlyby,
     blending: isCloseFlyby ? THREE.AdditiveBlending : THREE.NormalBlending,
   }));
-  coma.scale.set(isCloseFlyby ? 36 : 1.8, isCloseFlyby ? 26 : 1.25, 1);
-  coma.renderOrder = 1;
+  coma.scale.set(isCloseFlyby ? 24 : 1.8, isCloseFlyby ? 17 : 1.25, 1);
+  coma.userData.baseOpacity = coma.material.opacity;
+  coma.renderOrder = 2;
   trail.add(coma);
   trail.renderOrder = 2;
 
   const seed = new THREE.Vector3(Math.sin(starIndex * 12.9898), Math.cos(starIndex * 78.233), Math.sin(starIndex * 37.719)).normalize();
-  let orbitAxis = direction.clone().cross(seed);
+  let orbitAxis = flybyCenterDirection.clone().cross(seed);
   if (orbitAxis.lengthSq() < 0.0001) {
-    orbitAxis = direction.clone().cross(WORLD_UP);
+    orbitAxis = flybyCenterDirection.clone().cross(WORLD_UP);
   }
   if (orbitAxis.lengthSq() < 0.0001) {
-    orbitAxis = direction.clone().cross(new THREE.Vector3(1, 0, 0));
+    orbitAxis = flybyCenterDirection.clone().cross(new THREE.Vector3(1, 0, 0));
   }
   orbitAxis.normalize();
-  const wobbleAxis = orbitAxis.clone().cross(direction).normalize();
-  const flybyTangent = orbitAxis.clone().cross(direction).normalize();
+  const wobbleAxis = isCloseFlyby ? CLOSE_METEOR_WOBBLE_AXIS.clone() : orbitAxis.clone().cross(flybyCenterDirection).normalize();
+  const flybyTangent = isCloseFlyby ? CLOSE_METEOR_FLYBY_TANGENT.clone() : orbitAxis.clone().cross(flybyCenterDirection).normalize();
 
   return {
     head,
     trail,
     starAttribute,
     starIndex,
-    startDirection: direction.clone(),
+    startDirection: flybyCenterDirection,
     orbitAxis,
     orbitMin: isCloseFlyby ? PLANET_RADIUS + CLOSE_METEOR_MIN_ALTITUDE : PLANET_RADIUS + 980 + randomA * 460,
     orbitMax: isCloseFlyby ? PLANET_RADIUS + 1550 : PLANET_RADIUS + 1460 + randomB * 820,
@@ -2364,6 +2374,7 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
     wobbleSpeed: isCloseFlyby ? 0.08 : 0.27 + randomC * 0.42,
     wobbleAmount: isCloseFlyby ? 0.02 : 0.08 + randomA * 0.22,
     trailPuffs,
+    trailComa: coma,
     closeFlyby: isCloseFlyby,
     flybyTangent,
   };
@@ -2903,7 +2914,7 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     if (meteor.closeFlyby && headMaterial instanceof THREE.MeshStandardMaterial) {
       headMaterial.opacity = THREE.MathUtils.lerp(0.18, 1, closeness);
       headMaterial.emissive.setHex(0x0f5f8f);
-      headMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.12, 0.72, closeness);
+      headMaterial.emissiveIntensity = THREE.MathUtils.lerp(0.04, 0.18, closeness);
     }
     meteor.trail.position.copy(headPosition);
     meteor.trail.visible = !meteor.closeFlyby || closeness > 0.08;
@@ -2915,16 +2926,31 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
         .multiplyScalar(-meteor.tailLength * t)
         .addScaledVector(radialDirection, meteor.closeFlyby ? -10.5 * t : -2.2 * t)
         .addScaledVector(meteor.wobbleAxis, curl * (meteor.closeFlyby ? 1.7 : 1));
-      const base = meteor.closeFlyby ? 8.4 : meteor.tailLength > 40 ? 2.8 : 1.15;
-      const scale = base * (1.05 + t * (meteor.closeFlyby ? 3.35 : 2.15)) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.34, 1, closeness) : 1);
+      const base = meteor.closeFlyby ? 7.2 : meteor.tailLength > 40 ? 2.8 : 1.15;
+      const scale = base * (1.05 + t * (meteor.closeFlyby ? 3.2 : 2.15)) * (0.92 + Math.sin(elapsed * 2.1 + index) * 0.06) * (meteor.closeFlyby ? THREE.MathUtils.lerp(0.28, 1, closeness) : 1);
       puff.scale.set(scale, scale * (meteor.closeFlyby ? 0.82 : 0.72), scale);
       const puffMaterial = puff.material;
       if (meteor.closeFlyby && puffMaterial instanceof THREE.SpriteMaterial) {
         const baseOpacity = puff.userData.baseOpacity ?? puffMaterial.opacity;
         puff.userData.baseOpacity = baseOpacity;
-        puffMaterial.opacity = baseOpacity * THREE.MathUtils.lerp(0.18, 1, closeness);
+        puffMaterial.opacity = baseOpacity * THREE.MathUtils.lerp(0.12, 1, closeness);
       }
     });
+    if (meteor.closeFlyby) {
+      meteor.trailComa.position
+        .copy(motionDirection)
+        .multiplyScalar(-18)
+        .addScaledVector(radialDirection, -6)
+        .addScaledVector(meteor.wobbleAxis, Math.sin(elapsed * 2.4 + meteor.phase) * 3.2);
+      meteor.trailComa.scale.setScalar(THREE.MathUtils.lerp(16, 26, closeness));
+      meteor.trailComa.scale.y *= 0.68;
+      const comaMaterial = meteor.trailComa.material;
+      if (comaMaterial instanceof THREE.SpriteMaterial) {
+        const baseOpacity = meteor.trailComa.userData.baseOpacity ?? comaMaterial.opacity;
+        meteor.trailComa.userData.baseOpacity = baseOpacity;
+        comaMaterial.opacity = baseOpacity * THREE.MathUtils.lerp(0.1, 1, closeness);
+      }
+    }
 
     meteor.starAttribute.setXYZ(meteor.starIndex, headPosition.x, headPosition.y, headPosition.z);
     meteor.starAttribute.needsUpdate = true;
@@ -2934,13 +2960,16 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
 function meteorPositionAtAngle(meteor: Meteor, angle: number, elapsed: number) {
   if (meteor.closeFlyby) {
     const distanceT = (1 - Math.cos(angle)) * 0.5;
-    const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, distanceT);
-    const sideOffset = Math.sin(angle) * 820;
+    const altitude = THREE.MathUtils.lerp(CLOSE_METEOR_MIN_ALTITUDE, meteor.orbitMax - PLANET_RADIUS, distanceT);
+    const surfaceAngle = Math.sin(angle) * CLOSE_METEOR_SURFACE_ARC;
     const wobble = Math.sin(elapsed * meteor.wobbleSpeed + meteor.phase * 3.1) * meteor.wobbleAmount * 18;
-    return meteor.startDirection
+    const trackNormal = meteor.startDirection
       .clone()
-      .multiplyScalar(radius)
-      .addScaledVector(meteor.flybyTangent, sideOffset)
+      .multiplyScalar(Math.cos(surfaceAngle))
+      .addScaledVector(meteor.flybyTangent, Math.sin(surfaceAngle))
+      .normalize();
+    return trackNormal
+      .multiplyScalar(PLANET_RADIUS + altitude)
       .addScaledVector(meteor.wobbleAxis, wobble);
   }
   const radius = THREE.MathUtils.lerp(meteor.orbitMin, meteor.orbitMax, 0.5 + Math.sin(angle * 0.47 + meteor.phase) * 0.5);
