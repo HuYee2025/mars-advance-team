@@ -394,37 +394,39 @@ h1 {
 
 #reward-readout {
   position: absolute;
-  top: 0;
-  right: calc(var(--hud-button-size) + 10px);
+  top: 2px;
+  right: calc(var(--hud-button-size) + 13px);
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: var(--hud-button-size);
-  padding: 0 10px;
-  border: 1px solid rgba(255, 210, 151, 0.32);
-  border-radius: 999px;
-  background: rgba(28, 12, 8, 0.62);
+  gap: 12px;
+  min-height: calc(var(--hud-button-size) - 4px);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #ffe0a8;
   font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: 15px;
+  font-weight: 1000;
   line-height: 1;
   pointer-events: none;
-  text-shadow: 0 0 10px rgba(255, 190, 90, 0.28);
-  backdrop-filter: blur(10px);
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.86),
+    0 0 10px rgba(255, 190, 90, 0.48),
+    0 0 24px rgba(255, 130, 34, 0.18);
 }
 
 #reward-readout span {
   display: inline-block;
   transform-origin: center;
+  white-space: nowrap;
 }
 
 #coin-readout {
-  color: #ffe15f;
+  color: #ffe45f;
 }
 
 #score-readout {
-  color: #9ee8ff;
+  color: #a9efff;
 }
 
 #reward-readout span.is-burst {
