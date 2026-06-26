@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import marsAlbedoUrl from "./assets/mars-albedo-generated.webp";
 import meteorRockUrl from "./assets/meteor-rock-generated.png";
+import { createStarlinkConstellation, type StarlinkConstellation } from "./orbital-starlink";
 
 export type Interactable = {
   id:
@@ -71,6 +72,7 @@ export type MarsWorld = {
   colliders: CircleCollider[];
   rovers: THREE.Group[];
   meteors: Meteor[];
+  starlinkConstellation: StarlinkConstellation;
   solarArrays: THREE.Group[];
   elevators: ElevatorControl[];
   habitatDoor: HabitatDoorControl;
@@ -310,6 +312,8 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const skyDust = createSkyDust();
   scene.add(skyDust.object);
   const meteors = skyDust.meteors;
+  const starlinkConstellation = createStarlinkConstellation(PLANET_RADIUS);
+  scene.add(starlinkConstellation.group);
   addRockField(scene, colliders);
 
   const base = new THREE.Group();
@@ -607,6 +611,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     colliders,
     rovers,
     meteors,
+    starlinkConstellation,
     solarArrays,
     elevators,
     habitatDoor,
@@ -2288,6 +2293,9 @@ function createMeteorFromStar(direction: THREE.Vector3, starAttribute: THREE.Buf
       opacity: isCloseFlyby ? 1 : 0.78 + randomB * 0.12,
     })
   );
+  head.userData.meteorId = `meteor-${order + 1}`;
+  head.userData.scaleGunKind = "meteor";
+  head.userData.meteorScaleFactor = 1;
   head.rotation.set(randomA * Math.PI, randomB * Math.PI, randomC * Math.PI);
   head.castShadow = true;
   head.renderOrder = 3;
@@ -2882,7 +2890,8 @@ export function updateMeteors(meteors: Meteor[], elapsed: number) {
     const radialDirection = headPosition.clone().normalize();
     const altitude = headPosition.length() - PLANET_RADIUS;
     const closeness = meteor.closeFlyby ? 1 - THREE.MathUtils.smoothstep(altitude, CLOSE_METEOR_MIN_ALTITUDE + 90, 1180) : 1;
-    const headScale = meteor.closeFlyby ? THREE.MathUtils.lerp(0.1, 1, closeness) : 1;
+    const scaleGunFactor = typeof meteor.head.userData.meteorScaleFactor === "number" ? meteor.head.userData.meteorScaleFactor : 1;
+    const headScale = (meteor.closeFlyby ? THREE.MathUtils.lerp(0.1, 1, closeness) : 1) * scaleGunFactor;
 
     meteor.head.position.copy(headPosition);
     meteor.head.scale.setScalar(headScale);

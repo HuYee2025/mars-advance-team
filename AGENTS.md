@@ -4,7 +4,8 @@
 
 1. `docs/project-management.md`
 2. `docs/production-blueprint.md`
-3. 当前任务相关的 `docs/lore/*.md`
+3. `docs/dev-log/current-handoff.md`
+4. 当前任务相关的 `docs/lore/*.md`
 
 ## 工作原则
 
@@ -18,6 +19,7 @@
 
 - 总控文档：`docs/production-blueprint.md`
 - 协作制度：`docs/project-management.md`
+- 当前交接：`docs/dev-log/current-handoff.md`
 - 1.0 交接记录：`docs/dev-log/v1-implementation.md`
 - 角色和世界观：`docs/lore/`
 - 美术方向：`docs/art-direction.md`
@@ -33,3 +35,9 @@
 - 新 UI/交互规则：更新 `docs/production-blueprint.md` 或 `docs/tech-plan.md`
 - 新素材：更新相关 `docs/lore/*.md` 或 `docs/art-direction.md`
 - 重要决策：更新 `docs/decision-log.md`
+
+## 长对话压缩规则
+
+- 同一对话如果已经发生约 3 次自动压缩，先进入交接检查，不继续默认推进大型修改。
+- 交接检查先确认重要技术、UI、剧情、设定和实现状态是否写入项目文件。
+- 如果记录完整，建议开启新对话继续；如果记录不完整，先补 `docs/dev-log/current-handoff.md` 或相关权威文档。

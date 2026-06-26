@@ -3,6 +3,13 @@ import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
+import {
+  ensureStarlinkSchedule,
+  maybeGenerateScheduledStarlinkBatch,
+  starlinkStatusText,
+  starlinkStatusTextEn,
+  updateStarlinkConstellation,
+} from "./orbital-starlink";
 import { createMarsEngineer, updateMarsEngineer } from "./player";
 import {
   characters,
@@ -249,6 +256,7 @@ const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 
 type ScaleGunTarget = {
   label: string;
   object: THREE.Object3D;
+  kind?: "starlink" | "meteor";
 };
 
 type ScaleGunEffect = {
@@ -629,6 +637,12 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["火星足球", "Mars Football"],
   ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
   ["火星足球进球", "Mars football goal"],
+  ["轨道链路", "Orbital Link"],
+  ["下一批", "Next batch"],
+  ["星链卫星命中", "Starlink satellite hit"],
+  ["流星命中", "Meteor hit"],
+  ["流星", "Meteor"],
+  ["近火流星", "Near-Mars Meteor"],
   ["接听 Mother 呼叫", "Answer Mother"],
   ["与维修机器人通话", "Talk to maintenance robot"],
   ["安抚 福福", "Comfort Fufu"],
@@ -1172,13 +1186,17 @@ function tr(key: string, params: Record<string, string | number> = {}) {
 }
 
 function currentAresCalendarDate(now = Date.now()) {
-  const elapsedSols = Math.max(0, Math.floor((now - ARES_CALENDAR_EPOCH_UTC) / MARS_SOL_MILLISECONDS));
-  const absoluteSol = ARES_CALENDAR_BASE_SOL + elapsedSols;
+  const absoluteSol = currentAresAbsoluteSol(now);
   const yearOffset = Math.floor((absoluteSol - 1) / ARES_SOLS_PER_YEAR);
   return {
     year: ARES_CALENDAR_BASE_YEAR + yearOffset,
     sol: ((absoluteSol - 1) % ARES_SOLS_PER_YEAR) + 1,
   };
+}
+
+function currentAresAbsoluteSol(now = Date.now()) {
+  const elapsedSols = Math.max(0, Math.floor((now - ARES_CALENDAR_EPOCH_UTC) / MARS_SOL_MILLISECONDS));
+  return ARES_CALENDAR_BASE_SOL + elapsedSols;
 }
 
 function titleDateText() {
@@ -2213,14 +2231,18 @@ function findScaleGunTarget(): ScaleGunTarget | null {
 function getScaleGunTargets() {
   const targets: ScaleGunTarget[] = [];
   const seen = new Set<string>();
-  const addTarget = (label: string, object: THREE.Object3D) => {
+  const addTarget = (label: string, object: THREE.Object3D, kind?: ScaleGunTarget["kind"]) => {
     if (!object.visible || seen.has(object.uuid)) return;
     seen.add(object.uuid);
-    targets.push({ label, object });
+    targets.push({ label, object, kind });
   };
 
   for (const landmark of world.landmarks) addTarget(landmark.label, landmark.object);
   for (const object of world.unnumberedObjects) addTarget("未知物体", object.object);
+  for (const satellite of world.starlinkConstellation.satellites) addTarget(satellite.id.toUpperCase(), satellite.object, "starlink");
+  for (const meteor of world.meteors) {
+    if (meteor.closeFlyby) addTarget("近火流星", meteor.head, "meteor");
+  }
   if (sunBody) addTarget("太阳", sunBody);
   if (fufu.visible) addTarget("福福", fufu);
   return targets;
@@ -2247,10 +2269,13 @@ function fireScaleGun(mode: "shrink" | "grow") {
   const nextFactor = THREE.MathUtils.clamp(effect.factor * multiplier, SCALE_GUN_MIN_FACTOR, SCALE_GUN_MAX_FACTOR);
   effect.factor = nextFactor;
   effect.expiresAt = elapsedTime + SCALE_GUN_DURATION_SECONDS;
+  if (scaleGunTarget.kind === "meteor") scaleGunTarget.object.userData.meteorScaleFactor = nextFactor;
   scaleGunTarget.object.scale.copy(effect.baseScale).multiplyScalar(nextFactor);
   showDialogue("缩放枪", `${scaleGunTarget.label} ${mode === "grow" ? "放大" : "缩小"}到 ${nextFactor.toFixed(2)}x，60 秒后恢复。`, 2.2);
   playUiBeep();
   if (scaleGunTarget.label === "太阳") awardFunnyScore(`scale_sun_${mode}`, mode === "grow" ? "放大太阳" : "缩小太阳");
+  if (scaleGunTarget.kind === "starlink") awardHiddenDiscovery(`starlink:${scaleGunTarget.object.userData.starlinkId ?? scaleGunTarget.object.uuid}`, "星链卫星命中");
+  if (scaleGunTarget.kind === "meteor") awardHiddenDiscovery(`meteor:${scaleGunTarget.object.userData.meteorId ?? scaleGunTarget.object.uuid}`, "流星命中");
 }
 
 function getScaleGunEffect(object: THREE.Object3D) {
@@ -2270,7 +2295,10 @@ function restoreExpiredScaleGunEffects() {
   for (const [uuid, effect] of scaleGunEffects) {
     if (elapsedTime < effect.expiresAt) continue;
     const object = scene.getObjectByProperty("uuid", uuid);
-    if (object) object.scale.copy(effect.baseScale);
+    if (object) {
+      if (object.userData.scaleGunKind === "meteor") object.userData.meteorScaleFactor = 1;
+      object.scale.copy(effect.baseScale);
+    }
     scaleGunEffects.delete(uuid);
   }
 }
@@ -2278,7 +2306,10 @@ function restoreExpiredScaleGunEffects() {
 function clearScaleGunEffects() {
   for (const [uuid, effect] of scaleGunEffects) {
     const object = scene.getObjectByProperty("uuid", uuid);
-    if (object) object.scale.copy(effect.baseScale);
+    if (object) {
+      if (object.userData.scaleGunKind === "meteor") object.userData.meteorScaleFactor = 1;
+      object.scale.copy(effect.baseScale);
+    }
   }
   scaleGunEffects.clear();
 }
@@ -2478,6 +2509,7 @@ function animate() {
   updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
+  updateStarlink();
   updateCoinGroup(delta);
   updateHiddenDiscoveries();
   updateHabitatOccupancy();
@@ -2625,6 +2657,19 @@ function updateWeather() {
   fog.color.copy(new THREE.Color(0x120a0a).lerp(new THREE.Color(0x8d3a20), stormStrength));
   if (scene.background instanceof THREE.Color) scene.background.copy(clearSkyColor).lerp(stormSkyColor, stormStrength * 0.82);
   renderer.toneMappingExposure = THREE.MathUtils.lerp(1.08, 0.72, stormStrength);
+}
+
+function updateStarlink() {
+  const absoluteSol = currentAresAbsoluteSol();
+  ensureStarlinkSchedule(world.starlinkConstellation, absoluteSol);
+  maybeGenerateScheduledStarlinkBatch(world.starlinkConstellation, absoluteSol);
+  updateStarlinkConstellation(world.starlinkConstellation, elapsedTime, stormStrength);
+}
+
+function starlinkDisplayStatus() {
+  const absoluteSol = currentAresAbsoluteSol();
+  ensureStarlinkSchedule(world.starlinkConstellation, absoluteSol);
+  return isEnglish() ? starlinkStatusTextEn(world.starlinkConstellation, absoluteSol) : starlinkStatusText(world.starlinkConstellation, absoluteSol);
 }
 
 function updateScheduledCalls() {
@@ -4554,6 +4599,21 @@ function updateMap() {
     });
   }
 
+  if (isStarlinkMapVisible()) {
+    mapItems.push({
+      label: starlinkDisplayStatus(),
+      object: world.starlinkConstellation.anchor,
+      x: 0,
+      z: 0,
+      mapRange: PLANET_RADIUS * Math.PI,
+      type: "orbital",
+      unknown: false,
+      missionTarget: false,
+      oxygenSupplyTarget: false,
+      coinTarget: false,
+    });
+  }
+
   const nearby = mapItems
     .map((item) => {
       const landmarkNormal = new THREE.Vector3();
@@ -5614,6 +5674,10 @@ function isPatrolAvailable() {
   return ["m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
 }
 
+function isStarlinkMapVisible() {
+  return ["m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+}
+
 function isElonSideQuestTarget(id: Interactable["id"]) {
   return !elonElevatorRepaired && elonSideStep !== "available" && elonSideStep !== "complete" && elonMissionTargets[elonSideStep] === id;
 }
@@ -5665,6 +5729,7 @@ function setCurrentMissionText() {
   if (elonElevatorRepaired && !elonMet) sideHints.push("支线：乘坐 03 飞船升降梯，在高空廊道与 Elon 通话");
   if (isCargoAvailable() && cargoSideStep !== "complete") sideHints.push("支线：调查 A-01 的错位货箱");
   if (isPatrolAvailable() && patrolSideStep !== "complete") sideHints.push("支线：跟进 P-03 的外围异常");
+  if (isStarlinkMapVisible()) sideHints.push(`轨道链路：${starlinkDisplayStatus()}`);
   setMission(sideHints.length ? `${textByStep[missionStep]} ｜ ${sideHints.join("；")}` : textByStep[missionStep]);
 }
 
