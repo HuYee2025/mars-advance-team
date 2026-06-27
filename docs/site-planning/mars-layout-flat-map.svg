@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 520" role="img" aria-labelledby="title desc">
+  <title id="title">Mars Layout Flat Map</title>
+  <desc id="desc">Flattened planning map for ARES Base Alpha, split into front/base hemisphere and back/dark hemisphere.</desc>
+  <style>
+    svg { background: #080808; color: #f7f0e5; font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    .panel { fill: #11100f; stroke: rgba(246,189,117,0.36); stroke-width: 1; }
+    .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+    .axis { stroke: rgba(246,189,117,0.32); stroke-width: 1.2; }
+    text { fill: #d7cec2; font-size: 12px; paint-order: stroke; stroke: #080808; stroke-width: 3px; stroke-linejoin: round; }
+    .heading { fill: #f7f0e5; font-size: 18px; font-weight: 800; stroke: none; }
+    .note { fill: #9f9588; font-size: 12px; stroke: none; }
+    circle { stroke: rgba(255,245,225,0.82); stroke-width: 1.4; }
+    .base circle { fill: #79d7f2; }
+    .energy circle { fill: #d8c85c; }
+    .ship circle { fill: #e6b06b; }
+    .spawn circle { fill: #ff4e3a; }
+    .unknown circle { fill: #ffd95a; }
+    .mystery circle { fill: #111315; stroke: #e8e0d2; }
+    .candidate circle { fill: #8f8f88; stroke: #ffffff; stroke-width: 2.2; }
+    .candidate text { fill: #ffffff; font-weight: 900; }
+  </style>
+
+  <text class="heading" x="60" y="34">Front / Base Hemisphere</text>
+  <text class="note" x="60" y="474">X range: -580 to 460, Z range: -480 to 280. Current base, ships, solar arrays, monolith.</text>
+  <rect class="panel" x="60" y="60" width="520" height="380" rx="4"/>
+
+  <text class="heading" x="660" y="34">Back / Dark Hemisphere</text>
+  <text class="note" x="660" y="474">Same X/Z projection, but hemisphere is y &lt; 0. Use this panel to avoid front/back ambiguity.</text>
+  <rect class="panel" x="660" y="60" width="520" height="380" rx="4"/>
+
+  <g class="grid">
+    <path d="M60 122H580M60 186H580M60 250H580M60 313H580M60 377H580"/>
+    <path d="M140 60V440M220 60V440M300 60V440M380 60V440M460 60V440M540 60V440"/>
+    <path d="M660 122H1180M660 186H1180M660 250H1180M660 313H1180M660 377H1180"/>
+    <path d="M740 60V440M820 60V440M900 60V440M980 60V440M1060 60V440M1140 60V440"/>
+  </g>
+  <path class="axis" d="M60 200H580M350 60V440M660 200H1180M950 60V440"/>
+
+  <g class="spawn"><circle cx="337" cy="293" r="5"/><text x="345" y="286">Spawn</text></g>
+  <g class="base"><circle cx="350" cy="173" r="5"/><text x="358" y="166">Habitat</text></g>
+  <g class="base"><circle cx="314" cy="173" r="5"/><text x="322" y="166">Greenhouse</text></g>
+  <g class="base"><circle cx="386" cy="173" r="5"/><text x="394" y="166">Oxygen</text></g>
+  <g class="base"><circle cx="386" cy="224" r="5"/><text x="394" y="217">Methane</text></g>
+  <g class="base"><circle cx="317" cy="224" r="5"/><text x="325" y="217">Garage</text></g>
+  <g class="base"><circle cx="419" cy="164" r="5"/><text x="427" y="157">Tower</text></g>
+  <g class="base"><circle cx="287" cy="209" r="5"/><text x="295" y="202">Lab</text></g>
+  <g class="base"><circle cx="287" cy="242" r="5"/><text x="295" y="235">Storehouse</text></g>
+  <g class="base"><circle cx="416" cy="212" r="5"/><text x="424" y="205">Medical</text></g>
+  <g class="energy"><circle cx="317" cy="122" r="5"/><text x="325" y="115">Solar A</text></g>
+  <g class="energy"><circle cx="344" cy="122" r="5"/><text x="352" y="115">Solar B</text></g>
+  <g class="energy"><circle cx="371" cy="122" r="5"/><text x="379" y="115">Solar C</text></g>
+  <g class="ship"><circle cx="548" cy="83" r="5"/><text x="556" y="76">Ship 01</text></g>
+  <g class="ship"><circle cx="563" cy="173" r="5"/><text x="571" y="166">Ship 02</text></g>
+  <g class="ship"><circle cx="173" cy="77" r="5"/><text x="181" y="70">Ship 03</text></g>
+  <g class="unknown"><circle cx="467" cy="116" r="5"/><text x="475" y="109">NASA</text></g>
+  <g class="mystery"><circle cx="80" cy="425" r="5"/><text x="88" y="418">Monolith</text></g>
+
+  <g class="unknown"><circle cx="929" cy="281" r="5"/><text x="939" y="273">Wreck/Fufu</text></g>
+  <g class="candidate"><circle cx="1055" cy="70" r="8"/><text x="1065" y="62">Ancient Tree Arch candidate</text></g>
+</svg>

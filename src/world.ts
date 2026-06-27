@@ -66,6 +66,7 @@ type RoverSurfaceEffectState = {
 };
 
 export type MarsWorld = {
+  root: THREE.Group;
   interactables: Interactable[];
   landmarks: Landmark[];
   unnumberedObjects: UnnumberedObject[];
@@ -80,6 +81,7 @@ export type MarsWorld = {
   flickerLights: THREE.PointLight[];
   oxygenLight: THREE.PointLight;
   solarLight: THREE.PointLight;
+  ancientTreePortal: THREE.Group;
   fufuRescueSite: FufuRescueSite;
   monolith: MonolithSite;
 };
@@ -167,6 +169,7 @@ export type CircleCollider = {
   center: THREE.Vector2;
   radius: number;
   label: string;
+  normal?: THREE.Vector3;
   dynamicObject?: THREE.Object3D;
   enabled?: () => boolean;
 };
@@ -198,6 +201,12 @@ export const PLANET_RADIUS = 88 * WORLD_EXPANSION;
 const LAYOUT_SPREAD = 2 * WORLD_EXPANSION;
 const CLOSE_METEOR_FLYBY_SECONDS = 90;
 const CLOSE_METEOR_ORBIT_ALTITUDE = 150;
+const ANCIENT_TREE_ARCH_LON = 0;
+const ANCIENT_TREE_ARCH_LAT = -50;
+const ANCIENT_TREE_ARCH_HEIGHT = 118;
+const ANCIENT_TREE_ARCH_WIDTH = 92;
+const ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS = 58;
+const ANCIENT_TREE_ARCH_SETTLE = -10.2;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -228,6 +237,7 @@ meteorRockTexture.anisotropy = 4;
 
 const wheelTrackGeometry = new THREE.PlaneGeometry(0.54, 3.15);
 let dustFogTexture: THREE.CanvasTexture | null = null;
+let ancientTreePortalTexture: THREE.CanvasTexture | null = null;
 
 function spread(value: number) {
   return value * LAYOUT_SPREAD;
@@ -305,6 +315,9 @@ export function placeObjectOnPlanet(object: THREE.Object3D, x: number, z: number
 }
 
 export function createMarsWorld(scene: THREE.Scene): MarsWorld {
+  const root = new THREE.Group();
+  root.name = "Mars world root";
+  scene.add(root);
   const interactables: Interactable[] = [];
   const landmarks: Landmark[] = [];
   const unnumberedObjects: UnnumberedObject[] = [];
@@ -315,22 +328,36 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const elevators: ElevatorControl[] = [];
   const flickerLights: THREE.PointLight[] = [];
 
-  scene.add(createTerrain());
+  root.add(createTerrain());
   const skyDust = createSkyDust();
-  scene.add(skyDust.object);
+  root.add(skyDust.object);
   const meteors = skyDust.meteors;
   const starlinkConstellation = createStarlinkConstellation(PLANET_RADIUS);
-  scene.add(starlinkConstellation.group);
-  addRockField(scene, colliders);
+  root.add(starlinkConstellation.group);
+  addRockField(root, colliders);
 
   const base = new THREE.Group();
   base.name = "ARES Base Alpha";
-  scene.add(base);
+  root.add(base);
   addNasaPerseveranceRover(base, colliders, landmarks);
 
   addLanderSite("01 飞船 登陆飞船", spread(132), spread(78), 0.18, true);
   addLanderSite("02 飞船 货运飞船", spread(142), spread(18), -0.55, true);
   addLanderSite("03 飞船 返回飞船", spread(-118), spread(82), 0.94, true);
+
+  const ancientTreeArchNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
+  const ancientTreeArchX = (ancientTreeArchNormal.x / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
+  const ancientTreeArchZ = (ancientTreeArchNormal.z / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
+  const ancientTreeArchYaw = 0.16;
+  const ancientTreeArch = createAncientTreeArch();
+  const ancientTreePortal = createAncientTreePortal();
+  ancientTreeArch.add(ancientTreePortal);
+  placeObjectOnPlanetNormal(ancientTreeArch, ancientTreeArchNormal, ANCIENT_TREE_ARCH_SETTLE, ancientTreeArchYaw);
+  ancientTreeArch.userData.planetX = ancientTreeArchX;
+  ancientTreeArch.userData.planetZ = ancientTreeArchZ;
+  base.add(ancientTreeArch);
+  landmarks.push(landmark("远古巨树拱门", ancientTreeArch, ancientTreeArchX, ancientTreeArchZ, 82, ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS * 9));
+  addAncientTreeArchColliders(colliders, ancientTreeArchYaw);
 
   const monolithX = expandWorldCoordinate(-360);
   const monolithZ = expandWorldCoordinate(-300);
@@ -612,6 +639,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   createRovers(base, rovers, colliders, landmarks, maintenanceBots);
 
   return {
+    root,
     interactables,
     landmarks,
     unnumberedObjects,
@@ -626,6 +654,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     flickerLights,
     oxygenLight,
     solarLight,
+    ancientTreePortal,
     fufuRescueSite: {
       normal: fufuRescueNormal,
       x: fufuRescueX,
@@ -870,6 +899,12 @@ function offsetPoint(x: number, z: number, yaw: number, localX: number, localZ: 
   };
 }
 
+function normalFromLonLat(lonDegrees: number, latDegrees: number) {
+  const lon = THREE.MathUtils.degToRad(lonDegrees);
+  const lat = THREE.MathUtils.degToRad(latDegrees);
+  return new THREE.Vector3(Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)).normalize();
+}
+
 function worldOffsetToLocal(yaw: number, worldX: number, worldZ: number) {
   const c = Math.cos(yaw);
   const s = Math.sin(yaw);
@@ -901,6 +936,50 @@ function addFootprintColliders(
       if (enabled) collider.enabled = enabled;
       colliders.push(collider);
     }
+  }
+}
+
+function ancientTreeArchLocalNormal(localX: number, localZ: number, yaw: number) {
+  const centerNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
+  const right = new THREE.Vector3(0, 1, 0).cross(centerNormal).normalize();
+  const forward = centerNormal.clone().cross(right).normalize();
+  const point = offsetPoint(0, 0, yaw, localX, localZ);
+  return centerNormal
+    .clone()
+    .addScaledVector(right, point.x / PLANET_RADIUS)
+    .addScaledVector(forward, point.z / PLANET_RADIUS)
+    .normalize();
+}
+
+function addAncientTreeArchColliders(colliders: CircleCollider[], yaw: number) {
+  function colliderAt(localX: number, localZ: number, radius: number, label: string) {
+    const normal = ancientTreeArchLocalNormal(localX, localZ, yaw);
+    const projectedY = Math.max(Math.abs(normal.y), 0.001);
+    return {
+      center: new THREE.Vector2((normal.x / projectedY) * PLANET_RADIUS, (normal.z / projectedY) * PLANET_RADIUS),
+      normal,
+      radius,
+      label,
+    };
+  }
+
+  const rows = [
+    { z: -31, halfWidth: 39, radius: 8.4 },
+    { z: -18, halfWidth: 35, radius: 8.1 },
+    { z: -4, halfWidth: 31, radius: 7.8 },
+    { z: 10, halfWidth: 29, radius: 7.5 },
+    { z: 24, halfWidth: 28, radius: 7.1 },
+    { z: 38, halfWidth: 27, radius: 6.7 },
+  ];
+
+  for (const row of rows) {
+    for (const side of [-1, 1]) {
+      colliders.push(colliderAt(side * row.halfWidth, row.z, row.radius, "远古巨树拱门实体"));
+    }
+  }
+
+  for (const localX of [-41, -24, 24, 41]) {
+    colliders.push(colliderAt(localX, -41, 6.2, "远古巨树拱门根部"));
   }
 }
 
@@ -1570,6 +1649,354 @@ function createBlackMonolith() {
 
   group.add(slab, bevelLineA, bevelLineB);
   return group;
+}
+
+function createAncientTreeArch() {
+  const group = new THREE.Group();
+  group.name = "Ancient petrified tree arch";
+
+  const trunkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2d3333,
+    roughness: 0.94,
+    metalness: 0.04,
+    emissive: 0x020303,
+    emissiveIntensity: 0.04,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+  const darkCreviceMaterial = new THREE.MeshStandardMaterial({
+    color: 0x070909,
+    roughness: 1,
+    metalness: 0.02,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+  const wornEdgeMaterial = new THREE.MeshStandardMaterial({
+    color: 0x747872,
+    roughness: 0.9,
+    metalness: 0.03,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+
+  const halfWidth = ANCIENT_TREE_ARCH_WIDTH * 0.5;
+  const rootHalfWidth = ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS;
+  const depth = 46;
+  const shape = new THREE.Shape();
+  shape.moveTo(-rootHalfWidth, -6);
+  shape.bezierCurveTo(-52, -3, -46, 0, -39, 7);
+  shape.bezierCurveTo(-43, 34, -38, 72, -27, 104);
+  shape.bezierCurveTo(-21, 116, -11, ANCIENT_TREE_ARCH_HEIGHT, 0, ANCIENT_TREE_ARCH_HEIGHT);
+  shape.bezierCurveTo(11, ANCIENT_TREE_ARCH_HEIGHT, 21, 116, 27, 104);
+  shape.bezierCurveTo(38, 72, 43, 34, 39, 7);
+  shape.bezierCurveTo(46, 0, 52, -3, rootHalfWidth, -6);
+  shape.bezierCurveTo(48, -4.2, 38, -1.8, 30, -1.2);
+  shape.lineTo(22, -1.2);
+  shape.lineTo(22, 45);
+  shape.bezierCurveTo(22, 67, 12, 80, 0, 80);
+  shape.bezierCurveTo(-12, 80, -22, 67, -22, 45);
+  shape.lineTo(-22, -1.2);
+  shape.lineTo(-30, -1.2);
+  shape.bezierCurveTo(-38, -1.8, -48, -4.2, -rootHalfWidth, -6);
+
+  const trunkGeometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: 1.6,
+    bevelSize: 1.2,
+    bevelSegments: 2,
+    curveSegments: 20,
+    steps: 1,
+  });
+  trunkGeometry.translate(0, 0, -depth * 0.5);
+  const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  group.add(trunk);
+
+  for (let i = 0; i < 34; i += 1) {
+    const t = i / 33;
+    const x = THREE.MathUtils.lerp(-halfWidth + 3, halfWidth - 3, t);
+    if (Math.abs(x) < 23) continue;
+    const h = THREE.MathUtils.lerp(82, 115, seededNoise(i + 1, 8.7));
+    const y = h * 0.5 + THREE.MathUtils.lerp(1.4, 5.6, seededNoise(i + 2, 4.1));
+    const z = depth * 0.5 + 0.18;
+    const groove = box(0.16 + seededNoise(i, 2.8) * 0.12, h, 0.26, darkCreviceMaterial);
+    groove.position.set(x + Math.sin(i * 1.7) * 0.9, y, z);
+    groove.rotation.z = THREE.MathUtils.degToRad(THREE.MathUtils.lerp(-3.5, 3.5, seededNoise(i, 5.3)));
+    group.add(groove);
+    const backGroove = groove.clone();
+    backGroove.position.z = -z;
+    group.add(backGroove);
+  }
+
+  for (const [x, y, w, h] of [
+    [-34, 82, 3.8, 13],
+    [35, 69, 4.6, 17],
+    [-42, 34, 3.2, 11],
+    [29, 25, 5.8, 18],
+  ] as const) {
+    const scar = box(w, h, 0.34, darkCreviceMaterial);
+    scar.position.set(x, y, depth * 0.5 + 0.34);
+    scar.rotation.z = THREE.MathUtils.degToRad(x < 0 ? -5 : 4);
+    group.add(scar);
+  }
+
+  for (const side of [-1, 1]) {
+    const edge = box(1.1, 79, 0.48, wornEdgeMaterial);
+    edge.position.set(side * 21.8, 39.4, depth * 0.5 + 0.42);
+    edge.rotation.z = side * THREE.MathUtils.degToRad(-3);
+    group.add(edge);
+  }
+
+  return group;
+}
+
+function createAncientTreePortal() {
+  const group = new THREE.Group();
+  group.name = "Ancient tree stargate energy";
+  group.visible = false;
+  group.renderOrder = 8;
+
+  const portalMaterial = new THREE.MeshBasicMaterial({
+    map: getAncientTreePortalTexture(),
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const portal = new THREE.Mesh(new THREE.CircleGeometry(1, 96), portalMaterial);
+  portal.position.set(0, 39.5, 0);
+  portal.scale.set(22.4, 39.2, 1);
+  portal.renderOrder = 8;
+  group.add(portal);
+
+  const haloMaterial = new THREE.MeshBasicMaterial({
+    map: getAncientTreePortalTexture(),
+    color: 0x43bfff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(1, 96), haloMaterial);
+  halo.position.set(0, 39.5, -0.16);
+  halo.scale.set(25.8, 42.6, 1);
+  halo.renderOrder = 7;
+  group.add(halo);
+
+  const particleCount = 120;
+  const positions = new Float32Array(particleCount * 3);
+  const particleSeeds: number[] = [];
+  for (let i = 0; i < particleCount; i += 1) {
+    particleSeeds.push(seededNoise(i + 71, 13.7));
+    positions[i * 3] = 0;
+    positions[i * 3 + 1] = 39.5;
+    positions[i * 3 + 2] = THREE.MathUtils.randFloatSpread(2.2);
+  }
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const particleMaterial = new THREE.PointsMaterial({
+    color: 0xc8f7ff,
+    size: 1.18,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  const particles = new THREE.Points(particleGeometry, particleMaterial);
+  particles.renderOrder = 9;
+  group.add(particles);
+
+  const lightningGeometry = new THREE.BufferGeometry();
+  const lightningPositions = new Float32Array(14 * 2 * 3);
+  lightningGeometry.setAttribute("position", new THREE.BufferAttribute(lightningPositions, 3));
+  const lightningMaterial = new THREE.LineBasicMaterial({
+    color: 0xe8fbff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const lightning = new THREE.LineSegments(lightningGeometry, lightningMaterial);
+  lightning.renderOrder = 10;
+  group.add(lightning);
+
+  const reflectedLightMaterial = new THREE.MeshBasicMaterial({
+    color: 0x67d9ff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  for (const side of [-1, 1]) {
+    const pillarGlow = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 70, 1, 1), reflectedLightMaterial.clone());
+    pillarGlow.position.set(side * 23.4, 38.5, 22.95);
+    pillarGlow.rotation.z = side * THREE.MathUtils.degToRad(-5);
+    pillarGlow.renderOrder = 11;
+    group.add(pillarGlow);
+  }
+  const groundGlowMaterial = new THREE.MeshBasicMaterial({
+    map: getDustFogTexture(),
+    color: 0x8eeaff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const groundGlow = new THREE.Mesh(new THREE.CircleGeometry(1, 48), groundGlowMaterial);
+  groundGlow.position.set(0, 0.34, 17.5);
+  groundGlow.rotation.x = -Math.PI / 2;
+  groundGlow.scale.set(25, 12, 1);
+  groundGlow.renderOrder = 11;
+  group.add(groundGlow);
+
+  const coreLight = new THREE.PointLight(0xb8f6ff, 0, 128, 0.82);
+  coreLight.position.set(0, 36, 18);
+  group.add(coreLight);
+  const archLight = new THREE.PointLight(0x66cfff, 0, 98, 0.95);
+  archLight.position.set(0, 66, 22);
+  group.add(archLight);
+  const groundLight = new THREE.PointLight(0x79ddff, 0, 92, 1.05);
+  groundLight.position.set(0, 7.5, 24);
+  group.add(groundLight);
+
+  group.userData.portalMaterial = portalMaterial;
+  group.userData.haloMaterial = haloMaterial;
+  group.userData.particleMaterial = particleMaterial;
+  group.userData.reflectedLightMaterials = group.children
+    .filter((child): child is THREE.Mesh => child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial && child.renderOrder === 11)
+    .map((mesh) => mesh.material as THREE.MeshBasicMaterial);
+  group.userData.particleSeeds = particleSeeds;
+  group.userData.lightningMaterial = lightningMaterial;
+  group.userData.lightningPositions = lightningPositions;
+  group.userData.lightningAttribute = lightningGeometry.getAttribute("position");
+  group.userData.coreLight = coreLight;
+  group.userData.archLight = archLight;
+  group.userData.groundLight = groundLight;
+  group.userData.lastLightningTick = -1;
+  return group;
+}
+
+function getAncientTreePortalTexture() {
+  if (ancientTreePortalTexture) return ancientTreePortalTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 4, 128, 128, 126);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.26, "rgba(255,255,255,0.96)");
+    gradient.addColorStop(0.48, "rgba(128,228,255,0.74)");
+    gradient.addColorStop(0.72, "rgba(22,104,255,0.54)");
+    gradient.addColorStop(0.92, "rgba(7,33,138,0.22)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.globalCompositeOperation = "screen";
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < 42; i += 1) {
+      const angle = seededNoise(i, 9.13) * Math.PI * 2;
+      const radius = 18 + seededNoise(i, 3.31) * 94;
+      const cx = 128 + Math.cos(angle) * radius * 0.34;
+      const cy = 128 + Math.sin(angle) * radius * 0.34;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10 + seededNoise(i, 5.17) * 28, angle, angle + Math.PI * (0.35 + seededNoise(i, 7.71) * 0.9));
+      ctx.stroke();
+    }
+  }
+  ancientTreePortalTexture = new THREE.CanvasTexture(canvas);
+  ancientTreePortalTexture.colorSpace = THREE.SRGBColorSpace;
+  return ancientTreePortalTexture;
+}
+
+export function updateAncientTreePortal(portal: THREE.Group, elapsed: number) {
+  const cycleDuration = 180;
+  const activeDuration = 28.5;
+  const cycle = elapsed % cycleDuration;
+  const active = cycle < activeDuration;
+  const fadeIn = THREE.MathUtils.smoothstep(cycle, 1.0, 5.4);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, activeDuration - 6.6, activeDuration);
+  const strength = active ? Math.max(0, Math.min(fadeIn, fadeOut)) : 0;
+  portal.userData.portalStrength = strength;
+  portal.visible = strength > 0.01;
+  if (!portal.visible) return;
+
+  const pulse = 0.74 + Math.sin(elapsed * 5.2) * 0.12 + Math.sin(elapsed * 13.1) * 0.06;
+  const portalMaterial = portal.userData.portalMaterial as THREE.MeshBasicMaterial;
+  const haloMaterial = portal.userData.haloMaterial as THREE.MeshBasicMaterial;
+  const particleMaterial = portal.userData.particleMaterial as THREE.PointsMaterial;
+  const lightningMaterial = portal.userData.lightningMaterial as THREE.LineBasicMaterial;
+  const coreLight = portal.userData.coreLight as THREE.PointLight;
+  const archLight = portal.userData.archLight as THREE.PointLight;
+  const groundLight = portal.userData.groundLight as THREE.PointLight;
+  const reflectedLightMaterials = portal.userData.reflectedLightMaterials as THREE.MeshBasicMaterial[];
+  portalMaterial.opacity = strength * pulse * 0.84;
+  haloMaterial.opacity = strength * (0.36 + Math.sin(elapsed * 3.1) * 0.08);
+  particleMaterial.opacity = strength * 0.92;
+  lightningMaterial.opacity = strength * (0.28 + Math.max(0, Math.sin(elapsed * 19.0)) * 0.72);
+  coreLight.intensity = strength * (42 + Math.max(0, Math.sin(elapsed * 5.2)) * 13);
+  archLight.intensity = strength * (24 + Math.max(0, Math.sin(elapsed * 4.1 + 0.8)) * 8);
+  groundLight.intensity = strength * (20 + Math.max(0, Math.sin(elapsed * 3.7 + 1.4)) * 7);
+  for (const material of reflectedLightMaterials) {
+    material.opacity = strength * (0.24 + Math.max(0, Math.sin(elapsed * 4.4)) * 0.1);
+  }
+
+  const particles = portal.children.find((child): child is THREE.Points => child instanceof THREE.Points);
+  const positionAttribute = particles?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  const particleSeeds = portal.userData.particleSeeds as number[];
+  if (positionAttribute) {
+    for (let i = 0; i < positionAttribute.count; i += 1) {
+      const seed = particleSeeds[i] ?? 0;
+      const orbit = elapsed * (0.34 + seed * 0.72) + seed * Math.PI * 2;
+      const band = 0.18 + ((seed * 7.19 + elapsed * 0.04) % 1) * 0.8;
+      const rx = 21.2 * band;
+      const ry = 36.4 * band;
+      const jitter = Math.sin(elapsed * 9.2 + seed * 40) * 0.55;
+      positionAttribute.setXYZ(
+        i,
+        Math.cos(orbit) * rx + Math.sin(elapsed * 2.3 + seed * 19) * 0.8,
+        39.5 + Math.sin(orbit) * ry + jitter,
+        Math.sin(elapsed * 6.1 + seed * 33) * 1.35
+      );
+    }
+    positionAttribute.needsUpdate = true;
+  }
+
+  const lightningTick = Math.floor(elapsed * 8);
+  if (portal.userData.lastLightningTick !== lightningTick) {
+    portal.userData.lastLightningTick = lightningTick;
+    const lightningPositions = portal.userData.lightningPositions as Float32Array;
+    const attribute = portal.userData.lightningAttribute as THREE.BufferAttribute;
+    for (let i = 0; i < lightningPositions.length; i += 6) {
+      const seed = seededNoise(lightningTick + i, 5.41);
+      const angle = seed * Math.PI * 2;
+      const inner = 0.18 + seededNoise(lightningTick + i, 8.9) * 0.45;
+      const outer = 0.66 + seededNoise(lightningTick + i, 2.2) * 0.3;
+      const bend = (seededNoise(lightningTick + i, 11.8) - 0.5) * 0.24;
+      lightningPositions[i] = Math.cos(angle) * 21.5 * inner;
+      lightningPositions[i + 1] = 39.5 + Math.sin(angle) * 36.5 * inner;
+      lightningPositions[i + 2] = 0.9 + seededNoise(lightningTick + i, 4.4) * 1.2;
+      lightningPositions[i + 3] = Math.cos(angle + bend) * 21.5 * outer;
+      lightningPositions[i + 4] = 39.5 + Math.sin(angle + bend) * 36.5 * outer;
+      lightningPositions[i + 5] = 0.9 + seededNoise(lightningTick + i, 6.6) * 1.2;
+    }
+    attribute.needsUpdate = true;
+  }
 }
 
 function createGarage() {
@@ -2384,7 +2811,7 @@ function seededNoise(seed: number, salt: number) {
   return THREE.MathUtils.clamp(Math.sin(seed * 12.9898 + salt) * 43758.5453 % 1, -1, 1) * 0.5 + 0.5;
 }
 
-function addRockField(scene: THREE.Scene, colliders: CircleCollider[]) {
+function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
   const rockMat = mat(0x8d4228, 1);
   for (let i = 0; i < 95; i += 1) {
     const radius = spread(6 + Math.random() * 31);
@@ -2562,6 +2989,7 @@ function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: Circ
   const point = new THREE.Vector2(x, z);
   for (let pass = 0; pass < 3; pass += 1) {
     for (const collider of colliders) {
+      if (collider.normal) continue;
       if (collider.dynamicObject || collider.radius < 1.4) continue;
       if (collider.enabled && !collider.enabled()) continue;
       const away = point.clone().sub(collider.center);
@@ -2580,6 +3008,7 @@ function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: Circ
 
 function isBotPointInsideFixedCollider(x: number, z: number, colliders: CircleCollider[]) {
   for (const collider of colliders) {
+    if (collider.normal) continue;
     if (collider.dynamicObject || collider.radius < 1.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
     if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 2.8) return true;
@@ -2614,7 +3043,7 @@ function avoidFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[],
   for (const collider of colliders) {
     if (collider.dynamicObject || collider.radius < 2.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
-    const colliderNormal = planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+    const colliderNormal = collider.normal?.clone() ?? planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
     const dot = THREE.MathUtils.clamp(adjusted.dot(colliderNormal), -1, 1);
     const distance = Math.acos(dot) * PLANET_RADIUS;
     const minDistance = collider.radius + vehicleRadius + 2.8;
@@ -2635,7 +3064,7 @@ function keepVehicleNormalOutsideFixedColliders(normal: THREE.Vector3, colliders
     for (const collider of colliders) {
       if (collider.dynamicObject || collider.radius < 2.4) continue;
       if (collider.enabled && !collider.enabled()) continue;
-      const colliderNormal = planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+      const colliderNormal = collider.normal?.clone() ?? planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
       const dot = THREE.MathUtils.clamp(adjusted.dot(colliderNormal), -1, 1);
       const distance = Math.acos(dot) * PLANET_RADIUS;
       const minDistance = collider.radius + vehicleRadius + 0.9;

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">火星固定物体精确坐标图</title>
+  <desc id="desc">按游戏内实际 X/Z 坐标标注现有固定物体，并区分正面基地半球与背面黑暗半球。</desc>
+  <style>
+    svg { background: #080808; color: #f7f0e5; font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .panel { fill: #11100f; stroke: rgba(246,189,117,0.38); stroke-width: 1.2; }
+    .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+    .axis { stroke: rgba(246,189,117,0.38); stroke-width: 1.2; }
+    .heading { fill: #f7f0e5; font-size: 24px; font-weight: 900; }
+    .subhead { fill: #b9afa2; font-size: 14px; }
+    .legend text, .tick { fill: #9f9588; font-size: 12px; }
+    .label { fill: #f7f0e5; font-size: 12px; font-weight: 800; paint-order: stroke; stroke: #080808; stroke-width: 4px; stroke-linejoin: round; }
+    .coord { fill: #cfc5b8; font-size: 12px; paint-order: stroke; stroke: #080808; stroke-width: 4px; stroke-linejoin: round; }
+    .table-title { fill: #f6bd75; font-size: 16px; font-weight: 900; }
+    .table-head { fill: #9f9588; font-size: 12px; font-weight: 800; }
+    .table-text { fill: #e8ded1; font-size: 13px; }
+    .table-muted { fill: #a99f91; font-size: 13px; }
+    .rowline { stroke: rgba(255,255,255,0.07); stroke-width: 1; }
+    circle { stroke: rgba(255,245,225,0.9); stroke-width: 1.4; }
+    .base circle { fill: #79d7f2; }
+    .energy circle { fill: #d8c85c; }
+    .ship circle { fill: #e6b06b; }
+    .spawn circle { fill: #ff4e3a; }
+    .unknown circle { fill: #ffd95a; }
+    .mystery circle { fill: #111315; stroke: #e8e0d2; }
+    .candidate circle { fill: #8f8f88; stroke: #ffffff; stroke-width: 2.2; }
+  </style>
+
+  <text class="heading" x="70" y="46">火星固定物体精确坐标图</text>
+  <text class="subhead" x="70" y="72">坐标为游戏内投影坐标 X/Z；正面与背面必须分开看，因为同一组 X/Z 在球体两侧可能对应不同半球。</text>
+
+  <text class="heading" x="70" y="120">正面 / 基地半球</text>
+  <text class="subhead" x="70" y="146">当前主基地、三艘飞船、太阳能阵列、黑色方碑所在半球</text>
+  <rect class="panel" x="70" y="170" width="660" height="430" rx="4"/>
+
+  <text class="heading" x="870" y="120">背面 / 黑暗半球</text>
+  <text class="subhead" x="870" y="146">坠毁飞船、福福救援点、远古巨树拱门候选点所在半球</text>
+  <rect class="panel" x="870" y="170" width="660" height="430" rx="4"/>
+
+  <g class="grid">
+    <path d="M70 234H730M70 298H730M70 362H730M70 426H730M70 490H730M70 554H730"/>
+    <path d="M136 170V600M202 170V600M268 170V600M334 170V600M400 170V600M466 170V600M532 170V600M598 170V600M664 170V600"/>
+    <path d="M870 234H1530M870 298H1530M870 362H1530M870 426H1530M870 490H1530M870 554H1530"/>
+    <path d="M936 170V600M1002 170V600M1068 170V600M1134 170V600M1200 170V600M1266 170V600M1332 170V600M1398 170V600M1464 170V600"/>
+  </g>
+  <path class="axis" d="M70 385H730M435 170V600M870 385H1530M1235 170V600"/>
+
+  <text class="tick" x="80" y="590">Z -480</text>
+  <text class="tick" x="80" y="184">Z 280</text>
+  <text class="tick" x="76" y="620">X -580</text>
+  <text class="tick" x="672" y="620">X 460</text>
+  <text class="tick" x="880" y="590">Z -480</text>
+  <text class="tick" x="880" y="184">Z 280</text>
+  <text class="tick" x="876" y="620">X -580</text>
+  <text class="tick" x="1472" y="620">X 460</text>
+
+  <g class="spawn"><circle cx="421" cy="490" r="6"/><text class="label" x="431" y="484">00 出生点</text><text class="coord" x="431" y="500">X-27 Z-186</text></g>
+  <g class="base"><circle cx="435" cy="355" r="6"/><text class="label" x="445" y="348">01 居住舱</text><text class="coord" x="445" y="364">X0 Z54</text></g>
+  <g class="base"><circle cx="389" cy="355" r="6"/><text class="label" x="304" y="348">02 温室</text><text class="coord" x="304" y="364">X-72 Z54</text></g>
+  <g class="base"><circle cx="481" cy="355" r="6"/><text class="label" x="491" y="348">03 氧气站</text><text class="coord" x="491" y="364">X72 Z54</text></g>
+  <g class="base"><circle cx="481" cy="412" r="6"/><text class="label" x="491" y="406">04 甲烷厂</text><text class="coord" x="491" y="422">X72 Z-48</text></g>
+  <g class="base"><circle cx="393" cy="412" r="6"/><text class="label" x="297" y="406">05 车库</text><text class="coord" x="297" y="422">X-66 Z-48</text></g>
+  <g class="base"><circle cx="523" cy="345" r="6"/><text class="label" x="533" y="338">06 通信塔</text><text class="coord" x="533" y="354">X138 Z72</text></g>
+  <g class="base"><circle cx="355" cy="395" r="6"/><text class="label" x="258" y="389">07 科研舱</text><text class="coord" x="258" y="405">X-126 Z-18</text></g>
+  <g class="base"><circle cx="355" cy="432" r="6"/><text class="label" x="258" y="426">08 物资仓</text><text class="coord" x="258" y="442">X-126 Z-84</text></g>
+  <g class="base"><circle cx="519" cy="399" r="6"/><text class="label" x="529" y="393">09 医疗舱</text><text class="coord" x="529" y="409">X132 Z-24</text></g>
+  <g class="energy"><circle cx="393" cy="298" r="6"/><text class="label" x="294" y="292">10 阵列A</text><text class="coord" x="294" y="308">X-66 Z156</text></g>
+  <g class="energy"><circle cx="428" cy="298" r="6"/><text class="label" x="438" y="292">11 阵列B</text><text class="coord" x="438" y="308">X-12 Z156</text></g>
+  <g class="energy"><circle cx="462" cy="298" r="6"/><text class="label" x="472" y="292">12 阵列C</text><text class="coord" x="472" y="308">X42 Z156</text></g>
+  <g class="ship"><circle cx="686" cy="254" r="6"/><text class="label" x="572" y="248">13 登陆飞船</text><text class="coord" x="572" y="264">X396 Z234</text></g>
+  <g class="ship"><circle cx="705" cy="355" r="6"/><text class="label" x="578" y="348">14 货运飞船</text><text class="coord" x="578" y="364">X426 Z54</text></g>
+  <g class="ship"><circle cx="211" cy="247" r="6"/><text class="label" x="221" y="241">15 返回飞船</text><text class="coord" x="221" y="257">X-354 Z246</text></g>
+  <g class="unknown"><circle cx="584" cy="291" r="6"/><text class="label" x="594" y="285">16 NASA火星车</text><text class="coord" x="594" y="301">X234 Z168</text></g>
+  <g class="mystery"><circle cx="95" cy="580" r="6"/><text class="label" x="105" y="563">17 黑色方碑</text><text class="coord" x="105" y="579">X-540 Z-450</text></g>
+
+  <g class="unknown"><circle cx="1216" cy="477" r="6"/><text class="label" x="1226" y="470">18 坠毁飞船/福福</text><text class="coord" x="1226" y="486">X-42.6 Z-161.8</text></g>
+  <g class="candidate"><circle cx="1376" cy="239" r="9"/><text class="label" x="1388" y="232">19 远古巨树拱门候选</text><text class="coord" x="1388" y="248">X210 Z260</text></g>
+
+  <g class="legend">
+    <circle cx="70" cy="650" r="6" fill="#79d7f2"/><text x="84" y="654">基地建筑</text>
+    <circle cx="170" cy="650" r="6" fill="#d8c85c"/><text x="184" y="654">能源阵列</text>
+    <circle cx="270" cy="650" r="6" fill="#e6b06b"/><text x="284" y="654">飞船</text>
+    <circle cx="350" cy="650" r="6" fill="#ffd95a"/><text x="364" y="654">未知/特殊</text>
+    <circle cx="465" cy="650" r="6" fill="#8f8f88"/><text x="479" y="654">候选新增物</text>
+  </g>
+
+  <text class="table-title" x="70" y="700">固定物体坐标表</text>
+  <text class="table-head" x="70" y="728">编号</text><text class="table-head" x="120" y="728">名称</text><text class="table-head" x="350" y="728">半球</text><text class="table-head" x="445" y="728">X</text><text class="table-head" x="525" y="728">Z</text>
+  <path class="rowline" d="M70 736H730"/>
+  <text class="table-text" x="70" y="760">00</text><text class="table-text" x="120" y="760">玩家出生点</text><text class="table-muted" x="350" y="760">正面</text><text class="table-text" x="445" y="760">-27.0</text><text class="table-text" x="525" y="760">-186.0</text>
+  <text class="table-text" x="70" y="784">01</text><text class="table-text" x="120" y="784">居住舱</text><text class="table-muted" x="350" y="784">正面</text><text class="table-text" x="445" y="784">0.0</text><text class="table-text" x="525" y="784">54.0</text>
+  <text class="table-text" x="70" y="808">02</text><text class="table-text" x="120" y="808">温室生态舱</text><text class="table-muted" x="350" y="808">正面</text><text class="table-text" x="445" y="808">-72.0</text><text class="table-text" x="525" y="808">54.0</text>
+  <text class="table-text" x="70" y="832">03</text><text class="table-text" x="120" y="832">氧气生产站</text><text class="table-muted" x="350" y="832">正面</text><text class="table-text" x="445" y="832">72.0</text><text class="table-text" x="525" y="832">54.0</text>
+  <text class="table-text" x="70" y="856">04</text><text class="table-text" x="120" y="856">甲烷燃料厂</text><text class="table-muted" x="350" y="856">正面</text><text class="table-text" x="445" y="856">72.0</text><text class="table-text" x="525" y="856">-48.0</text>
+  <text class="table-text" x="70" y="880">05</text><text class="table-text" x="120" y="880">机器人车库</text><text class="table-muted" x="350" y="880">正面</text><text class="table-text" x="445" y="880">-66.0</text><text class="table-text" x="525" y="880">-48.0</text>
+  <text class="table-text" x="70" y="904">06</text><text class="table-text" x="120" y="904">通信塔</text><text class="table-muted" x="350" y="904">正面</text><text class="table-text" x="445" y="904">138.0</text><text class="table-text" x="525" y="904">72.0</text>
+  <text class="table-text" x="70" y="928">07</text><text class="table-text" x="120" y="928">科研舱</text><text class="table-muted" x="350" y="928">正面</text><text class="table-text" x="445" y="928">-126.0</text><text class="table-text" x="525" y="928">-18.0</text>
+  <text class="table-text" x="70" y="952">08</text><text class="table-text" x="120" y="952">物资仓</text><text class="table-muted" x="350" y="952">正面</text><text class="table-text" x="445" y="952">-126.0</text><text class="table-text" x="525" y="952">-84.0</text>
+
+  <text class="table-head" x="870" y="728">编号</text><text class="table-head" x="920" y="728">名称</text><text class="table-head" x="1150" y="728">半球</text><text class="table-head" x="1245" y="728">X</text><text class="table-head" x="1325" y="728">Z</text>
+  <path class="rowline" d="M870 736H1530"/>
+  <text class="table-text" x="870" y="760">09</text><text class="table-text" x="920" y="760">医疗舱</text><text class="table-muted" x="1150" y="760">正面</text><text class="table-text" x="1245" y="760">132.0</text><text class="table-text" x="1325" y="760">-24.0</text>
+  <text class="table-text" x="870" y="784">10</text><text class="table-text" x="920" y="784">太阳能阵列 A</text><text class="table-muted" x="1150" y="784">正面</text><text class="table-text" x="1245" y="784">-66.0</text><text class="table-text" x="1325" y="784">156.0</text>
+  <text class="table-text" x="870" y="808">11</text><text class="table-text" x="920" y="808">太阳能阵列 B</text><text class="table-muted" x="1150" y="808">正面</text><text class="table-text" x="1245" y="808">-12.0</text><text class="table-text" x="1325" y="808">156.0</text>
+  <text class="table-text" x="870" y="832">12</text><text class="table-text" x="920" y="832">太阳能阵列 C</text><text class="table-muted" x="1150" y="832">正面</text><text class="table-text" x="1245" y="832">42.0</text><text class="table-text" x="1325" y="832">156.0</text>
+  <text class="table-text" x="870" y="856">13</text><text class="table-text" x="920" y="856">登陆飞船</text><text class="table-muted" x="1150" y="856">正面</text><text class="table-text" x="1245" y="856">396.0</text><text class="table-text" x="1325" y="856">234.0</text>
+  <text class="table-text" x="870" y="880">14</text><text class="table-text" x="920" y="880">货运飞船</text><text class="table-muted" x="1150" y="880">正面</text><text class="table-text" x="1245" y="880">426.0</text><text class="table-text" x="1325" y="880">54.0</text>
+  <text class="table-text" x="870" y="904">15</text><text class="table-text" x="920" y="904">返回飞船</text><text class="table-muted" x="1150" y="904">正面</text><text class="table-text" x="1245" y="904">-354.0</text><text class="table-text" x="1325" y="904">246.0</text>
+  <text class="table-text" x="870" y="928">16</text><text class="table-text" x="920" y="928">NASA 火星车</text><text class="table-muted" x="1150" y="928">正面</text><text class="table-text" x="1245" y="928">234.0</text><text class="table-text" x="1325" y="928">168.0</text>
+  <text class="table-text" x="870" y="952">17</text><text class="table-text" x="920" y="952">黑色方碑</text><text class="table-muted" x="1150" y="952">正面</text><text class="table-text" x="1245" y="952">-540.0</text><text class="table-text" x="1325" y="952">-450.0</text>
+  <text class="table-text" x="1365" y="760">18</text><text class="table-text" x="1408" y="760">坠毁飞船/福福</text><text class="table-muted" x="1530" y="760">背面</text>
+  <text class="table-text" x="1365" y="784">19</text><text class="table-text" x="1408" y="784">远古巨树拱门候选</text><text class="table-muted" x="1530" y="784">背面</text>
+  <text class="table-text" x="1365" y="820">18 坐标：X -42.6 / Z -161.8</text>
+  <text class="table-text" x="1365" y="844">19 坐标：X 210.0 / Z 260.0</text>
+</svg>
