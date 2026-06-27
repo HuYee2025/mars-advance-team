@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
-import wormholeSwirlGeneratedUrl from "./assets/wormhole-swirl-generated.png?url";
+import wormholeSwirlGeneratedUrl from "./assets/wormhole-swirl-generated.webp?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";

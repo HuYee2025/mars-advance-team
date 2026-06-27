@@ -7,7 +7,7 @@
 - 本地测试地址：`http://127.0.0.1:5174/`
 - `5173` 当时被占用，当前 Vite dev server 跑在 `5174`。
 - 最近一次验证：`npm run build` 通过。
-- 当前有未提交改动，主要集中在 `src/main.ts`、`src/world.ts`、`src/style.css`、`index.html`、`docs/dev-log/current-handoff.md`，并新增 `docs/site-planning/` 与 `src/assets/wormhole-swirl-generated.png`。
+- 当前有未提交改动，主要集中在 `src/main.ts`、`src/world.ts`、`src/style.css`、`index.html`、`docs/dev-log/current-handoff.md`，并新增 `docs/site-planning/` 与虫洞旋涡运行素材 `src/assets/wormhole-swirl-generated.webp`。
 
 ## 最近实现重点
 
@@ -17,7 +17,7 @@
 - 光效激活时穿过门洞会触发 `wormholeFall` 虫洞坠落事件。
 - 虫洞期间暂停普通移动、互动、喷气背包、碰撞任务触发和氧气消耗。
 - 虫洞前约 `20s` 使用蓝色漩涡星云背景，后约 `10s` 红色火星俯视尘土地表出现并放大，最后安全落回出生点。
-- 当前虫洞背景使用 Image 生成图：`src/assets/wormhole-swirl-generated.png`。
+- 当前虫洞背景使用 Image 生成图压缩后的 WebP q92 运行素材：`src/assets/wormhole-swirl-generated.webp`，原尺寸 `1672x941`，体积约 `495KB`。
 - 虫洞已去掉射线/速度线，仅保留漂浮的圆形白色发光粒子和很淡的圆环氛围，让场景更梦幻。
 - 虫洞中 `W/A/S/D` 和方向键控制轻微画面漂移，已修正为屏幕同向移动，松开自动回中；`C` 仍可切换第一/第三人称。
 - 飞行背包拆成两种：
@@ -81,8 +81,8 @@
 
 ## 注意事项
 
-- 不要删除 `src/assets/wormhole-swirl-generated.png`，当前虫洞主背景依赖它。
-- Image 生成图原始文件保留在 `/Users/huyi/.codex/generated_images/019f05f1-1326-7c83-a4c3-21d5ef52f708/`，项目中使用的是复制后的 `src/assets/wormhole-swirl-generated.png`。
+- 当前虫洞主背景依赖 `src/assets/wormhole-swirl-generated.webp`，不要再改回项目内 PNG 运行素材。
+- Image 生成图原始文件保留在 `/Users/huyi/.codex/generated_images/019f05f1-1326-7c83-a4c3-21d5ef52f708/`；项目内运行素材已从约 `2.7MB` PNG 压缩为约 `495KB` WebP q92。
 - 如果继续调虫洞，优先改 `updateWormholeCamera()` 和 `updateWormholeFallVisual()`，避免影响普通游戏镜头。
 - 如果虫洞效果仍不满意，优先调白色粒子数量、大小、漂浮速度和红色火星贴图，不要默认把射线/速度线加回来。
 - 当前文档 `docs/dev-log/current-handoff.md` 已同步记录主要状态；本文件是更短的专项交接。
