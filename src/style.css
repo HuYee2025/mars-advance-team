@@ -14,6 +14,33 @@
   box-sizing: border-box;
 }
 
+#app,
+#app button,
+#app [role="button"],
+.hud,
+.hud-buttons,
+#mission-banner,
+#map-overlay,
+#interaction-prompt,
+#interaction-choice,
+#dialogue-stage,
+#exit-confirm,
+#joystick,
+.mobile-actions,
+#controls-guide,
+#scale-gun-overlay,
+#camera-overlay,
+#photo-viewer {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#app button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
 html,
 body,
 #app {
@@ -1015,6 +1042,17 @@ body:not(.hud-collapsed) #hud-toggle,
   background: #7fd6f0;
 }
 
+.map-marker.type-ancient {
+  width: 10px;
+  height: 10px;
+  color: #93a5a0;
+  background: #93a5a0;
+  border-color: rgba(218, 229, 222, 0.86);
+  box-shadow:
+    inset 0 0 0 1px rgba(24, 30, 29, 0.48),
+    0 0 10px rgba(147, 165, 160, 0.28);
+}
+
 .map-marker.type-energy {
   color: #d7c85c;
   background: #d7c85c;
@@ -1174,6 +1212,11 @@ body:not(.hud-collapsed) #hud-toggle,
 }
 
 .map-expanded .map-marker.type-meteor {
+  width: 12px;
+  height: 12px;
+}
+
+.map-expanded .map-marker.type-ancient {
   width: 12px;
   height: 12px;
 }

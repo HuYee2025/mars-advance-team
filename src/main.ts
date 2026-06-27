@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
+import wormholeSwirlGeneratedUrl from "./assets/wormhole-swirl-generated.png?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
@@ -30,6 +31,7 @@ import {
   planetSurfacePointFromNormal,
   planetNormal,
   updateElevators,
+  updateAncientTreePortal,
   updateMeteors,
   updateRovers,
   updateSolarArrays,
@@ -54,6 +56,26 @@ type InteractionAction = {
 };
 
 type LanguageCode = "zh-CN" | "en-US";
+
+type OxygenSupplyPoint = {
+  label: string;
+  x: number;
+  z: number;
+  radius: number;
+  mapRange: number;
+  normal: THREE.Vector3;
+};
+
+type WormholeFallState = {
+  startedAt: number;
+  lastTriggerAt: number;
+  drift: THREE.Vector2;
+  velocity: THREE.Vector2;
+  spawnNormal: THREE.Vector3;
+  spawnForward: THREE.Vector3;
+};
+
+type JetpackSource = "temporary" | "equipment" | null;
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
 const labelsRoot = must<HTMLDivElement>("#labels");
@@ -117,6 +139,8 @@ const mapList = must<HTMLDivElement>("#map-list");
 const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
 const staminaReadout = document.querySelector<HTMLDivElement>("#stamina-readout");
+const jetpackStatusRow = document.querySelector<HTMLDivElement>("#jetpack-status-row");
+const jetpackReadout = document.querySelector<HTMLDivElement>("#jetpack-readout");
 const powerReadout = document.querySelector<HTMLDivElement>("#power-readout");
 const onlineCountReadout = document.querySelector<HTMLDivElement>("#online-count-readout");
 const backgroundMusic = new Audio(backgroundMusicUrl);
@@ -176,9 +200,12 @@ player.name = "X";
 player.userData.trueName = "X";
 player.userData.callsign = "022号巡检员";
 scene.add(player);
-player.scale.setScalar(0.76);
+const PLAYER_BASE_SCALE = 0.76;
+player.scale.setScalar(PLAYER_BASE_SCALE);
 const playerContactShadow = createPlayerContactShadow();
 scene.add(playerContactShadow);
+const wormholeVisual = createWormholeFallVisual();
+scene.add(wormholeVisual.group);
 
 const PHOTO_WALL_CAPACITY = 7;
 const CAMERA_MIN_ZOOM = 1;
@@ -194,6 +221,7 @@ const fufu = fufuRig.group;
 scene.add(fufu);
 const labels: LabelAnchor[] = world.landmarks.map(addLabel);
 labels.push(addLabel({ label: "福福", object: fufu, x: world.fufuRescueSite.x, z: world.fufuRescueSite.z, labelDistance: 18, mapRange: 80 }));
+const ancientTreeArchObject = world.landmarks.find((landmark) => landmark.label.includes("远古巨树拱门"))?.object ?? null;
 
 const keyState = new Set<string>();
 const playerVelocity = new THREE.Vector3();
@@ -208,13 +236,24 @@ const SHADOW_SURFACE_ALTITUDE = 0.035;
 const MARS_GRAVITY = 3.71;
 const SUITED_JUMP_SPEED = 4.2;
 const JUMP_FORWARD_BOOST = 2.2;
+const WORMHOLE_FALL_DURATION = 30;
+const WORMHOLE_START_ALTITUDE = 420;
+const WORMHOLE_SAFE_LANDING_ALTITUDE = 0;
+const WORMHOLE_DRIFT_LIMIT = 5.2;
+const WORMHOLE_TRIGGER_COOLDOWN = 6;
+const WORMHOLE_TRIGGER_STRENGTH = 0.12;
+const MOBILE_FLIGHT_CODE = "UUDDLLRR";
 const SUIT_OXYGEN_MAX = 100;
-const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.42;
+const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.294;
 const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.5;
+const JETPACK_MAX_ENERGY = 100;
+const JETPACK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * 1.25;
+const JETPACK_RECOVERY_SECONDS = 10;
+const JETPACK_JUMP_DOUBLE_TAP_MS = 360;
 const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
 const STAMINA_MAX = 100;
 const STAMINA_DRAIN_TUNING_MULTIPLIER = 1.75;
-const STAMINA_WALK_DRAIN_PER_SECOND = (SUIT_OXYGEN_WALK_DRAIN_PER_SECOND / 2) * STAMINA_DRAIN_TUNING_MULTIPLIER;
+const STAMINA_WALK_DRAIN_PER_SECOND = (0.42 / 2) * STAMINA_DRAIN_TUNING_MULTIPLIER;
 const STAMINA_SPRINT_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 2;
 const STAMINA_JUMP_DRAIN_PER_SECOND = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
 const STAMINA_JUMP_COST = STAMINA_WALK_DRAIN_PER_SECOND * 0.5;
@@ -403,10 +442,10 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
   lab: "lab",
 };
 
-const oxygenSupplyPoints = [
-  { label: "居住舱补给柜", x: expandWorldCoordinate(0), z: expandWorldCoordinate(36), radius: 12, mapRange: 240 },
-  { label: "氧气生产站", x: expandWorldCoordinate(48), z: expandWorldCoordinate(36), radius: 15, mapRange: 260 },
-  { label: "登陆飞船补给舱", x: expandWorldCoordinate(264), z: expandWorldCoordinate(156), radius: 14, mapRange: 240 },
+const oxygenSupplyPoints: OxygenSupplyPoint[] = [
+  createOxygenSupplyPoint("居住舱补给柜", expandWorldCoordinate(0), expandWorldCoordinate(36), 22, 240),
+  createOxygenSupplyPoint("氧气生产站", expandWorldCoordinate(48), expandWorldCoordinate(36), 24, 260),
+  createOxygenSupplyPoint("登陆飞船补给舱", expandWorldCoordinate(264), expandWorldCoordinate(156), 22, 240),
 ];
 
 const explorableBuildingIds = new Set<Interactable["id"]>([
@@ -420,6 +459,17 @@ const explorableBuildingIds = new Set<Interactable["id"]>([
   "storehouse",
   "medical",
 ]);
+
+function createOxygenSupplyPoint(label: string, x: number, z: number, radius: number, mapRange: number): OxygenSupplyPoint {
+  return {
+    label,
+    x,
+    z,
+    radius,
+    mapRange,
+    normal: planetNormal(x, z, new THREE.Vector3()),
+  };
+}
 
 const colliderExplorationRules: Array<{ key: string; match: string; label?: string; interactableId?: Interactable["id"] }> = [
   { key: "habitat", match: "居住舱", interactableId: "habitatCheck" },
@@ -476,6 +526,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "hud.patrolOfficer": "巡航员",
     "hud.suitOxygen": "氧气",
     "hud.stamina": "体能",
+    "hud.jetpack": "飞行背包",
     "hudToggle.hide": "隐藏界面信息",
     "hudToggle.show": "显示界面信息",
     "hudButtons.aria": "界面显示控制",
@@ -509,6 +560,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "rank.promoted": "职位晋升：{rank}",
     "map.unknownLife": "未知生命迹象",
     "map.unknownObject": "未知物体",
+    "map.unknownMegaStructure": "未知巨型结构",
     "map.coin": "金币",
     "map.headingLabel": "方位",
     "interaction.title": "互动",
@@ -538,6 +590,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "hud.patrolOfficer": "Patrol Officer",
     "hud.suitOxygen": "Oxygen",
     "hud.stamina": "Stamina",
+    "hud.jetpack": "Jetpack",
     "hudToggle.hide": "Hide HUD",
     "hudToggle.show": "Show HUD",
     "hudButtons.aria": "HUD Controls",
@@ -571,6 +624,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "rank.promoted": "Rank Up: {rank}",
     "map.unknownLife": "Unknown life sign",
     "map.unknownObject": "Unknown object",
+    "map.unknownMegaStructure": "Unknown megastructure",
     "map.coin": "Coin",
     "map.headingLabel": "HDG",
     "interaction.title": "Interact",
@@ -896,6 +950,9 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["火星足球", "Mars Football"],
   ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
   ["火星足球进球", "Mars football goal"],
+  ["远古巨树拱门实体", "Ancient Tree Arch body"],
+  ["远古巨树拱门根部", "Ancient Tree Arch roots"],
+  ["远古巨树拱门", "Ancient Tree Arch"],
   ["照片墙", "Photo Wall"],
   ["查看照片墙", "View Photo Wall"],
   ["照片", "Photo"],
@@ -989,6 +1046,8 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["后退", "Back"],
   ["右转", "Turn Right"],
   ["加速", "Boost"],
+  ["上升", "Ascend"],
+  ["下降", "Descend"],
   ["跳跃", "Jump"],
   ["互动 / 确认", "Interact / Confirm"],
   ["左 / 右选项", "Left / Right Option"],
@@ -1059,7 +1118,18 @@ let oxygenWarningShown = false;
 let staminaWarningShown = false;
 let fufuRescued = false;
 let mysteryCodeProgress = "";
+let mobileFlightCodeProgress = "";
 let flightModeEnabled = false;
+let jetpackUnlocked = false;
+let jetpackEnergy = JETPACK_MAX_ENERGY;
+let jetpackActiveSource: JetpackSource = null;
+let jetpackRecoveryStartedAt = -Infinity;
+let jetpackRecoveryStartEnergy = JETPACK_MAX_ENERGY;
+let keyboardFlightCodeProgress = "";
+let lastJumpPressAt = -Infinity;
+let lastCanvasTapAt = 0;
+let lastCanvasTapX = 0;
+let lastCanvasTapY = 0;
 let hasScaleGun = false;
 let scaleGunAiming = false;
 let scaleGunTarget: ScaleGunTarget | null = null;
@@ -1101,9 +1171,15 @@ let dialogueTextPages: string[] = [];
 let dialogueTextPageIndex = 0;
 let currentCoinGroup: CoinGroup | null = null;
 let nextCoinRefreshAt = 0;
+let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
+let wormholeFall: WormholeFallState | null = null;
+let wormholeTriggerArmed = true;
+let lastWormholeTriggerAt = -Infinity;
 const awardedEvents = new Set<string>();
 const exploredBuildings = new Set<Interactable["id"]>();
 const hiddenDiscoveries = new Set<string>();
+const talkedRobotIds = new Set<string>();
+const ANCIENT_TREE_ARCH_DISCOVERY_ID = "unknown:ancient-tree-arch";
 const dialogueState = {
   motherTrust: 0,
   baseIntegrity: 0,
@@ -1137,6 +1213,7 @@ declare global {
     __marsDebug?: {
       teleportTo: (id: Interactable["id"]) => void;
       mission: () => string;
+      wormhole: () => { portalStrength: number; inDoorway: boolean; local: { x: number; y: number; z: number }; armed: boolean; falling: boolean };
     };
   }
 }
@@ -1153,6 +1230,20 @@ if (import.meta.env.DEV) {
       updateMissionState();
     },
     mission: () => missionStep,
+    wormhole: () => {
+      const local = ancientTreeArchObject ? ancientTreeArchObject.worldToLocal(player.position.clone()) : new THREE.Vector3();
+      return {
+        portalStrength: Number(world.ancientTreePortal.userData.portalStrength ?? 0),
+        inDoorway: ancientTreeArchObject ? isInsideAncientTreeDoorway(local) : false,
+        local: {
+          x: Number(local.x.toFixed(2)),
+          y: Number(local.y.toFixed(2)),
+          z: Number(local.z.toFixed(2)),
+        },
+        armed: wormholeTriggerArmed,
+        falling: Boolean(wormholeFall),
+      };
+    },
   };
 }
 
@@ -1452,6 +1543,462 @@ function createRadialShadowTexture() {
   return texture;
 }
 
+function seededNoise(seed: number, salt: number) {
+  return THREE.MathUtils.clamp(Math.sin(seed * 12.9898 + salt) * 43758.5453 % 1, -1, 1) * 0.5 + 0.5;
+}
+
+function createWormholeFallVisual() {
+  const group = new THREE.Group();
+  group.name = "Wormhole fall visual";
+  group.visible = false;
+  group.renderOrder = 30;
+
+  const particleCount = 520;
+  const positions = new Float32Array(particleCount * 3);
+  const seeds = new Float32Array(particleCount * 4);
+  for (let i = 0; i < particleCount; i += 1) {
+    const angle = seededNoise(i, 4.11) * Math.PI * 2;
+    const radius = 4 + seededNoise(i, 8.31) * 34;
+    seeds[i * 4] = Math.cos(angle) * radius;
+    seeds[i * 4 + 1] = Math.sin(angle) * radius;
+    seeds[i * 4 + 2] = seededNoise(i, 13.91);
+    seeds[i * 4 + 3] = 0.55 + seededNoise(i, 19.2) * 1.4;
+    positions[i * 3] = seeds[i * 4];
+    positions[i * 3 + 1] = seeds[i * 4 + 1];
+    positions[i * 3 + 2] = -12 - seeds[i * 4 + 2] * 240;
+  }
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const particleMaterial = new THREE.PointsMaterial({
+    color: 0xb9f4ff,
+    size: 0.42,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    sizeAttenuation: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const particles = new THREE.Points(particleGeometry, particleMaterial);
+  particles.renderOrder = 32;
+  group.add(particles);
+
+  const streakGeometry = new THREE.BufferGeometry();
+  const streakCount = 120;
+  const streakDuplicates = 3;
+  const streakPositions = new Float32Array(streakCount * streakDuplicates * 4 * 3);
+  streakGeometry.setAttribute("position", new THREE.BufferAttribute(streakPositions, 3));
+  const streakMaterial = new THREE.LineBasicMaterial({
+    color: 0xcffbff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  streakMaterial.linewidth = 1;
+  const streaks = new THREE.LineSegments(streakGeometry, streakMaterial);
+  streaks.renderOrder = 31;
+  group.add(streaks);
+
+  const voidMaterial = new THREE.SpriteMaterial({
+    map: createWormholeVoidTexture(),
+    color: 0x02040a,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: true,
+  });
+  const voidBackdrop = new THREE.Sprite(voidMaterial);
+  voidBackdrop.position.set(0, 0, -52);
+  voidBackdrop.scale.set(240, 150, 1);
+  voidBackdrop.renderOrder = 28;
+  group.add(voidBackdrop);
+
+  const marsMaterial = new THREE.SpriteMaterial({
+    map: createWormholeMarsTexture(),
+    color: 0xff583a,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const mars = new THREE.Sprite(marsMaterial);
+  mars.position.set(0, 0, -240);
+  mars.scale.setScalar(1);
+  mars.renderOrder = 33;
+  group.add(mars);
+
+  const veilMaterial = new THREE.SpriteMaterial({
+    map: createWormholeVeilTexture(),
+    color: 0x0a1c46,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const veil = new THREE.Sprite(veilMaterial);
+  veil.position.set(0, 0, -46);
+  veil.scale.set(130, 80, 1);
+  veil.renderOrder = 29;
+  group.add(veil);
+
+  const swirlMaterial = new THREE.SpriteMaterial({
+    map: createWormholeGeneratedTexture(),
+    color: 0x82e8ff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const swirl = new THREE.Sprite(swirlMaterial);
+  swirl.position.set(0, 0, -82);
+  swirl.scale.set(190, 132, 1);
+  swirl.renderOrder = 29;
+  group.add(swirl);
+
+  const tunnelRingMaterials = [0x7cf8ff, 0x2f8cff, 0xff4fd8].map((color, index) => new THREE.SpriteMaterial({
+    map: createWormholeRingTexture(),
+    color,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    rotation: index * 0.7,
+  }));
+  const tunnelRings = tunnelRingMaterials.map((material, index) => {
+    const ring = new THREE.Sprite(material);
+    ring.position.set(0, 0, -58 - index * 42);
+    ring.scale.setScalar(46 + index * 34);
+    ring.renderOrder = 30;
+    group.add(ring);
+    return ring;
+  });
+
+  return {
+    group,
+    particles,
+    particlePositions: positions,
+    particleSeeds: seeds,
+    particleMaterial,
+    streakPositions,
+    streakCount,
+    streakDuplicates,
+    streakAttribute: streakGeometry.getAttribute("position") as THREE.BufferAttribute,
+    streakMaterial,
+    voidMaterial,
+    mars,
+    marsMaterial,
+    veilMaterial,
+    swirl,
+    swirlMaterial,
+    tunnelRings,
+    tunnelRingMaterials,
+  };
+}
+
+function createWormholeVoidTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 6, 128, 128, 156);
+    gradient.addColorStop(0, "rgba(0, 0, 0, 1)");
+    gradient.addColorStop(0.45, "rgba(0, 2, 8, 0.98)");
+    gradient.addColorStop(0.78, "rgba(3, 10, 25, 0.96)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0.92)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeMarsTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 5, 128, 128, 118);
+    gradient.addColorStop(0, "rgba(255, 236, 210, 1)");
+    gradient.addColorStop(0.18, "rgba(255, 118, 70, 0.95)");
+    gradient.addColorStop(0.58, "rgba(178, 38, 20, 0.82)");
+    gradient.addColorStop(0.86, "rgba(92, 10, 12, 0.36)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeVeilTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 12, 128, 128, 128);
+    gradient.addColorStop(0, "rgba(80, 210, 255, 0.1)");
+    gradient.addColorStop(0.48, "rgba(20, 76, 180, 0.22)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeGeneratedTexture() {
+  const texture = new THREE.TextureLoader().load(wormholeSwirlGeneratedUrl);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeSwirlTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 1024;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.clearRect(0, 0, 1024, 1024);
+    const center = 512;
+    const bg = ctx.createRadialGradient(center, center, 34, center, center, 504);
+    bg.addColorStop(0, "rgba(0,0,0,1)");
+    bg.addColorStop(0.18, "rgba(0,6,18,0.98)");
+    bg.addColorStop(0.46, "rgba(10,80,130,0.54)");
+    bg.addColorStop(0.76, "rgba(18,118,170,0.36)");
+    bg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 1024, 1024);
+
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 860; i += 1) {
+      const seed = seededNoise(i, 11.2);
+      const angle = seededNoise(i, 8.7) * Math.PI * 2;
+      const radius = 70 + Math.pow(seededNoise(i, 3.3), 0.7) * 430;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius * 0.86;
+      const size = 0.8 + seed * 3.2;
+      ctx.fillStyle = `rgba(180,238,255,${0.18 + seed * 0.42})`;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 360; i += 1) {
+      const seed = seededNoise(i, 31.7);
+      const arm = i % 6;
+      const t = i / 360;
+      const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 6.6 + seed * 0.55;
+      const radius = 58 + t * 418;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius * 0.82;
+      const size = 3 + seed * 17 + t * 14;
+      const dot = ctx.createRadialGradient(x, y, 0, x, y, size);
+      dot.addColorStop(0, `rgba(160,235,255,${0.14 + seed * 0.26})`);
+      dot.addColorStop(0.46, `rgba(45,150,220,${0.08 + seed * 0.16})`);
+      dot.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = dot;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (let arm = 0; arm < 6; arm += 1) {
+      ctx.strokeStyle = arm % 2 === 0 ? "rgba(105,220,255,0.34)" : "rgba(85,120,255,0.22)";
+      ctx.lineWidth = arm % 2 === 0 ? 15 : 8;
+      ctx.beginPath();
+      for (let step = 0; step < 150; step += 1) {
+        const t = step / 149;
+        const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 5.4;
+        const radius = 46 + t * 424;
+        const x = center + Math.cos(angle) * radius;
+        const y = center + Math.sin(angle) * radius * 0.84;
+        if (step === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    const core = ctx.createRadialGradient(center, center, 22, center, center, 210);
+    core.addColorStop(0, "rgba(0,0,0,1)");
+    core.addColorStop(0.58, "rgba(0,0,0,0.72)");
+    core.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, 1024, 1024);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeRingTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.clearRect(0, 0, 512, 512);
+    const center = 256;
+    const rings = [
+      { radius: 138, alpha: 0.9, width: 10 },
+      { radius: 162, alpha: 0.48, width: 6 },
+      { radius: 198, alpha: 0.34, width: 4 },
+    ];
+    for (const ring of rings) {
+      const gradient = ctx.createRadialGradient(center, center, ring.radius - ring.width * 2, center, center, ring.radius + ring.width * 2);
+      gradient.addColorStop(0, "rgba(255,255,255,0)");
+      gradient.addColorStop(0.42, `rgba(255,255,255,${ring.alpha})`);
+      gradient.addColorStop(0.58, `rgba(255,255,255,${ring.alpha * 0.82})`);
+      gradient.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(center, center, ring.radius + ring.width * 3, 0, Math.PI * 2);
+      ctx.arc(center, center, ring.radius - ring.width * 3, 0, Math.PI * 2, true);
+      ctx.fill();
+    }
+    for (let i = 0; i < 28; i += 1) {
+      const angle = (i / 28) * Math.PI * 2;
+      const inner = 74 + seededNoise(i, 4.7) * 40;
+      const outer = 232 - seededNoise(i, 8.2) * 34;
+      ctx.strokeStyle = `rgba(255,255,255,${0.12 + seededNoise(i, 18.2) * 0.34})`;
+      ctx.lineWidth = 1 + seededNoise(i, 22.1) * 2.4;
+      ctx.beginPath();
+      ctx.moveTo(center + Math.cos(angle) * inner, center + Math.sin(angle) * inner);
+      ctx.lineTo(center + Math.cos(angle + 0.08) * outer, center + Math.sin(angle + 0.08) * outer);
+      ctx.stroke();
+    }
+    const core = ctx.createRadialGradient(center, center, 4, center, center, 96);
+    core.addColorStop(0, "rgba(0,0,0,0.94)");
+    core.addColorStop(0.38, "rgba(0,0,0,0.64)");
+    core.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, 512, 512);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta: number) {
+  wormholeVisual.group.visible = true;
+  wormholeVisual.group.position.copy(camera.position);
+  wormholeVisual.group.quaternion.copy(camera.quaternion);
+
+  const fallSeconds = wormholeFall ? elapsedTime - wormholeFall.startedAt : progress * WORMHOLE_FALL_DURATION;
+  const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
+  const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
+  const particleOpacity = 0;
+  wormholeVisual.particleMaterial.opacity = particleOpacity;
+  wormholeVisual.particleMaterial.size = 0.35;
+
+  const wrapDistance = 260;
+  for (let i = 0; i < wormholeVisual.particleSeeds.length / 4; i += 1) {
+    const seedIndex = i * 4;
+    const positionIndex = i * 3;
+    const baseX = wormholeVisual.particleSeeds[seedIndex];
+    const baseY = wormholeVisual.particleSeeds[seedIndex + 1];
+    const seedZ = wormholeVisual.particleSeeds[seedIndex + 2];
+    const speed = wormholeVisual.particleSeeds[seedIndex + 3];
+    const zTravel = ((seedZ * wrapDistance - fallSeconds * 72 * speed) % wrapDistance + wrapDistance) % wrapDistance;
+    const z = -8 - zTravel;
+    const depthT = 1 - zTravel / wrapDistance;
+    const twist = elapsedTime * (0.7 + speed * 0.18) + seedZ * Math.PI * 2;
+    const tunnelScale = THREE.MathUtils.lerp(0.08, 1.0, depthT);
+    wormholeVisual.particlePositions[positionIndex] = baseX * tunnelScale + Math.sin(twist) * 0.4 + drift.x * 0.08;
+    wormholeVisual.particlePositions[positionIndex + 1] = baseY * tunnelScale + Math.cos(twist * 1.17) * 0.4 + drift.y * 0.08;
+    wormholeVisual.particlePositions[positionIndex + 2] = z;
+  }
+  const particlePosition = wormholeVisual.particles.geometry.getAttribute("position") as THREE.BufferAttribute;
+  particlePosition.needsUpdate = true;
+
+  for (let i = 0; i < wormholeVisual.streakCount; i += 1) {
+    const seed = seededNoise(i, 42.7);
+    const angle = seed * Math.PI * 2 + Math.sin(fallSeconds * 0.16) * 0.12;
+    const speed = 2.2 + seededNoise(i, 12.9) * 4.2;
+    const zTravel = ((seededNoise(i, 7.4) * wrapDistance - fallSeconds * 340 * speed) % wrapDistance + wrapDistance) % wrapDistance;
+    const z = -7 - zTravel;
+    const depthT = 1 - zTravel / wrapDistance;
+    const radius = 32 + seededNoise(i, 91.3) * 118;
+    const outerScale = THREE.MathUtils.lerp(0.32, 1.95, depthT);
+    const innerScale = Math.max(0.018, outerScale - THREE.MathUtils.lerp(0.34, 1.05, depthT));
+    const midScale = (outerScale + innerScale) * 0.5;
+    const x = Math.cos(angle) * radius + drift.x * 0.03;
+    const y = Math.sin(angle) * radius + drift.y * 0.03;
+    const tangentX = -Math.sin(angle);
+    const tangentY = Math.cos(angle);
+    for (let duplicate = 0; duplicate < wormholeVisual.streakDuplicates; duplicate += 1) {
+      const lineOffset = (duplicate - 1) * THREE.MathUtils.lerp(0.06, 0.72, depthT);
+      const ox = tangentX * lineOffset;
+      const oy = tangentY * lineOffset;
+      const index = (i * wormholeVisual.streakDuplicates + duplicate) * 12;
+      const outerX = x * outerScale + ox;
+      const outerY = y * outerScale + oy;
+      const midX = x * midScale + ox * 0.5;
+      const midY = y * midScale + oy * 0.5;
+      const innerX = x * innerScale + ox * 0.22;
+      const innerY = y * innerScale + oy * 0.22;
+      const midZ = z + THREE.MathUtils.lerp(18, 48, depthT);
+      const innerZ = z + THREE.MathUtils.lerp(48, 116, depthT);
+      wormholeVisual.streakPositions[index] = outerX;
+      wormholeVisual.streakPositions[index + 1] = outerY;
+      wormholeVisual.streakPositions[index + 2] = z;
+      wormholeVisual.streakPositions[index + 3] = midX;
+      wormholeVisual.streakPositions[index + 4] = midY;
+      wormholeVisual.streakPositions[index + 5] = midZ;
+      wormholeVisual.streakPositions[index + 6] = midX;
+      wormholeVisual.streakPositions[index + 7] = midY;
+      wormholeVisual.streakPositions[index + 8] = midZ;
+      wormholeVisual.streakPositions[index + 9] = innerX;
+      wormholeVisual.streakPositions[index + 10] = innerY;
+      wormholeVisual.streakPositions[index + 11] = innerZ;
+    }
+  }
+  wormholeVisual.streakAttribute.needsUpdate = true;
+  wormholeVisual.streakMaterial.opacity = THREE.MathUtils.clamp(THREE.MathUtils.lerp(0.22, 0.52, pulse), 0, 0.62) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
+  wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
+  wormholeVisual.swirl.position.set(drift.x * 0.035, drift.y * 0.035, -92);
+  wormholeVisual.swirl.scale.set(
+    THREE.MathUtils.lerp(190, 236, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
+    THREE.MathUtils.lerp(132, 164, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
+    1,
+  );
+  wormholeVisual.swirlMaterial.rotation = elapsedTime * 0.18;
+  wormholeVisual.swirlMaterial.opacity = THREE.MathUtils.lerp(0.84, 0.2, marsPhase) * (1 - THREE.MathUtils.smoothstep(progress, 0.84, 1));
+
+  wormholeVisual.tunnelRings.forEach((ring, index) => {
+    const ringPhase = (fallSeconds * (0.34 + index * 0.08) + index * 0.24) % 1;
+    const z = THREE.MathUtils.lerp(-34, -170, ringPhase);
+    const scale = THREE.MathUtils.lerp(38 + index * 8, 148 + index * 28, ringPhase);
+    ring.position.set(
+      Math.sin(fallSeconds * 0.52 + index) * 2.8 + drift.x * 0.03,
+      Math.cos(fallSeconds * 0.44 + index * 1.7) * 2.2 + drift.y * 0.03,
+      z,
+    );
+    ring.scale.setScalar(scale);
+    ring.material.rotation = elapsedTime * (0.08 + index * 0.035) + index * 0.9;
+    ring.material.opacity = (0.025 + index * 0.012 + pulse * 0.014) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
+  });
+
+  const finalRush = THREE.MathUtils.smoothstep(progress, 0.94, 1);
+  const marsScale = THREE.MathUtils.lerp(0.12, 18, Math.pow(marsPhase, 1.7)) + finalRush * 110;
+  wormholeVisual.mars.position.set(0, 0, THREE.MathUtils.lerp(-238, -30, Math.pow(marsPhase, 1.3)));
+  wormholeVisual.mars.scale.setScalar(marsScale);
+  wormholeVisual.marsMaterial.opacity = marsPhase * THREE.MathUtils.lerp(0.18, 0.98, marsPhase);
+
+  wormholeVisual.veilMaterial.opacity = THREE.MathUtils.lerp(0.02, 0.08, pulse) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
+  wormholeVisual.group.scale.setScalar(THREE.MathUtils.lerp(1, 1.05, Math.min(delta * 12, 1)));
+}
+
 function readInitialLanguage(): LanguageCode {
   return localStorage.getItem(LANG_STORAGE_KEY) === "en-US" ? "en-US" : "zh-CN";
 }
@@ -1537,6 +2084,7 @@ function applyLanguage() {
   updateTitleActionSelection();
   updateMissionAfterLanguageChange();
   updateScaleGunOverlay();
+  updateMobileFlightButtons();
   for (const item of labels) item.element.textContent = localizeLabel(item.element.dataset.labelSource ?? item.element.textContent);
   interactionChoiceSignature = "";
   updateInteractionPrompts();
@@ -1712,9 +2260,7 @@ function findSafeFootballGoalNormal(idealNormal: THREE.Vector3) {
 function isSafeFootballGoalNormal(candidate: THREE.Vector3) {
   for (const collider of world.colliders) {
     if (collider.enabled && !collider.enabled()) continue;
-    const colliderNormal = new THREE.Vector3();
-    if (collider.dynamicObject) collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
-    else planetNormal(collider.center.x, collider.center.y, colliderNormal);
+    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
     if (surfaceDistanceBetween(candidate, colliderNormal) < collider.radius + FOOTBALL_GOAL_SAFE_MARGIN) return false;
   }
   return true;
@@ -1886,7 +2432,19 @@ function bindInput() {
   scaleGunShrinkButton.addEventListener("click", () => fireScaleGun("shrink"));
   scaleGunGrowButton.addEventListener("click", () => fireScaleGun("grow"));
   window.addEventListener("keydown", (event) => {
+    if (!started && handleTitleScreenKey(event)) return;
+    if (!started) return;
+    if (wormholeFall) {
+      event.preventDefault();
+      if (event.code === "KeyC") {
+        toggleFirstThirdPersonCamera();
+        return;
+      }
+      if (isWormholeControlKey(event.code)) keyState.add(event.code);
+      return;
+    }
     if (handleMysteryCodeKey(event)) return;
+    if (handleKeyboardFlightCodeKey(event)) return;
     if (started && exitConfirmOpen) {
       handleExitConfirmKey(event);
       return;
@@ -1896,8 +2454,6 @@ function bindInput() {
       showControlsGuide(true);
       return;
     }
-    if (!started && handleTitleScreenKey(event)) return;
-    if (!started) return;
     if (dialogueOpen) {
       handleDialogueKey(event);
       return;
@@ -1914,6 +2470,11 @@ function bindInput() {
       return;
     }
     if (scaleGunAiming && isScaleGunAimControlKey(event.code)) {
+      event.preventDefault();
+      keyState.add(event.code);
+      return;
+    }
+    if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
       event.preventDefault();
       keyState.add(event.code);
       return;
@@ -1978,8 +2539,7 @@ function bindInput() {
     if (event.code === "Space") {
       event.preventDefault();
       if (scaleGunAiming) return;
-      if (flightModeEnabled && canUseFlightMode()) keyState.add(event.code);
-      else jump();
+      if (!isFlightActive()) handleJumpPress();
       return;
     }
     if (event.code === "Equal" || event.code === "NumpadAdd") {
@@ -2034,8 +2594,13 @@ function bindInput() {
   });
   window.addEventListener("resize", onResize);
 
-  renderer.domElement.addEventListener("pointerdown", () => {
-    if (started && !isTouchLike() && !isMapFocusActive()) renderer.domElement.requestPointerLock();
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (!started) return;
+    if (isTouchLike()) {
+      handleCanvasDoubleTap(event);
+      return;
+    }
+    if (!isMapFocusActive()) renderer.domElement.requestPointerLock();
   });
   window.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return;
@@ -2086,29 +2651,52 @@ function bindInput() {
     if (!mobileStick.active || mobileStick.pointerId !== event.pointerId) return;
     updateStick(event);
   });
-  joystick.addEventListener("pointerup", resetStick);
+  joystick.addEventListener("pointerup", (event) => {
+    handleMobileFlightCodeGesture();
+    resetStick(event);
+  });
   joystick.addEventListener("pointercancel", resetStick);
 
   mobileBoostButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     if (!started || exitConfirmOpen || dialogueOpen) return;
-    keyState.add("ShiftLeft");
+    keyState.add(isFlightActive() ? "KeyQ" : "ShiftLeft");
     mobileBoostButton.setPointerCapture(event.pointerId);
   });
   mobileBoostButton.addEventListener("pointerup", (event) => {
     event.preventDefault();
     keyState.delete("ShiftLeft");
+    keyState.delete("KeyQ");
   });
   mobileBoostButton.addEventListener("pointercancel", (event) => {
     event.preventDefault();
     keyState.delete("ShiftLeft");
+    keyState.delete("KeyQ");
   });
   mobileBoostButton.addEventListener("lostpointercapture", () => {
     keyState.delete("ShiftLeft");
+    keyState.delete("KeyQ");
   });
   mobileJumpButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (started && !exitConfirmOpen && !dialogueOpen) jump();
+    if (!started || exitConfirmOpen || dialogueOpen) return;
+    if (isFlightActive()) {
+      keyState.add("KeyE");
+      mobileJumpButton.setPointerCapture(event.pointerId);
+      return;
+    }
+    handleJumpPress();
+  });
+  mobileJumpButton.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    keyState.delete("KeyE");
+  });
+  mobileJumpButton.addEventListener("pointercancel", (event) => {
+    event.preventDefault();
+    keyState.delete("KeyE");
+  });
+  mobileJumpButton.addEventListener("lostpointercapture", () => {
+    keyState.delete("KeyE");
   });
   mapRadar.addEventListener("pointerdown", (event) => {
     if (!started || exitConfirmOpen || !mapOpen || dialogueOpen || !isSmallScreenMapTouch()) return;
@@ -2132,7 +2720,7 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
     event.preventDefault();
     if (mysteryCodeProgress === MYSTERY_CODE) {
       mysteryCodeProgress = "";
-      setFlightModeEnabled(!flightModeEnabled);
+      activateTemporaryJetpack();
     }
     return true;
   }
@@ -2142,8 +2730,39 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
   return mysteryCodeProgress.length > 0;
 }
 
-function setFlightModeEnabled(enabled: boolean) {
+function handleKeyboardFlightCodeKey(event: KeyboardEvent) {
+  if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return false;
+  const direction = keyboardFlightCodeDirection(event.code);
+  if (!direction) return false;
+
+  const next = `${keyboardFlightCodeProgress}${direction}`;
+  if (MOBILE_FLIGHT_CODE.startsWith(next)) {
+    keyboardFlightCodeProgress = next;
+    if (keyboardFlightCodeProgress === MOBILE_FLIGHT_CODE) {
+      keyboardFlightCodeProgress = "";
+      event.preventDefault();
+      unlockEquipmentJetpack(true);
+      return true;
+    }
+    return false;
+  }
+
+  keyboardFlightCodeProgress = MOBILE_FLIGHT_CODE.startsWith(direction) ? direction : "";
+  return false;
+}
+
+function keyboardFlightCodeDirection(code: string) {
+  if (code === "ArrowUp" || code === "KeyW") return "U";
+  if (code === "ArrowDown" || code === "KeyS") return "D";
+  if (code === "ArrowLeft" || code === "KeyA") return "L";
+  if (code === "ArrowRight" || code === "KeyD") return "R";
+  return "";
+}
+
+function setFlightModeEnabled(enabled: boolean, source: JetpackSource) {
   flightModeEnabled = enabled;
+  jetpackActiveSource = enabled ? source : null;
+  if (enabled) jetpackRecoveryStartedAt = -Infinity;
   playDingDong();
   if (enabled && started && canUseFlightMode()) {
     grounded = false;
@@ -2151,24 +2770,168 @@ function setFlightModeEnabled(enabled: boolean) {
     playerAltitudeOffset = Math.max(playerAltitudeOffset, FLIGHT_MIN_ALTITUDE);
   }
   if (!enabled) {
-    keyState.delete("Space");
-    keyState.delete("ControlLeft");
-    keyState.delete("ControlRight");
+    clearFlightControlKeys();
+  }
+  updateMobileFlightButtons();
+}
+
+function activateTemporaryJetpack() {
+  setFlightModeEnabled(true, "temporary");
+}
+
+function unlockEquipmentJetpack(startFlight: boolean) {
+  jetpackUnlocked = true;
+  jetpackEnergy = JETPACK_MAX_ENERGY;
+  if (startFlight) {
+    if (!activateEquipmentJetpack()) {
+      playDingDong();
+      updateMobileFlightButtons();
+    }
+  } else {
+    playDingDong();
+    updateMobileFlightButtons();
   }
 }
 
+function activateEquipmentJetpack() {
+  if (!jetpackUnlocked || jetpackEnergy <= 0 || !canUseFlightMode()) return false;
+  setFlightModeEnabled(true, "equipment");
+  return true;
+}
+
 function landFromFlight() {
+  const landingSource = jetpackActiveSource;
   flightModeEnabled = false;
+  jetpackActiveSource = null;
+  if (landingSource === "equipment" && jetpackUnlocked && jetpackEnergy < JETPACK_MAX_ENERGY) {
+    jetpackRecoveryStartedAt = elapsedTime;
+    jetpackRecoveryStartEnergy = jetpackEnergy;
+  }
   grounded = true;
   verticalVelocity = 0;
   playerVelocity.set(0, 0, 0);
+  clearFlightControlKeys();
+  updateMobileFlightButtons();
+}
+
+function canUseFlightMode() {
+  return started && !wormholeFall && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+}
+
+function isFlightActive() {
+  return flightModeEnabled && canUseFlightMode();
+}
+
+function clearFlightControlKeys() {
+  keyState.delete("KeyE");
+  keyState.delete("KeyQ");
   keyState.delete("Space");
   keyState.delete("ControlLeft");
   keyState.delete("ControlRight");
 }
 
-function canUseFlightMode() {
-  return started && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+function resetJetpackState() {
+  flightModeEnabled = false;
+  jetpackUnlocked = false;
+  jetpackEnergy = JETPACK_MAX_ENERGY;
+  jetpackActiveSource = null;
+  jetpackRecoveryStartedAt = -Infinity;
+  jetpackRecoveryStartEnergy = JETPACK_MAX_ENERGY;
+  keyboardFlightCodeProgress = "";
+  mobileFlightCodeProgress = "";
+  lastJumpPressAt = -Infinity;
+  clearFlightControlKeys();
+  updateMobileFlightButtons();
+}
+
+function disableActiveJetpackForRespawn() {
+  flightModeEnabled = false;
+  jetpackActiveSource = null;
+  jetpackRecoveryStartedAt = -Infinity;
+  lastJumpPressAt = -Infinity;
+  clearFlightControlKeys();
+  updateMobileFlightButtons();
+}
+
+function handleCanvasDoubleTap(event: PointerEvent) {
+  if (event.pointerType === "mouse") return;
+  if (exitConfirmOpen || dialogueOpen || isMapFocusActive() || cameraMode || photoViewerOpen || scaleGunAiming) return;
+  const now = performance.now();
+  const distance = Math.hypot(event.clientX - lastCanvasTapX, event.clientY - lastCanvasTapY);
+  if (now - lastCanvasTapAt < 360 && distance < 74) {
+    event.preventDefault();
+    lastCanvasTapAt = 0;
+    toggleFirstThirdPersonCamera();
+    return;
+  }
+  lastCanvasTapAt = now;
+  lastCanvasTapX = event.clientX;
+  lastCanvasTapY = event.clientY;
+}
+
+function handleMobileFlightCodeGesture() {
+  if (!started || exitConfirmOpen || dialogueOpen || wormholeFall) return;
+  const direction = mobileStickDirection();
+  if (!direction) return;
+  const next = `${mobileFlightCodeProgress}${direction}`;
+  if (MOBILE_FLIGHT_CODE.startsWith(next)) {
+    mobileFlightCodeProgress = next;
+    if (mobileFlightCodeProgress === MOBILE_FLIGHT_CODE) {
+      mobileFlightCodeProgress = "";
+      unlockEquipmentJetpack(true);
+    }
+    return;
+  }
+  mobileFlightCodeProgress = MOBILE_FLIGHT_CODE.startsWith(direction) ? direction : "";
+}
+
+function mobileStickDirection() {
+  const absX = Math.abs(mobileStick.x);
+  const absY = Math.abs(mobileStick.y);
+  if (Math.max(absX, absY) < 0.62) return "";
+  if (absY >= absX) return mobileStick.y < 0 ? "U" : "D";
+  return mobileStick.x < 0 ? "L" : "R";
+}
+
+function updateMobileFlightButtons() {
+  const flightActive = isFlightActive();
+  const boostLabel = localizeText(flightActive ? "下降" : "加速");
+  const jumpLabel = localizeText(flightActive ? "上升" : "跳");
+  mobileBoostButton.textContent = boostLabel;
+  mobileBoostButton.setAttribute("aria-label", boostLabel);
+  mobileJumpButton.textContent = jumpLabel;
+  mobileJumpButton.setAttribute("aria-label", jumpLabel);
+}
+
+function updateJetpackEnergy(delta: number) {
+  if (!started || wormholeFall || !jetpackUnlocked) return;
+  if (jetpackActiveSource === "equipment" && isFlightActive()) {
+    jetpackEnergy = Math.max(0, jetpackEnergy - JETPACK_DRAIN_PER_SECOND * delta);
+    if (jetpackEnergy <= 0) {
+      playerAltitudeOffset = 0;
+      landFromFlight();
+      placePlayerOnPlanet();
+      showDialogue("飞行背包", "飞行背包能量耗尽，已安全降落。", 3);
+    }
+    return;
+  }
+  if (!isFlightActive() && grounded && playerAltitudeOffset <= 0) {
+    if (jetpackEnergy >= JETPACK_MAX_ENERGY) {
+      jetpackRecoveryStartedAt = -Infinity;
+      jetpackEnergy = JETPACK_MAX_ENERGY;
+      return;
+    }
+    if (!Number.isFinite(jetpackRecoveryStartedAt)) {
+      jetpackRecoveryStartedAt = elapsedTime;
+      jetpackRecoveryStartEnergy = jetpackEnergy;
+    }
+    const recoveryT = THREE.MathUtils.clamp((elapsedTime - jetpackRecoveryStartedAt) / JETPACK_RECOVERY_SECONDS, 0, 1);
+    jetpackEnergy = THREE.MathUtils.lerp(jetpackRecoveryStartEnergy, JETPACK_MAX_ENERGY, recoveryT);
+    if (recoveryT >= 1) {
+      jetpackEnergy = JETPACK_MAX_ENERGY;
+      jetpackRecoveryStartedAt = -Infinity;
+    }
+  }
 }
 
 function currentPlayerInsideState(): PlayerInsideState {
@@ -3008,6 +3771,17 @@ function jump() {
   playerVelocity.addScaledVector(playerForward, JUMP_FORWARD_BOOST);
 }
 
+function handleJumpPress() {
+  const now = performance.now();
+  const isDoubleTap = now - lastJumpPressAt <= JETPACK_JUMP_DOUBLE_TAP_MS;
+  lastJumpPressAt = now;
+  if (isDoubleTap && activateEquipmentJetpack()) {
+    lastJumpPressAt = -Infinity;
+    return;
+  }
+  jump();
+}
+
 function startGame() {
   if (started) return;
   playUiBeep();
@@ -3049,6 +3823,7 @@ function startGame() {
   verticalVelocity = 0;
   grounded = true;
   resetVitals();
+  resetJetpackState();
   setScaleGunOwned(false);
   clearScaleGunEffects();
   resetCameraSystem();
@@ -3084,6 +3859,7 @@ function returnToTitle() {
   controlsGuideOpen = false;
   messageUntil = 0;
   resetVitals();
+  resetJetpackState();
   setScaleGunOwned(false);
   clearScaleGunEffects();
   resetCameraSystem();
@@ -3129,7 +3905,7 @@ function updateStick(event: PointerEvent) {
   joystickKnob.style.transform = `translate(${mobileStick.x * max}px, ${mobileStick.y * max}px)`;
 }
 
-function resetStick() {
+function resetStick(_event?: PointerEvent) {
   mobileStick.active = false;
   mobileStick.pointerId = null;
   mobileStick.x = 0;
@@ -3148,8 +3924,10 @@ function animate() {
   updateSolarLighting();
   if (sunLight) updateSolarArrays(world.solarArrays, sunLight.position);
   updateElevators(world.elevators, delta);
+  updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
   const speed = started ? updatePlayer(delta) : 0;
   updateSuitOxygen(delta);
+  updateJetpackEnergy(delta);
   updateCamera(delta);
   updateRovers(world.rovers, elapsedTime, world.colliders);
   updateFootball(delta);
@@ -3163,8 +3941,10 @@ function animate() {
   updateMap();
   updateMissionState();
   updateReadouts();
-  const playerFlying = flightModeEnabled && canUseFlightMode();
-  updateMarsEngineer(playerRig, speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
+  updateMobileFlightButtons();
+  const playerFlying = isFlightActive();
+  updateMarsEngineer(playerRig, wormholeFall ? 0 : speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
+  updateWormholePlayerPose(delta);
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
   if (started) {
     multiplayer.update(delta, elapsedTime, {
@@ -3336,6 +4116,7 @@ function updateRobotEncounters() {
   const robotPosition = new THREE.Vector3();
   for (const rover of world.rovers) {
     if (rover.userData.kind !== "bot") continue;
+    if (hasTalkedToRobot(rover)) continue;
     rover.getWorldPosition(robotPosition);
     const distance = robotPosition.distanceTo(player.position);
     if (distance < nearestDistance) {
@@ -3355,6 +4136,9 @@ function isMapFocusActive() {
 }
 
 function updatePlayer(delta: number) {
+  if (wormholeFall) {
+    return updateWormholeFall(delta);
+  }
   if (isMapFocusActive()) {
     playerVelocity.set(0, 0, 0);
     return 0;
@@ -3378,7 +4162,7 @@ function updatePlayer(delta: number) {
   if (scaleGunAiming) {
     return updateScaleGunAimingPlayer(delta);
   }
-  if (flightModeEnabled && canUseFlightMode()) {
+  if (isFlightActive()) {
     return updateFlightPlayer(delta);
   }
 
@@ -3413,7 +4197,142 @@ function updatePlayer(delta: number) {
     }
   }
   placePlayerOnPlanet();
+  maybeTriggerWormholeFall();
   return playerVelocity.length();
+}
+
+function isWormholeControlKey(code: string) {
+  return code === "KeyW" || code === "KeyA" || code === "KeyS" || code === "KeyD" || code === "ArrowUp" || code === "ArrowLeft" || code === "ArrowDown" || code === "ArrowRight";
+}
+
+function wormholeInputVector() {
+  const x = (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0) - (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0);
+  const y = (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0) - (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0);
+  const vector = new THREE.Vector2(x, y);
+  if (vector.lengthSq() > 1) vector.normalize();
+  return vector;
+}
+
+function maybeTriggerWormholeFall() {
+  if (!ancientTreeArchObject || wormholeFall) return;
+  if (elapsedTime < lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) return;
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || dialogueOpen || exitConfirmOpen) return;
+
+  const local = ancientTreeArchObject.worldToLocal(player.position.clone());
+  const inDoorway = isInsideAncientTreeDoorway(local);
+  if (!inDoorway) {
+    wormholeTriggerArmed = true;
+    return;
+  }
+
+  const portalStrength = Number(world.ancientTreePortal.userData.portalStrength ?? 0);
+  if (portalStrength <= WORMHOLE_TRIGGER_STRENGTH) {
+    wormholeTriggerArmed = true;
+    return;
+  }
+  if (!wormholeTriggerArmed) return;
+  startWormholeFall();
+}
+
+function isInsideAncientTreeDoorway(local: THREE.Vector3) {
+  const lowerDoorWidth = THREE.MathUtils.lerp(34, 24, THREE.MathUtils.smoothstep(local.y, -8, 18));
+  const upperDoorWidth = THREE.MathUtils.lerp(24, 19, THREE.MathUtils.smoothstep(local.y, 50, 92));
+  const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth);
+  return Math.abs(local.x) < doorwayWidth && local.y > -16 && local.y < 122 && Math.abs(local.z) < 42;
+}
+
+function startWormholeFall() {
+  const spawnNormal = planetNormal(SPAWN_X, SPAWN_Z, new THREE.Vector3());
+  const spawnForward = planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z, new THREE.Vector3()).sub(spawnNormal).projectOnPlane(spawnNormal).normalize();
+  lastWormholeTriggerAt = elapsedTime;
+  wormholeFall = {
+    startedAt: elapsedTime,
+    lastTriggerAt: lastWormholeTriggerAt,
+    drift: new THREE.Vector2(),
+    velocity: new THREE.Vector2(),
+    spawnNormal,
+    spawnForward,
+  };
+  wormholeTriggerArmed = false;
+  cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+  orbitYawOffset = 0;
+  pitch = 0.34;
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  activeInteractable = null;
+  activeExplorable = null;
+  activeElevator = null;
+  activeHabitatDoor = null;
+  activeGreenhouseDoor = null;
+  activeRobot = null;
+  activeFufu = false;
+  activeOxygenSupply = null;
+  disableActiveJetpackForRespawn();
+  scaleGunAiming = false;
+  cameraMode = false;
+  photoViewerOpen = false;
+  playerVelocity.set(0, 0, 0);
+  verticalVelocity = 0;
+  grounded = false;
+  playerRig.visual.visible = true;
+  playerNormal.copy(spawnNormal);
+  playerForward.copy(spawnForward);
+  playerAltitudeOffset = 0;
+  placePlayerOnPlanet();
+  updateWormholeFallVisual(0, wormholeFall.drift, 0);
+  showDialogue("远古巨树拱门", "门洞中的蓝白光吞没了你。火星在远处变成一个红色的点。", 4.2);
+}
+
+function updateWormholeFall(delta: number) {
+  if (!wormholeFall) return 0;
+  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  const input = wormholeInputVector();
+  const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
+  wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), 9.5 * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFall.drift, -5.4 * delta);
+  wormholeFall.velocity.multiplyScalar(Math.exp(-4.2 * delta));
+  wormholeFall.drift.addScaledVector(wormholeFall.velocity, delta);
+  const driftLength = wormholeFall.drift.length();
+  if (driftLength > WORMHOLE_DRIFT_LIMIT) wormholeFall.drift.multiplyScalar(WORMHOLE_DRIFT_LIMIT / driftLength);
+
+  playerNormal.copy(wormholeFall.spawnNormal);
+  playerForward.copy(wormholeFall.spawnForward);
+  playerAltitudeOffset = 0;
+  placePlayerOnPlanet();
+
+  if (progress >= 1) {
+    finishWormholeFall();
+    return 0;
+  }
+  return THREE.MathUtils.lerp(35, 10, progress);
+}
+
+function finishWormholeFall() {
+  if (!wormholeFall) return;
+  wormholeFall = null;
+  wormholeTriggerArmed = false;
+  wormholeVisual.group.visible = false;
+  world.root.visible = true;
+  playerNormal.copy(planetNormal(SPAWN_X, SPAWN_Z, new THREE.Vector3()));
+  playerForward.copy(planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z, new THREE.Vector3()).sub(playerNormal).projectOnPlane(playerNormal).normalize());
+  playerVelocity.set(0, 0, 0);
+  disableActiveJetpackForRespawn();
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  player.scale.setScalar(PLAYER_BASE_SCALE);
+  placePlayerOnPlanet();
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+  messageUntil = Math.max(messageUntil, performance.now() + 2200);
+  showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
+  window.setTimeout(() => {
+    if (elapsedTime > lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) wormholeTriggerArmed = true;
+  }, WORMHOLE_TRIGGER_COOLDOWN * 1000);
 }
 
 function updateScaleGunAimingPlayer(delta: number) {
@@ -3464,6 +4383,8 @@ function updateFlightPlayer(delta: number) {
   grounded = false;
   verticalVelocity = 0;
   placePlayerOnPlanet();
+  maybeTriggerWormholeFall();
+  if (wormholeFall) return 0;
   if (verticalInput < 0 && tryLandFlightOnWalkableSurface()) return 0;
   if (playerAltitudeOffset <= 0) {
     playerAltitudeOffset = 0;
@@ -3500,11 +4421,11 @@ function tryLandFlightOnWalkableSurface() {
 }
 
 function isFlightAscending() {
-  return keyState.has("Space");
+  return keyState.has("KeyE");
 }
 
 function isFlightDescending() {
-  return keyState.has("ControlLeft") || keyState.has("ControlRight");
+  return keyState.has("KeyQ");
 }
 
 function updateHabitatInterior(delta: number) {
@@ -3631,7 +4552,7 @@ function readMovementInput() {
 }
 
 function updatePlayerContactShadow() {
-  if (ridingElevator || world.habitatDoor.occupied) {
+  if (wormholeFall || ridingElevator || world.habitatDoor.occupied) {
     playerContactShadow.visible = false;
     return;
   }
@@ -3647,7 +4568,7 @@ function updatePlayerContactShadow() {
 }
 
 function updateFootball(delta: number) {
-  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
+  if (!started || wormholeFall || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
     updateFootballVisual(football, 0);
     rememberRoverPositions();
     return;
@@ -3758,7 +4679,7 @@ function resolveFootballStaticCollisions() {
   for (const collider of world.colliders) {
     if (collider.dynamicObject) continue;
     if (collider.enabled && !collider.enabled()) continue;
-    const colliderNormal = planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
     const minimumDistance = collider.radius + FOOTBALL_RADIUS;
     if (surfaceDistanceBetween(colliderNormal, football.normal) >= minimumDistance) continue;
     const away = tangentDirectionBetween(colliderNormal, football.normal, football.normal);
@@ -3845,6 +4766,15 @@ function surfaceDistanceBetween(a: THREE.Vector3, b: THREE.Vector3) {
   return Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)) * PLANET_RADIUS;
 }
 
+function normalForCollider(collider: CircleCollider, target = new THREE.Vector3()) {
+  if (collider.dynamicObject) {
+    collider.dynamicObject.getWorldPosition(target).normalize();
+    return target;
+  }
+  if (collider.normal) return target.copy(collider.normal).normalize();
+  return planetNormal(collider.center.x, collider.center.y, target);
+}
+
 function tangentDirectionBetween(from: THREE.Vector3, to: THREE.Vector3, tangentAt: THREE.Vector3) {
   const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
   return to.clone().multiplyScalar(dot).sub(from).projectOnPlane(tangentAt).normalize();
@@ -3852,6 +4782,67 @@ function tangentDirectionBetween(from: THREE.Vector3, to: THREE.Vector3, tangent
 
 function directionTowardNormal(from: THREE.Vector3, to: THREE.Vector3) {
   return to.clone().addScaledVector(from, -to.dot(from)).projectOnPlane(from).normalize();
+}
+
+function updateWormholeCamera(delta: number) {
+  if (!wormholeFall) return;
+  cameraObstructionLift = 0;
+  world.root.visible = false;
+  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  const normal = playerNormal.clone();
+  const right = playerForward.clone().cross(normal).normalize();
+  const driftOffset = right.clone().multiplyScalar(wormholeFall.drift.x * 0.32).addScaledVector(playerForward, wormholeFall.drift.y * 0.32);
+  const isFirstPerson = cameraDistance <= 0.9;
+
+  if (scene.background instanceof THREE.Color) {
+    scene.background.set(0x000000).lerp(new THREE.Color(0x03010a), THREE.MathUtils.smoothstep(progress, 0.74, 1));
+  }
+  if (scene.fog instanceof THREE.FogExp2) {
+    scene.fog.color.set(0x000003);
+    scene.fog.density = THREE.MathUtils.lerp(0.00015, 0.00055, THREE.MathUtils.smoothstep(progress, 0.74, 1));
+  }
+  camera.fov = THREE.MathUtils.lerp(camera.fov, isFirstPerson ? 70 : 42, 1 - Math.pow(0.0008, delta));
+  camera.updateProjectionMatrix();
+
+  if (isFirstPerson) {
+    const eye = player.position.clone().addScaledVector(normal, 1.62);
+    const lookTarget = player.position.clone().addScaledVector(normal, -90).addScaledVector(playerForward, 1.2).add(driftOffset);
+    camera.position.lerp(eye, 1 - Math.pow(0.00003, delta));
+    camera.up.copy(playerForward);
+    camera.lookAt(lookTarget);
+    playerRig.visual.visible = false;
+  } else {
+    const distanceT = THREE.MathUtils.smoothstep(progress, 0, 0.68);
+    const desired = player.position
+      .clone()
+      .addScaledVector(normal, THREE.MathUtils.lerp(3.82, 3.48, distanceT))
+      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.8, 5.1, distanceT));
+    const lookTarget = player.position
+      .clone()
+      .addScaledVector(normal, THREE.MathUtils.lerp(0.18, -0.04, distanceT))
+      .addScaledVector(playerForward, 0.15)
+      .add(driftOffset.clone().multiplyScalar(1.55));
+    camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
+    camera.up.copy(playerForward);
+    camera.lookAt(lookTarget);
+    playerRig.visual.visible = true;
+  }
+  orbitYawOffset *= Math.pow(0.03, delta);
+  updateWormholeFallVisual(progress, wormholeFall.drift, delta);
+}
+
+function updateWormholePlayerPose(delta: number) {
+  const targetRotation = wormholeFall ? -Math.PI / 2 : 0;
+  playerRig.visual.rotation.x = THREE.MathUtils.lerp(playerRig.visual.rotation.x, targetRotation, 1 - Math.pow(0.0004, delta));
+  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * 1.42 : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
+  if (wormholeFall) {
+    playerRig.visual.position.y = 1.05 + Math.sin(elapsedTime * 9.5) * 0.035;
+    playerRig.leftArm.rotation.x = 0.42 + Math.sin(elapsedTime * 6.7) * 0.04;
+    playerRig.rightArm.rotation.x = 0.42 - Math.sin(elapsedTime * 6.7) * 0.04;
+    playerRig.leftLeg.rotation.x = 0.18 + Math.sin(elapsedTime * 7.1) * 0.035;
+    playerRig.rightLeg.rotation.x = 0.18 - Math.sin(elapsedTime * 7.1) * 0.035;
+    playerRig.jetpackFlames.visible = false;
+  }
 }
 
 function updateCamera(delta: number) {
@@ -3872,6 +4863,12 @@ function updateCamera(delta: number) {
     return;
   }
 
+  if (wormholeFall) {
+    updateWormholeCamera(delta);
+    return;
+  }
+
+  world.root.visible = true;
   const normal = playerNormal.clone();
   if (cameraDistance <= 0.9 || world.habitatDoor.occupied || insideGreenhouse || insideRocket) {
     cameraObstructionLift = 0;
@@ -3927,10 +4924,8 @@ function updateCamera(delta: number) {
   const backDistance = Math.cos(activePitch) * distance * (1 - closeT * 0.92);
   const upDistance = Math.sin(activePitch) * distance + THREE.MathUtils.lerp(2.4, 0.03, closeT);
   const offset = cameraForward.multiplyScalar(-backDistance).addScaledVector(normal, upDistance);
-  let desired = target.clone().add(offset);
-  const targetObstructionLift = getThirdPersonCameraObstructionLift(target, desired);
-  cameraObstructionLift = THREE.MathUtils.lerp(cameraObstructionLift, targetObstructionLift, 1 - Math.pow(0.0008, delta));
-  if (cameraObstructionLift > 0.01) desired = desired.addScaledVector(normal, cameraObstructionLift);
+  const desired = target.clone().add(offset);
+  cameraObstructionLift = 0;
   camera.position.lerp(desired, 1 - Math.pow(0.00005, delta));
   camera.up.copy(normal);
   camera.lookAt(closeT > 0.85 ? target.clone().addScaledVector(cameraForward, 20) : target);
@@ -3952,12 +4947,7 @@ function getThirdPersonCameraObstructionLift(target: THREE.Vector3, desiredCamer
 }
 
 function getColliderSightlineObstruction(collider: CircleCollider, target: THREE.Vector3, desiredCameraPosition: THREE.Vector3) {
-  const colliderNormal = new THREE.Vector3();
-  if (collider.dynamicObject) {
-    collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
-  } else {
-    planetNormal(collider.center.x, collider.center.y, colliderNormal);
-  }
+  const colliderNormal = normalForCollider(collider, new THREE.Vector3());
 
   const center = colliderNormal.clone().multiplyScalar(PLANET_RADIUS);
   const right = new THREE.Vector3(0, 1, 0).cross(colliderNormal);
@@ -4015,6 +5005,7 @@ function resetPlayerToSpawn() {
   playerNormal.copy(planetNormal(SPAWN_X, SPAWN_Z));
   playerForward.copy(planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z).sub(playerNormal).projectOnPlane(playerNormal).normalize());
   playerVelocity.set(0, 0, 0);
+  disableActiveJetpackForRespawn();
   playerAltitudeOffset = 0;
   verticalVelocity = 0;
   grounded = true;
@@ -4191,13 +5182,10 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 
   for (const collider of world.colliders) {
     if (collider.enabled && !collider.enabled()) continue;
-    const colliderNormal = new THREE.Vector3();
     if (collider.dynamicObject) {
       collider.center.set(collider.dynamicObject.userData.planetX ?? 0, collider.dynamicObject.userData.planetZ ?? 0);
-      collider.dynamicObject.getWorldPosition(colliderNormal).normalize();
-    } else {
-      planetNormal(collider.center.x, collider.center.y, colliderNormal);
     }
+    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
 
     const minDistance = playerRadius + collider.radius;
     const dot = THREE.MathUtils.clamp(current.dot(colliderNormal), -1, 1);
@@ -4224,6 +5212,26 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 }
 
 function updateMissionState() {
+  if (wormholeFall) {
+    activeInteractable = null;
+    activeExplorable = null;
+    activeElevator = null;
+    activeHabitatDoor = null;
+    activeGreenhouseDoor = null;
+    activeRobot = null;
+    activeFufu = false;
+    activeOxygenSupply = null;
+    interactionActions = [];
+    interactionChoiceOpen = false;
+    interactionChoiceSignature = "";
+    promptBox.textContent = "";
+    promptBox.classList.remove("is-visible");
+    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+    interactionChoice.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("interaction-drawer-open");
+    dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
+    return;
+  }
   if (dialogueOpen) {
     activeInteractable = null;
     activeExplorable = null;
@@ -4282,6 +5290,7 @@ function updateMissionState() {
 
 function buildInteractionActions() {
   const actions: InteractionAction[] = [];
+  if (wormholeFall || isFlightActive()) return actions;
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
   if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
@@ -4304,6 +5313,7 @@ function prioritizeInteractionActions(actions: InteractionAction[]) {
 function interactionActionPriority(action: InteractionAction) {
   const priority: Record<InteractionAction["id"], number> = {
     motherCall: 0,
+    oxygenSupply: 0.5,
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
@@ -4311,7 +5321,6 @@ function interactionActionPriority(action: InteractionAction) {
     mission: 2,
     robot: 3,
     fufu: 3,
-    oxygenSupply: 4,
   };
   return priority[action.id];
 }
@@ -4437,6 +5446,7 @@ function getInteractionChoiceSignature() {
 }
 
 function interact() {
+  if (wormholeFall || isFlightActive()) return;
   if (interactionActions.length > 1) {
     if (!interactionChoiceOpen) {
       interactionChoiceOpen = true;
@@ -4525,6 +5535,7 @@ function interactElevator() {
 }
 
 function openRobotBriefing(robot: THREE.Group) {
+  markRobotTalked(robot);
   const label = typeof robot.userData.label === "string" ? robot.userData.label : "维修机器人";
   const facilityLabel = typeof robot.userData.facilityLabel === "string" ? robot.userData.facilityLabel : "基地设施";
   const briefing =
@@ -4570,14 +5581,13 @@ function rescueFufu() {
 }
 
 function findActiveOxygenSupply() {
-  if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
   if (suitOxygen >= 99) return null;
-  const coordinate = playerMapCoordinate();
 
   let nearest: string | null = null;
   let nearestDistance = Infinity;
   for (const point of oxygenSupplyPoints) {
-    const distance = Math.hypot(coordinate.x - point.x, coordinate.z - point.z);
+    const distance = surfaceDistanceBetween(playerNormal, point.normal);
     if (distance < point.radius && distance < nearestDistance) {
       nearest = point.label;
       nearestDistance = distance;
@@ -4648,7 +5658,7 @@ function refillSuitOxygen(label: string) {
 }
 
 function updateSuitOxygen(delta: number) {
-  if (!started || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
   const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
@@ -4701,6 +5711,7 @@ function findActiveRobot() {
   const robotPosition = new THREE.Vector3();
   for (const rover of world.rovers) {
     if (rover.userData.kind !== "bot") continue;
+    if (hasTalkedToRobot(rover)) continue;
     rover.getWorldPosition(robotPosition);
     const distance = robotPosition.distanceTo(player.position);
     if (distance < nearestDistance) {
@@ -4709,6 +5720,18 @@ function findActiveRobot() {
     }
   }
   return nearestRobot && nearestDistance < 4.2 ? nearestRobot : null;
+}
+
+function robotConversationId(robot: THREE.Group) {
+  return typeof robot.userData.label === "string" ? robot.userData.label : robot.uuid;
+}
+
+function hasTalkedToRobot(robot: THREE.Group) {
+  return talkedRobotIds.has(robotConversationId(robot));
+}
+
+function markRobotTalked(robot: THREE.Group) {
+  talkedRobotIds.add(robotConversationId(robot));
 }
 
 function findActiveGreenhouseDoor() {
@@ -5185,7 +6208,7 @@ function updateMap() {
       const mysteryDiscovered = Boolean(mysteryId && hiddenDiscoveries.has(mysteryId));
       const type = mysteryId && !mysteryDiscovered ? "unknown" : mapTypeForLabel(landmark.label);
       return {
-        label: mysteryId ? mysteryMapLabel(mysteryId, landmark.label) : localizeLabel(landmark.label),
+        label: mysteryId ? mysteryMapLabel(mysteryId, landmark.label, mysteryUnknownLabelKey(mysteryId)) : localizeLabel(landmark.label),
         object: landmark.object,
         x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
         z: typeof landmark.object.userData.planetZ === "number" ? landmark.object.userData.planetZ : landmark.z,
@@ -5403,14 +6426,21 @@ function mapTypeForLabel(label: string) {
   if (label.includes("能源") || label.includes("太阳能")) return "energy";
   if (label.includes("车辆")) return "vehicle";
   if (label.includes("机器人")) return "robot";
+  if (label.includes("远古巨树拱门")) return "ancient";
   return "building";
 }
 
 function mysteryDiscoveryIdForLabel(label: string) {
+  if (label.includes("远古巨树拱门")) return ANCIENT_TREE_ARCH_DISCOVERY_ID;
   if (label.includes("黑色方碑")) return "monolith";
   if (label.includes("NASA 火星车") || label.includes("Perseverance")) return `unknown:${label}`;
   if (label.includes("Elon")) return `unknown:${label}`;
   return null;
+}
+
+function mysteryUnknownLabelKey(mysteryId: string) {
+  if (mysteryId === ANCIENT_TREE_ARCH_DISCOVERY_ID) return "map.unknownMegaStructure";
+  return "map.unknownObject";
 }
 
 function unnumberedMysteryDiscoveryId(label: string | undefined, index: number) {
@@ -5895,6 +6925,15 @@ function updateHiddenDiscoveries() {
       radius: 16,
     });
   }
+  const ancientTreeArch = world.landmarks.find((landmark) => landmark.label.includes("远古巨树拱门"));
+  if (ancientTreeArch) {
+    targets.push({
+      id: ANCIENT_TREE_ARCH_DISCOVERY_ID,
+      label: ancientTreeArch.label,
+      object: ancientTreeArch.object,
+      radius: 76,
+    });
+  }
   targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });
   if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "福福", object: fufu, radius: 13 });
 
@@ -6005,21 +7044,44 @@ function createCoinVisual() {
     emissive: 0x8a4e00,
     emissiveIntensity: 0.28,
   });
-  const rimMaterial = new THREE.MeshStandardMaterial({
-    color: 0xfff0a6,
-    roughness: 0.22,
-    metalness: 0.82,
-    emissive: 0xffb02e,
-    emissiveIntensity: 0.34,
-  });
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.16, 32), coinMaterial);
   body.rotation.x = Math.PI / 2;
   body.castShadow = true;
-  const mark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.72, 0.035), rimMaterial);
-  mark.position.z = 0.09;
+  const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 0.78), createCoinSymbolMaterial());
+  mark.position.z = 0.091;
   group.add(body, mark);
   group.userData.label = "金币";
   return group;
+}
+
+function createCoinSymbolMaterial() {
+  if (coinSymbolMaterial) return coinSymbolMaterial;
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = "900 150px 'SF Mono', 'Roboto Mono', ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = "rgba(91, 45, 2, 0.44)";
+    ctx.fillStyle = "#fff0a6";
+    ctx.shadowColor = "rgba(255, 182, 48, 0.72)";
+    ctx.shadowBlur = 12;
+    ctx.strokeText("$", 128, 132);
+    ctx.fillText("$", 128, 132);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  coinSymbolMaterial = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  return coinSymbolMaterial;
 }
 
 function isSafeCoinNormal(normal: THREE.Vector3, margin: number) {
@@ -6027,6 +7089,7 @@ function isSafeCoinNormal(normal: THREE.Vector3, margin: number) {
   const point = mapCoordinatesFromNormal(normal);
   for (const collider of world.colliders) {
     if (collider.enabled && !collider.enabled()) continue;
+    if (collider.normal) continue;
     if (Math.hypot(point.x - collider.center.x, point.z - collider.center.y) < collider.radius + margin) return false;
   }
   return true;
@@ -6169,6 +7232,7 @@ function resetQuestState() {
   awardedEvents.clear();
   exploredBuildings.clear();
   hiddenDiscoveries.clear();
+  talkedRobotIds.clear();
   clearCoinGroup();
   nextCoinRefreshAt = elapsedTime;
   updateRewardReadouts();
@@ -6481,6 +7545,15 @@ function updateReadouts() {
   if (staminaReadout) {
     staminaReadout.textContent = `${Math.round(stamina)}%`;
     staminaReadout.classList.toggle("is-low", stamina <= 20);
+  }
+  if (jetpackStatusRow) {
+    jetpackStatusRow.hidden = !jetpackUnlocked;
+  }
+  if (jetpackReadout) {
+    const displayedJetpackEnergy = jetpackEnergy >= JETPACK_MAX_ENERGY ? JETPACK_MAX_ENERGY : Math.max(0, Math.floor(jetpackEnergy));
+    jetpackReadout.textContent = `${displayedJetpackEnergy}%`;
+    jetpackReadout.classList.toggle("is-low", jetpackUnlocked && jetpackEnergy <= 20);
+    jetpackReadout.classList.toggle("is-critical", jetpackUnlocked && jetpackEnergy <= 10);
   }
   if (powerReadout) {
     const value = missionStep === "m1_solarC" ? 61 + Math.sin(elapsedTime * 3.2) * 4 : 89 + Math.sin(elapsedTime * 0.22 + 1.8) * 4;
