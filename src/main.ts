@@ -51,7 +51,7 @@ type LabelAnchor = {
 };
 
 type InteractionAction = {
-  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "photoWall";
+  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "photoWall" | "hitchRide";
   label: string;
 };
 
@@ -251,6 +251,7 @@ const JETPACK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * 1.25;
 const JETPACK_RECOVERY_SECONDS = 10;
 const JETPACK_JUMP_DOUBLE_TAP_MS = 360;
 const OXYGEN_SUPPLY_RADAR_THRESHOLD = 35;
+const SUIT_OXYGEN_WARNING_THRESHOLD = 20;
 const STAMINA_MAX = 100;
 const STAMINA_DRAIN_TUNING_MULTIPLIER = 1.75;
 const STAMINA_WALK_DRAIN_PER_SECOND = (0.42 / 2) * STAMINA_DRAIN_TUNING_MULTIPLIER;
@@ -288,11 +289,16 @@ const FOOTBALL_GOAL_DEPTH = 1.35;
 const FOOTBALL_GOAL_SAFE_MARGIN = 5.4;
 const FOOTBALL_GOAL_COOLDOWN_SECONDS = 1.2;
 const SCORE_FOOTBALL_GOAL = 100;
+const COIN_GROUP_COUNT = 3;
 const COIN_GROUP_SIZE = 10;
-const COIN_REFRESH_SECONDS = 4 * 60 * 60;
+const COIN_REFRESH_SECONDS = 2 * 60;
 const COIN_COLLECT_RADIUS = 1.45;
 const COIN_SAFE_MARGIN = 3.2;
 const COIN_LINE_SPACING = 2.05;
+const COIN_GROUP_SAFE_DISTANCE = 36;
+const ROVER_RIDE_PROMPT_RADIUS = 5.4;
+const ROVER_RIDE_SEAT_HEIGHT = 2.28;
+const ROVER_RIDE_EXIT_DISTANCE = 4.7;
 const MYSTERY_CODE = "HUYEE";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
@@ -325,6 +331,7 @@ type ScaleGunEffect = {
 type CoinPickup = {
   group: THREE.Group;
   normal: THREE.Vector3;
+  owner: CoinGroup | null;
   collected: boolean;
 };
 
@@ -550,7 +557,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "reward.coins": "金币",
     "reward.score": "积分",
     "score.discovery": "发现 {label}",
-    "rank.internPatrol": "实习巡航员",
+    "rank.internPatrol": "巡航员",
     "rank.juniorAstronaut": "初级宇航员",
     "rank.astronaut": "正式宇航员",
     "rank.seniorAstronaut": "高级宇航员",
@@ -562,6 +569,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.unknownObject": "未知物体",
     "map.unknownMegaStructure": "未知巨型结构",
     "map.coin": "金币",
+    "map.sun": "太阳",
     "map.headingLabel": "方位",
     "interaction.title": "互动",
     "interaction.choose": "选择互动",
@@ -614,7 +622,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "reward.coins": "Coins",
     "reward.score": "Score",
     "score.discovery": "Discovered {label}",
-    "rank.internPatrol": "Trainee Patrol Officer",
+    "rank.internPatrol": "Patrol Officer",
     "rank.juniorAstronaut": "Junior Astronaut",
     "rank.astronaut": "Astronaut",
     "rank.seniorAstronaut": "Senior Astronaut",
@@ -626,6 +634,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.unknownObject": "Unknown object",
     "map.unknownMegaStructure": "Unknown megastructure",
     "map.coin": "Coin",
+    "map.sun": "Sun",
     "map.headingLabel": "HDG",
     "interaction.title": "Interact",
     "interaction.choose": "Choose Interaction",
@@ -659,6 +668,7 @@ const exactEnglishTexts: Record<string, string> = {
   "01 能源 太阳能阵列 A": "01 Energy Solar Array A",
   "02 能源 太阳能阵列 B": "02 Energy Solar Array B",
   "03 能源 太阳能阵列 C": "03 Energy Solar Array C",
+  "太阳": "Sun",
   "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
   "02 车辆 运输车": "02 Vehicle Cargo Rover",
   "NASA 火星车 Perseverance / Jezero Crater": "NASA Rover Perseverance / Jezero Crater",
@@ -1061,6 +1071,10 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["备用缩放", "Backup Zoom"],
   ["默认视角", "Default View"],
   ["跳", "Jump"],
+  ["要不要搭便车？", "Need a ride?"],
+  ["下车", "Get off"],
+  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press E anytime to get off."],
+  ["已下车。", "You got off."],
   ["主体", "Main Body"],
   ["升降梯塔", "Elevator Tower"],
   ["支脚", "Landing Leg"],
@@ -1083,6 +1097,8 @@ let activeExplorable: Interactable | null = null;
 let activeElevator: ElevatorControl | null = null;
 let activeHabitatDoor: HabitatDoorControl | null = null;
 let ridingElevator: ElevatorControl | null = null;
+let activeRideRover: THREE.Group | null = null;
+let ridingRover: THREE.Group | null = null;
 let missionStep: MainMissionStep = "intro";
 let messageUntil = 0;
 let scorePoints = 0;
@@ -1169,7 +1185,7 @@ let interactionChoiceSignature = "";
 let selectedDialogueChoiceIndex = 0;
 let dialogueTextPages: string[] = [];
 let dialogueTextPageIndex = 0;
-let currentCoinGroup: CoinGroup | null = null;
+const currentCoinGroups: CoinGroup[] = [];
 let nextCoinRefreshAt = 0;
 let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
 let wormholeFall: WormholeFallState | null = null;
@@ -1553,52 +1569,37 @@ function createWormholeFallVisual() {
   group.visible = false;
   group.renderOrder = 30;
 
-  const particleCount = 520;
+  const particleCount = 360;
   const positions = new Float32Array(particleCount * 3);
   const seeds = new Float32Array(particleCount * 4);
   for (let i = 0; i < particleCount; i += 1) {
     const angle = seededNoise(i, 4.11) * Math.PI * 2;
-    const radius = 4 + seededNoise(i, 8.31) * 34;
+    const radius = 3 + Math.pow(seededNoise(i, 8.31), 0.74) * 48;
     seeds[i * 4] = Math.cos(angle) * radius;
     seeds[i * 4 + 1] = Math.sin(angle) * radius;
     seeds[i * 4 + 2] = seededNoise(i, 13.91);
-    seeds[i * 4 + 3] = 0.55 + seededNoise(i, 19.2) * 1.4;
+    seeds[i * 4 + 3] = 0.42 + seededNoise(i, 19.2) * 1.05;
     positions[i * 3] = seeds[i * 4];
     positions[i * 3 + 1] = seeds[i * 4 + 1];
-    positions[i * 3 + 2] = -12 - seeds[i * 4 + 2] * 240;
+    positions[i * 3 + 2] = -14 - seeds[i * 4 + 2] * 210;
   }
   const particleGeometry = new THREE.BufferGeometry();
   particleGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   const particleMaterial = new THREE.PointsMaterial({
-    color: 0xb9f4ff,
-    size: 0.42,
+    map: createWormholeParticleTexture(),
+    color: 0xffffff,
+    size: 1.08,
     transparent: true,
     opacity: 0,
     depthWrite: false,
     sizeAttenuation: true,
     blending: THREE.AdditiveBlending,
+    alphaTest: 0.02,
+    toneMapped: false,
   });
   const particles = new THREE.Points(particleGeometry, particleMaterial);
   particles.renderOrder = 32;
   group.add(particles);
-
-  const streakGeometry = new THREE.BufferGeometry();
-  const streakCount = 120;
-  const streakDuplicates = 3;
-  const streakPositions = new Float32Array(streakCount * streakDuplicates * 4 * 3);
-  streakGeometry.setAttribute("position", new THREE.BufferAttribute(streakPositions, 3));
-  const streakMaterial = new THREE.LineBasicMaterial({
-    color: 0xcffbff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
-  streakMaterial.linewidth = 1;
-  const streaks = new THREE.LineSegments(streakGeometry, streakMaterial);
-  streaks.renderOrder = 31;
-  group.add(streaks);
 
   const voidMaterial = new THREE.SpriteMaterial({
     map: createWormholeVoidTexture(),
@@ -1616,11 +1617,11 @@ function createWormholeFallVisual() {
 
   const marsMaterial = new THREE.SpriteMaterial({
     map: createWormholeMarsTexture(),
-    color: 0xff583a,
+    color: 0xffffff,
     transparent: true,
     opacity: 0,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     toneMapped: false,
   });
   const mars = new THREE.Sprite(marsMaterial);
@@ -1684,11 +1685,6 @@ function createWormholeFallVisual() {
     particlePositions: positions,
     particleSeeds: seeds,
     particleMaterial,
-    streakPositions,
-    streakCount,
-    streakDuplicates,
-    streakAttribute: streakGeometry.getAttribute("position") as THREE.BufferAttribute,
-    streakMaterial,
     voidMaterial,
     mars,
     marsMaterial,
@@ -1719,20 +1715,98 @@ function createWormholeVoidTexture() {
   return texture;
 }
 
-function createWormholeMarsTexture() {
+function createWormholeParticleTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 256;
+  canvas.width = 128;
+  canvas.height = 128;
   const ctx = canvas.getContext("2d");
   if (ctx) {
-    const gradient = ctx.createRadialGradient(128, 128, 5, 128, 128, 118);
-    gradient.addColorStop(0, "rgba(255, 236, 210, 1)");
-    gradient.addColorStop(0.18, "rgba(255, 118, 70, 0.95)");
-    gradient.addColorStop(0.58, "rgba(178, 38, 20, 0.82)");
-    gradient.addColorStop(0.86, "rgba(92, 10, 12, 0.36)");
-    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 60);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.28, "rgba(255,255,255,0.82)");
+    gradient.addColorStop(0.62, "rgba(255,255,255,0.22)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createWormholeMarsTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const center = 256;
+    ctx.clearRect(0, 0, 512, 512);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(center, center, 244, 0, Math.PI * 2);
+    ctx.clip();
+
+    const base = ctx.createRadialGradient(220, 204, 8, center, center, 276);
+    base.addColorStop(0, "rgba(231, 117, 72, 1)");
+    base.addColorStop(0.42, "rgba(188, 67, 39, 1)");
+    base.addColorStop(0.76, "rgba(126, 36, 27, 0.96)");
+    base.addColorStop(1, "rgba(42, 8, 8, 0.9)");
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, 512, 512);
+
+    ctx.globalCompositeOperation = "multiply";
+    for (let i = 0; i < 42; i += 1) {
+      const angle = seededNoise(i, 3.12) * Math.PI * 2;
+      const radius = Math.sqrt(seededNoise(i, 7.44)) * 220;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius;
+      const size = 18 + seededNoise(i, 12.9) * 72;
+      const patch = ctx.createRadialGradient(x, y, 0, x, y, size);
+      patch.addColorStop(0, `rgba(103, 32, 24, ${0.08 + seededNoise(i, 22.4) * 0.14})`);
+      patch.addColorStop(1, "rgba(103, 32, 24, 0)");
+      ctx.fillStyle = patch;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "screen";
+    for (let i = 0; i < 54; i += 1) {
+      const angle = seededNoise(i, 41.2) * Math.PI * 2;
+      const radius = Math.sqrt(seededNoise(i, 73.1)) * 226;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius;
+      const size = 10 + seededNoise(i, 91.7) * 38;
+      const dust = ctx.createRadialGradient(x, y, 0, x, y, size);
+      dust.addColorStop(0, `rgba(255, 171, 100, ${0.04 + seededNoise(i, 8.6) * 0.08})`);
+      dust.addColorStop(1, "rgba(255, 171, 100, 0)");
+      ctx.fillStyle = dust;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    for (let i = 0; i < 1600; i += 1) {
+      const angle = seededNoise(i, 110.3) * Math.PI * 2;
+      const radius = Math.sqrt(seededNoise(i, 212.4)) * 238;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius;
+      const alpha = 0.03 + seededNoise(i, 319.2) * 0.05;
+      ctx.fillStyle = seededNoise(i, 18.5) > 0.5
+        ? `rgba(255, 180, 112, ${alpha})`
+        : `rgba(72, 18, 14, ${alpha})`;
+      ctx.fillRect(x, y, 1.2, 1.2);
+    }
+
+    const limb = ctx.createRadialGradient(center, center, 142, center, center, 248);
+    limb.addColorStop(0, "rgba(0, 0, 0, 0)");
+    limb.addColorStop(0.78, "rgba(0, 0, 0, 0.14)");
+    limb.addColorStop(1, "rgba(0, 0, 0, 0.55)");
+    ctx.fillStyle = limb;
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.restore();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -1866,17 +1940,6 @@ function createWormholeRingTexture() {
       ctx.arc(center, center, ring.radius - ring.width * 3, 0, Math.PI * 2, true);
       ctx.fill();
     }
-    for (let i = 0; i < 28; i += 1) {
-      const angle = (i / 28) * Math.PI * 2;
-      const inner = 74 + seededNoise(i, 4.7) * 40;
-      const outer = 232 - seededNoise(i, 8.2) * 34;
-      ctx.strokeStyle = `rgba(255,255,255,${0.12 + seededNoise(i, 18.2) * 0.34})`;
-      ctx.lineWidth = 1 + seededNoise(i, 22.1) * 2.4;
-      ctx.beginPath();
-      ctx.moveTo(center + Math.cos(angle) * inner, center + Math.sin(angle) * inner);
-      ctx.lineTo(center + Math.cos(angle + 0.08) * outer, center + Math.sin(angle + 0.08) * outer);
-      ctx.stroke();
-    }
     const core = ctx.createRadialGradient(center, center, 4, center, center, 96);
     core.addColorStop(0, "rgba(0,0,0,0.94)");
     core.addColorStop(0.38, "rgba(0,0,0,0.64)");
@@ -1897,11 +1960,12 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   const fallSeconds = wormholeFall ? elapsedTime - wormholeFall.startedAt : progress * WORMHOLE_FALL_DURATION;
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
   const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
-  const particleOpacity = 0;
+  const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
+  const particleOpacity = THREE.MathUtils.lerp(0.7, 0.42, marsPhase) * particleFade;
   wormholeVisual.particleMaterial.opacity = particleOpacity;
-  wormholeVisual.particleMaterial.size = 0.35;
+  wormholeVisual.particleMaterial.size = THREE.MathUtils.lerp(0.95, 1.16, pulse);
 
-  const wrapDistance = 260;
+  const wrapDistance = 220;
   for (let i = 0; i < wormholeVisual.particleSeeds.length / 4; i += 1) {
     const seedIndex = i * 4;
     const positionIndex = i * 3;
@@ -1909,62 +1973,19 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     const baseY = wormholeVisual.particleSeeds[seedIndex + 1];
     const seedZ = wormholeVisual.particleSeeds[seedIndex + 2];
     const speed = wormholeVisual.particleSeeds[seedIndex + 3];
-    const zTravel = ((seedZ * wrapDistance - fallSeconds * 72 * speed) % wrapDistance + wrapDistance) % wrapDistance;
-    const z = -8 - zTravel;
+    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2)) % wrapDistance + wrapDistance) % wrapDistance;
+    const z = -10 - zTravel;
     const depthT = 1 - zTravel / wrapDistance;
-    const twist = elapsedTime * (0.7 + speed * 0.18) + seedZ * Math.PI * 2;
-    const tunnelScale = THREE.MathUtils.lerp(0.08, 1.0, depthT);
-    wormholeVisual.particlePositions[positionIndex] = baseX * tunnelScale + Math.sin(twist) * 0.4 + drift.x * 0.08;
-    wormholeVisual.particlePositions[positionIndex + 1] = baseY * tunnelScale + Math.cos(twist * 1.17) * 0.4 + drift.y * 0.08;
+    const floatPhase = elapsedTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
+    const tunnelScale = THREE.MathUtils.lerp(0.26, 1.16, depthT);
+    const sway = THREE.MathUtils.lerp(0.16, 1.05, depthT);
+    wormholeVisual.particlePositions[positionIndex] = baseX * tunnelScale + Math.sin(floatPhase + baseY * 0.03) * sway + drift.x * 0.04;
+    wormholeVisual.particlePositions[positionIndex + 1] = baseY * tunnelScale + Math.cos(floatPhase * 1.17 + baseX * 0.02) * sway + drift.y * 0.04;
     wormholeVisual.particlePositions[positionIndex + 2] = z;
   }
   const particlePosition = wormholeVisual.particles.geometry.getAttribute("position") as THREE.BufferAttribute;
   particlePosition.needsUpdate = true;
 
-  for (let i = 0; i < wormholeVisual.streakCount; i += 1) {
-    const seed = seededNoise(i, 42.7);
-    const angle = seed * Math.PI * 2 + Math.sin(fallSeconds * 0.16) * 0.12;
-    const speed = 2.2 + seededNoise(i, 12.9) * 4.2;
-    const zTravel = ((seededNoise(i, 7.4) * wrapDistance - fallSeconds * 340 * speed) % wrapDistance + wrapDistance) % wrapDistance;
-    const z = -7 - zTravel;
-    const depthT = 1 - zTravel / wrapDistance;
-    const radius = 32 + seededNoise(i, 91.3) * 118;
-    const outerScale = THREE.MathUtils.lerp(0.32, 1.95, depthT);
-    const innerScale = Math.max(0.018, outerScale - THREE.MathUtils.lerp(0.34, 1.05, depthT));
-    const midScale = (outerScale + innerScale) * 0.5;
-    const x = Math.cos(angle) * radius + drift.x * 0.03;
-    const y = Math.sin(angle) * radius + drift.y * 0.03;
-    const tangentX = -Math.sin(angle);
-    const tangentY = Math.cos(angle);
-    for (let duplicate = 0; duplicate < wormholeVisual.streakDuplicates; duplicate += 1) {
-      const lineOffset = (duplicate - 1) * THREE.MathUtils.lerp(0.06, 0.72, depthT);
-      const ox = tangentX * lineOffset;
-      const oy = tangentY * lineOffset;
-      const index = (i * wormholeVisual.streakDuplicates + duplicate) * 12;
-      const outerX = x * outerScale + ox;
-      const outerY = y * outerScale + oy;
-      const midX = x * midScale + ox * 0.5;
-      const midY = y * midScale + oy * 0.5;
-      const innerX = x * innerScale + ox * 0.22;
-      const innerY = y * innerScale + oy * 0.22;
-      const midZ = z + THREE.MathUtils.lerp(18, 48, depthT);
-      const innerZ = z + THREE.MathUtils.lerp(48, 116, depthT);
-      wormholeVisual.streakPositions[index] = outerX;
-      wormholeVisual.streakPositions[index + 1] = outerY;
-      wormholeVisual.streakPositions[index + 2] = z;
-      wormholeVisual.streakPositions[index + 3] = midX;
-      wormholeVisual.streakPositions[index + 4] = midY;
-      wormholeVisual.streakPositions[index + 5] = midZ;
-      wormholeVisual.streakPositions[index + 6] = midX;
-      wormholeVisual.streakPositions[index + 7] = midY;
-      wormholeVisual.streakPositions[index + 8] = midZ;
-      wormholeVisual.streakPositions[index + 9] = innerX;
-      wormholeVisual.streakPositions[index + 10] = innerY;
-      wormholeVisual.streakPositions[index + 11] = innerZ;
-    }
-  }
-  wormholeVisual.streakAttribute.needsUpdate = true;
-  wormholeVisual.streakMaterial.opacity = THREE.MathUtils.clamp(THREE.MathUtils.lerp(0.22, 0.52, pulse), 0, 0.62) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
   wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
   wormholeVisual.swirl.position.set(drift.x * 0.035, drift.y * 0.035, -92);
   wormholeVisual.swirl.scale.set(
@@ -1986,11 +2007,11 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     );
     ring.scale.setScalar(scale);
     ring.material.rotation = elapsedTime * (0.08 + index * 0.035) + index * 0.9;
-    ring.material.opacity = (0.025 + index * 0.012 + pulse * 0.014) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
+    ring.material.opacity = (0.012 + index * 0.006 + pulse * 0.006) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
   });
 
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.94, 1);
-  const marsScale = THREE.MathUtils.lerp(0.12, 18, Math.pow(marsPhase, 1.7)) + finalRush * 110;
+  const marsScale = THREE.MathUtils.lerp(0.12, 24, Math.pow(marsPhase, 1.7)) + finalRush * 134;
   wormholeVisual.mars.position.set(0, 0, THREE.MathUtils.lerp(-238, -30, Math.pow(marsPhase, 1.3)));
   wormholeVisual.mars.scale.setScalar(marsScale);
   wormholeVisual.marsMaterial.opacity = marsPhase * THREE.MathUtils.lerp(0.18, 0.98, marsPhase);
@@ -2464,6 +2485,11 @@ function bindInput() {
     }
     if (handleExpandedMapKey(event)) return;
     if (cameraMode && handleCameraModeKey(event)) return;
+    if (ridingRover && event.code === "KeyE") {
+      event.preventDefault();
+      exitRoverRide();
+      return;
+    }
     if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
@@ -2815,7 +2841,7 @@ function landFromFlight() {
 }
 
 function canUseFlightMode() {
-  return started && !wormholeFall && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+  return started && !wormholeFall && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover;
 }
 
 function isFlightActive() {
@@ -3247,7 +3273,7 @@ function toggleScaleGunAiming(force?: boolean) {
 }
 
 function canUseScaleGun() {
-  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
+  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover;
 }
 
 function isScaleGunAimControlKey(code: string) {
@@ -3324,7 +3350,7 @@ function awardCamera() {
 }
 
 function canUseCamera() {
-  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !photoViewerOpen;
+  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !photoViewerOpen;
 }
 
 function toggleCameraMode(force?: boolean) {
@@ -3469,7 +3495,7 @@ function createPhotoWall() {
     frame.position.set(item.x, item.y, 0.02);
     const photoMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(item.w, item.h),
-      new THREE.MeshBasicMaterial({ map: createPhotoPlaceholderTexture(index), toneMapped: false })
+      new THREE.MeshBasicMaterial({ map: createPhotoPlaceholderTexture(), transparent: true, toneMapped: false })
     );
     const borderTop = new THREE.Mesh(new THREE.BoxGeometry(item.w + 0.12, 0.045, 0.06), railMat);
     const borderBottom = borderTop.clone();
@@ -3487,23 +3513,12 @@ function createPhotoWall() {
   return group;
 }
 
-function createPhotoPlaceholderTexture(index: number) {
+function createPhotoPlaceholderTexture() {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 176;
   const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.fillStyle = "#17120f";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "rgba(255, 204, 142, 0.26)";
-    ctx.lineWidth = 5;
-    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
-    ctx.fillStyle = "rgba(255, 232, 200, 0.32)";
-    ctx.font = "bold 42px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(String(index + 1).padStart(2, "0"), canvas.width / 2, canvas.height / 2);
-  }
+  ctx?.clearRect(0, 0, canvas.width, canvas.height);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
@@ -3513,7 +3528,8 @@ function updatePhotoWallFrames() {
   for (const [index, frame] of photoWallFrames.entries()) {
     const material = frame.material;
     if (material.map && !cameraPhotos.some((photo) => photo.texture === material.map)) material.map.dispose();
-    material.map = cameraPhotos[index]?.texture ?? createPhotoPlaceholderTexture(index);
+    material.map = cameraPhotos[index]?.texture ?? createPhotoPlaceholderTexture();
+    material.transparent = !cameraPhotos[index];
     material.needsUpdate = true;
   }
 }
@@ -3930,6 +3946,7 @@ function animate() {
   updateJetpackEnergy(delta);
   updateCamera(delta);
   updateRovers(world.rovers, elapsedTime, world.colliders);
+  if (ridingRover) updateRoverRide(ridingRover);
   updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
@@ -4108,7 +4125,7 @@ function updateScheduledCalls() {
 }
 
 function updateRobotEncounters() {
-  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
   if (elapsedTime - lastRobotGreetingAt < 8) return;
 
   let nearestRobot: THREE.Group | null = null;
@@ -4155,6 +4172,9 @@ function updatePlayer(delta: number) {
   }
   if (ridingElevator) {
     return updateElevatorRide(delta, ridingElevator);
+  }
+  if (ridingRover) {
+    return updateRoverRide(ridingRover);
   }
   if (cameraMode) {
     return updateCameraModePlayer(delta);
@@ -4206,8 +4226,8 @@ function isWormholeControlKey(code: string) {
 }
 
 function wormholeInputVector() {
-  const x = (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0) - (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0);
-  const y = (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0) - (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0);
+  const x = (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0) - (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0);
+  const y = (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0) - (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0);
   const vector = new THREE.Vector2(x, y);
   if (vector.lengthSq() > 1) vector.normalize();
   return vector;
@@ -4216,7 +4236,7 @@ function wormholeInputVector() {
 function maybeTriggerWormholeFall() {
   if (!ancientTreeArchObject || wormholeFall) return;
   if (elapsedTime < lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) return;
-  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || dialogueOpen || exitConfirmOpen) return;
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || dialogueOpen || exitConfirmOpen) return;
 
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
   const inDoorway = isInsideAncientTreeDoorway(local);
@@ -4268,6 +4288,8 @@ function startWormholeFall() {
   activeRobot = null;
   activeFufu = false;
   activeOxygenSupply = null;
+  activeRideRover = null;
+  ridingRover = null;
   disableActiveJetpackForRespawn();
   scaleGunAiming = false;
   cameraMode = false;
@@ -4552,7 +4574,7 @@ function readMovementInput() {
 }
 
 function updatePlayerContactShadow() {
-  if (wormholeFall || ridingElevator || world.habitatDoor.occupied) {
+  if (wormholeFall || ridingElevator || ridingRover || world.habitatDoor.occupied) {
     playerContactShadow.visible = false;
     return;
   }
@@ -4822,7 +4844,8 @@ function updateWormholeCamera(delta: number) {
       .addScaledVector(normal, THREE.MathUtils.lerp(0.18, -0.04, distanceT))
       .addScaledVector(playerForward, 0.15)
       .add(driftOffset.clone().multiplyScalar(1.55));
-    camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
+    const initialSnap = elapsedTime - wormholeFall.startedAt < 0.12;
+    camera.position.lerp(desired, initialSnap ? 1 : 1 - Math.pow(0.00004, delta));
     camera.up.copy(playerForward);
     camera.lookAt(lookTarget);
     playerRig.visual.visible = true;
@@ -4988,6 +5011,8 @@ function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number) {
 function resetPlayerToSpawn() {
   exitFrontCamera = null;
   ridingElevator = null;
+  ridingRover = null;
+  activeRideRover = null;
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -5018,6 +5043,8 @@ function resetPlayerToSpawn() {
 function respawnInsideHabitat() {
   exitFrontCamera = null;
   ridingElevator = null;
+  ridingRover = null;
+  activeRideRover = null;
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -5082,7 +5109,7 @@ function updateFufu(delta: number) {
     return;
   }
 
-  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) {
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
     fufu.visible = false;
     settleFufuAnimation(delta);
     return;
@@ -5221,6 +5248,7 @@ function updateMissionState() {
     activeRobot = null;
     activeFufu = false;
     activeOxygenSupply = null;
+    activeRideRover = null;
     interactionActions = [];
     interactionChoiceOpen = false;
     interactionChoiceSignature = "";
@@ -5241,6 +5269,7 @@ function updateMissionState() {
     activeRobot = null;
     activeFufu = false;
     activeOxygenSupply = null;
+    activeRideRover = null;
     interactionActions = [];
     interactionChoiceOpen = false;
     interactionChoiceSignature = "";
@@ -5260,6 +5289,7 @@ function updateMissionState() {
   activeRobot = null;
   activeFufu = false;
   activeOxygenSupply = null;
+  activeRideRover = ridingRover;
   let bestDistance = Infinity;
   let bestExploreDistance = Infinity;
   for (const item of world.interactables) {
@@ -5282,6 +5312,7 @@ function updateMissionState() {
   activeFufu = findActiveFufu();
   activeRobot = findActiveRobot();
   activeOxygenSupply = findActiveOxygenSupply();
+  if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
   if (selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
   updateInteractionPrompts();
@@ -5296,9 +5327,10 @@ function buildInteractionActions() {
   if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
   if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
+  if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
-  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: suitOxygen >= 99 ? localizeText(`${activeOxygenSupply} 氧气包已满`) : `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
+  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
   if (pendingMotherCall) actions.push({ id: "motherCall", label: localizeText("接听 Mother 呼叫") });
   return prioritizeInteractionActions(actions).slice(0, 2);
 }
@@ -5317,6 +5349,7 @@ function interactionActionPriority(action: InteractionAction) {
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
+    hitchRide: 1.5,
     photoWall: 2,
     mission: 2,
     robot: 3,
@@ -5446,6 +5479,10 @@ function getInteractionChoiceSignature() {
 }
 
 function interact() {
+  if (ridingRover) {
+    exitRoverRide();
+    return;
+  }
   if (wormholeFall || isFlightActive()) return;
   if (interactionActions.length > 1) {
     if (!interactionChoiceOpen) {
@@ -5498,6 +5535,11 @@ function executeSelectedInteraction() {
   }
   if (action.id === "oxygenSupply" && activeOxygenSupply) {
     refillSuitOxygen(activeOxygenSupply);
+    return;
+  }
+  if (action.id === "hitchRide" && activeRideRover) {
+    if (ridingRover) exitRoverRide();
+    else enterRoverRide(activeRideRover);
     return;
   }
   if (action.id === "motherCall" && pendingMotherCall) {
@@ -5567,7 +5609,7 @@ function interactMission(interactable: Interactable) {
 }
 
 function findActiveFufu() {
-  if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return false;
+  if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
   return fufu.position.distanceTo(player.position) < 3.4;
 }
 
@@ -5581,8 +5623,8 @@ function rescueFufu() {
 }
 
 function findActiveOxygenSupply() {
-  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
-  if (suitOxygen >= 99) return null;
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return null;
+  if (suitOxygen > SUIT_OXYGEN_WARNING_THRESHOLD) return null;
 
   let nearest: string | null = null;
   let nearestDistance = Infinity;
@@ -5629,6 +5671,8 @@ function resetRunUiAfterRespawn() {
   activeRobot = null;
   activeFufu = false;
   activeOxygenSupply = null;
+  activeRideRover = null;
+  ridingRover = null;
   resetDialogueState();
   closeMapUi();
   showControlsGuide(false);
@@ -5658,7 +5702,7 @@ function refillSuitOxygen(label: string) {
 }
 
 function updateSuitOxygen(delta: number) {
-  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return;
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
   const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
@@ -5670,7 +5714,7 @@ function updateSuitOxygen(delta: number) {
     stamina = Math.min(STAMINA_MAX, stamina + STAMINA_STAND_RECOVERY_PER_SECOND * delta);
     if (stamina > STAMINA_LOW_THRESHOLD + 5) staminaWarningShown = false;
   }
-  if (suitOxygen <= 20 && !oxygenWarningShown) {
+  if (suitOxygen <= SUIT_OXYGEN_WARNING_THRESHOLD && !oxygenWarningShown) {
     oxygenWarningShown = true;
     showDialogue("生命维持", "氧气背包低于 20%。寻找补给点更换。", 4);
   }
@@ -5705,7 +5749,7 @@ function findActiveHabitatDoor() {
 }
 
 function findActiveRobot() {
-  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator) return null;
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return null;
   let nearestRobot: THREE.Group | null = null;
   let nearestDistance = Infinity;
   const robotPosition = new THREE.Vector3();
@@ -5732,6 +5776,96 @@ function hasTalkedToRobot(robot: THREE.Group) {
 
 function markRobotTalked(robot: THREE.Group) {
   talkedRobotIds.add(robotConversationId(robot));
+}
+
+function findActiveRideRover() {
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || isFlightActive()) return null;
+  if (ridingRover) return ridingRover;
+  let nearestRover: THREE.Group | null = null;
+  let nearestDistance = Infinity;
+  const roverPosition = new THREE.Vector3();
+  for (const rover of world.rovers) {
+    if (!isRideableRover(rover)) continue;
+    rover.getWorldPosition(roverPosition);
+    const distance = roverPosition.distanceTo(player.position);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestRover = rover;
+    }
+  }
+  return nearestRover && nearestDistance < ROVER_RIDE_PROMPT_RADIUS ? nearestRover : null;
+}
+
+function isRideableRover(rover: THREE.Group) {
+  return rover.userData.kind === "rover" || rover.userData.kind === "cargo";
+}
+
+function enterRoverRide(rover: THREE.Group) {
+  if (!isRideableRover(rover)) return;
+  ridingRover = rover;
+  activeRideRover = rover;
+  exitFrontCamera = null;
+  cameraMode = false;
+  scaleGunAiming = false;
+  disableActiveJetpackForRespawn();
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  setFirstPersonCamera();
+  updateRoverRide(rover);
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  showDialogue("车辆", "已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", 3.2);
+}
+
+function exitRoverRide() {
+  if (!ridingRover) return;
+  const rover = ridingRover;
+  const roverNormal = new THREE.Vector3();
+  rover.getWorldPosition(roverNormal).normalize();
+  const roverRight = new THREE.Vector3(1, 0, 0).transformDirection(rover.matrixWorld).projectOnPlane(roverNormal);
+  if (roverRight.lengthSq() < 0.000001) roverRight.copy(playerForward).cross(roverNormal).projectOnPlane(roverNormal);
+  roverRight.normalize();
+  const exitNormal = roverNormal.clone().addScaledVector(roverRight, ROVER_RIDE_EXIT_DISTANCE / PLANET_RADIUS).normalize();
+  const roverForward = new THREE.Vector3(0, 0, -1).transformDirection(rover.matrixWorld).projectOnPlane(exitNormal);
+  ridingRover = null;
+  activeRideRover = null;
+  playerNormal.copy(exitNormal);
+  if (roverForward.lengthSq() > 0.000001) playerForward.copy(roverForward.normalize());
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
+  pitch = 0.34;
+  orbitYawOffset = 0;
+  playerRig.visual.visible = true;
+  placePlayerOnPlanet();
+  showDialogue("车辆", "已下车。", 1.8);
+}
+
+function updateRoverRide(rover: THREE.Group) {
+  if (!rover.parent || !isRideableRover(rover)) {
+    ridingRover = null;
+    activeRideRover = null;
+    placePlayerOnPlanet();
+    return 0;
+  }
+  const size = typeof rover.userData.size === "number" ? rover.userData.size : 1;
+  const seatWorld = rover.localToWorld(new THREE.Vector3(0, ROVER_RIDE_SEAT_HEIGHT * size, -0.34 * size));
+  const roverUp = new THREE.Vector3(0, 1, 0).transformDirection(rover.matrixWorld).normalize();
+  const roverForward = new THREE.Vector3(0, 0, -1).transformDirection(rover.matrixWorld).projectOnPlane(roverUp);
+  player.position.copy(seatWorld);
+  playerNormal.copy(roverUp);
+  if (roverForward.lengthSq() > 0.000001) playerForward.copy(roverForward.normalize());
+  player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
+  player.rotateY(headingFromForward(playerNormal, playerForward));
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  return 0;
 }
 
 function findActiveGreenhouseDoor() {
@@ -6266,18 +6400,34 @@ function updateMap() {
     coinTarget: false,
   });
 
-  if (currentCoinGroup && currentCoinGroup.coins.some((coin) => !coin.collected)) {
+  for (const [index, group] of currentCoinGroups.entries()) {
+    if (!group.coins.some((coin) => !coin.collected)) continue;
     mapItems.push({
-      label: tr("map.coin"),
+      label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
       object: null,
-      x: currentCoinGroup.centerX,
-      z: currentCoinGroup.centerZ,
+      x: group.centerX,
+      z: group.centerZ,
       mapRange: PLANET_RADIUS * Math.PI,
       type: "coin",
       unknown: false,
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: true,
+    });
+  }
+
+  if (sunBody) {
+    mapItems.push({
+      label: tr("map.sun"),
+      object: sunBody,
+      x: 0,
+      z: 0,
+      mapRange: PLANET_RADIUS * Math.PI,
+      type: "sun",
+      unknown: false,
+      missionTarget: false,
+      oxygenSupplyTarget: false,
+      coinTarget: false,
     });
   }
 
@@ -6341,12 +6491,13 @@ function updateMap() {
       const forward = tangent.dot(playerForward);
       return { item, distance, lateral, forward };
     })
-    .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.item.coinTarget || entry.distance <= mapRangeForItem(entry.item.mapRange))
+    .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.item.coinTarget || entry.item.type === "sun" || entry.distance <= mapRangeForItem(entry.item.mapRange))
     .sort(
       (a, b) =>
         Number(b.item.missionTarget) - Number(a.item.missionTarget) ||
         Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) ||
         Number(b.item.coinTarget) - Number(a.item.coinTarget) ||
+        Number(b.item.type === "sun") - Number(a.item.type === "sun") ||
         Number(b.item.type === "meteor") - Number(a.item.type === "meteor") ||
         a.distance - b.distance
     )
@@ -6382,9 +6533,11 @@ function mapRangeForItem(itemRange: number) {
   return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 / mapZoom : Math.min(itemRange, 320 / mapZoom);
 }
 
-function shouldShowExpandedMapLabel(item: { missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean }, index: number) {
+function shouldShowExpandedMapLabel(item: { type?: string; missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean; coinTarget?: boolean }, index: number) {
   if (item.missionTarget) return true;
   if (item.oxygenSupplyTarget) return true;
+  if (item.coinTarget) return true;
+  if (item.type === "sun") return true;
   if (item.unknown) return index < 12;
   return index < 14 && index % 2 === 0;
 }
@@ -6947,39 +7100,43 @@ function updateHiddenDiscoveries() {
 
 function updateCoinGroup(delta: number) {
   if (!started) return;
-  if (!currentCoinGroup) {
-    if (elapsedTime >= nextCoinRefreshAt) spawnCoinGroup();
+  if (currentCoinGroups.length === 0) {
+    if (elapsedTime >= nextCoinRefreshAt) spawnCoinGroups();
     return;
   }
-  if (elapsedTime >= currentCoinGroup.expiresAt) {
-    clearCoinGroup();
-    spawnCoinGroup();
+  if (elapsedTime >= nextCoinRefreshAt) {
+    spawnCoinGroups();
     return;
   }
 
-  for (const coin of currentCoinGroup.coins) {
-    if (coin.collected) continue;
-    coin.group.rotateY(delta * 2.6);
-    if (coin.group.position.distanceTo(player.position) <= COIN_COLLECT_RADIUS) collectCoin(coin);
+  for (const group of currentCoinGroups) {
+    for (const coin of group.coins) {
+      if (coin.collected) continue;
+      coin.group.rotateY(delta * 2.6);
+      if (coin.group.position.distanceTo(player.position) <= COIN_COLLECT_RADIUS) collectCoin(coin);
+    }
   }
 }
 
-function spawnCoinGroup() {
-  clearCoinGroup();
-  const group = createSafeCoinGroup();
-  if (!group) {
+function spawnCoinGroups() {
+  clearCoinGroups();
+  for (let index = 0; index < COIN_GROUP_COUNT; index += 1) {
+    const group = createSafeCoinGroup(currentCoinGroups);
+    if (!group) break;
+    currentCoinGroups.push(group);
+  }
+  nextCoinRefreshAt = elapsedTime + COIN_REFRESH_SECONDS;
+  if (currentCoinGroups.length < COIN_GROUP_COUNT) {
     nextCoinRefreshAt = elapsedTime + 60;
-    return;
   }
-  currentCoinGroup = group;
-  nextCoinRefreshAt = group.expiresAt;
 }
 
-function createSafeCoinGroup(): CoinGroup | null {
-  for (let attempt = 0; attempt < 140; attempt += 1) {
+function createSafeCoinGroup(existingGroups: CoinGroup[]): CoinGroup | null {
+  for (let attempt = 0; attempt < 260; attempt += 1) {
     const centerNormal = randomCoinSurfaceNormal();
     const center = mapCoordinatesFromNormal(centerNormal);
     if (!isSafeCoinNormal(centerNormal, COIN_SAFE_MARGIN + 2.6)) continue;
+    if (!isCoinGroupCenterSafe(centerNormal, existingGroups)) continue;
 
     const tangentA = new THREE.Vector3(-centerNormal.z, 0, centerNormal.x);
     if (tangentA.lengthSq() < 0.0001) tangentA.set(1, 0, 0);
@@ -7001,6 +7158,10 @@ function createSafeCoinGroup(): CoinGroup | null {
         safe = false;
         break;
       }
+      if (!isCoinNormalAwayFromGroups(coinNormal, existingGroups)) {
+        safe = false;
+        break;
+      }
       const coin = createCoinPickup(coinNormal, lineYaw);
       coinsForGroup.push(coin);
     }
@@ -7010,13 +7171,15 @@ function createSafeCoinGroup(): CoinGroup | null {
       continue;
     }
 
-    return {
+    const group: CoinGroup = {
       coins: coinsForGroup,
       centerNormal,
       centerX: center.x,
       centerZ: center.z,
       expiresAt: elapsedTime + COIN_REFRESH_SECONDS,
     };
+    for (const coin of coinsForGroup) coin.owner = group;
+    return group;
   }
   return null;
 }
@@ -7032,7 +7195,7 @@ function createCoinPickup(normal: THREE.Vector3, yaw: number): CoinPickup {
   const group = createCoinVisual();
   placeObjectOnPlanetNormal(group, normal, 0.82, yaw);
   scene.add(group);
-  return { group, normal: normal.clone(), collected: false };
+  return { group, normal: normal.clone(), owner: null, collected: false };
 }
 
 function createCoinVisual() {
@@ -7089,10 +7252,41 @@ function isSafeCoinNormal(normal: THREE.Vector3, margin: number) {
   const point = mapCoordinatesFromNormal(normal);
   for (const collider of world.colliders) {
     if (collider.enabled && !collider.enabled()) continue;
-    if (collider.normal) continue;
+    if (collider.normal) {
+      const dot = THREE.MathUtils.clamp(normal.dot(collider.normal), -1, 1);
+      if (Math.acos(dot) * PLANET_RADIUS < collider.radius + margin) return false;
+      continue;
+    }
     if (Math.hypot(point.x - collider.center.x, point.z - collider.center.y) < collider.radius + margin) return false;
   }
+  if (!isNormalAwayFromObject(normal, football.group, FOOTBALL_RADIUS + margin + 2.4)) return false;
+  if (!isNormalAwayFromObject(normal, fufu, margin + 3.2)) return false;
   return true;
+}
+
+function isCoinGroupCenterSafe(centerNormal: THREE.Vector3, existingGroups: CoinGroup[]) {
+  return existingGroups.every((group) => surfaceDistanceBetweenNormals(centerNormal, group.centerNormal) >= COIN_GROUP_SAFE_DISTANCE);
+}
+
+function isCoinNormalAwayFromGroups(normal: THREE.Vector3, existingGroups: CoinGroup[]) {
+  for (const group of existingGroups) {
+    for (const coin of group.coins) {
+      if (surfaceDistanceBetweenNormals(normal, coin.normal) < COIN_SAFE_MARGIN + COIN_LINE_SPACING) return false;
+    }
+  }
+  return true;
+}
+
+function isNormalAwayFromObject(normal: THREE.Vector3, object: THREE.Object3D, minDistance: number) {
+  const objectNormal = new THREE.Vector3();
+  object.getWorldPosition(objectNormal);
+  if (objectNormal.lengthSq() < 0.000001) return true;
+  objectNormal.normalize();
+  return surfaceDistanceBetweenNormals(normal, objectNormal) >= minDistance;
+}
+
+function surfaceDistanceBetweenNormals(a: THREE.Vector3, b: THREE.Vector3) {
+  return Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)) * PLANET_RADIUS;
 }
 
 function mapCoordinatesFromNormal(normal: THREE.Vector3) {
@@ -7112,11 +7306,8 @@ function collectCoin(coin: CoinPickup) {
   playCoinDing();
   animateCoinToReadout(worldPosition, () => awardCoins(1));
 
-  const allCollected = currentCoinGroup?.coins.every((item) => item.collected) ?? false;
-  if (allCollected) {
-    clearCoinGroup();
-    nextCoinRefreshAt = elapsedTime + COIN_REFRESH_SECONDS;
-  }
+  const owner = coin.owner;
+  if (owner && owner.coins.every((item) => item.collected)) clearCoinGroup(owner);
 }
 
 function animateCoinToReadout(worldPosition: THREE.Vector3, onArrive: () => void) {
@@ -7144,10 +7335,17 @@ function animateCoinToReadout(worldPosition: THREE.Vector3, onArrive: () => void
   };
 }
 
-function clearCoinGroup() {
-  if (!currentCoinGroup) return;
-  for (const coin of currentCoinGroup.coins) scene.remove(coin.group);
-  currentCoinGroup = null;
+function clearCoinGroup(group: CoinGroup) {
+  for (const coin of group.coins) scene.remove(coin.group);
+  const index = currentCoinGroups.indexOf(group);
+  if (index >= 0) currentCoinGroups.splice(index, 1);
+}
+
+function clearCoinGroups() {
+  for (const group of currentCoinGroups) {
+    for (const coin of group.coins) scene.remove(coin.group);
+  }
+  currentCoinGroups.length = 0;
 }
 
 function playScoreRewardSound(notes = 4) {
@@ -7233,7 +7431,7 @@ function resetQuestState() {
   exploredBuildings.clear();
   hiddenDiscoveries.clear();
   talkedRobotIds.clear();
-  clearCoinGroup();
+  clearCoinGroups();
   nextCoinRefreshAt = elapsedTime;
   updateRewardReadouts();
   updatePlayerRank(true);
@@ -7539,8 +7737,8 @@ function updateReadouts() {
   }
   if (suitOxygenReadout) {
     suitOxygenReadout.textContent = `${Math.ceil(suitOxygen)}%`;
-    suitOxygenReadout.classList.toggle("is-low", suitOxygen <= 20);
-    suitOxygenReadout.classList.toggle("is-critical", suitOxygen <= 20);
+    suitOxygenReadout.classList.toggle("is-low", suitOxygen <= SUIT_OXYGEN_WARNING_THRESHOLD);
+    suitOxygenReadout.classList.toggle("is-critical", suitOxygen <= SUIT_OXYGEN_WARNING_THRESHOLD);
   }
   if (staminaReadout) {
     staminaReadout.textContent = `${Math.round(stamina)}%`;
