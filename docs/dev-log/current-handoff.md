@@ -21,6 +21,8 @@
 
 ## 最近已完成的重点
 
+- 故事概要页已同步最新角色命名：简体中文可见文本中的 `Alex` 改为“亚历克斯”，基地总控 AI 从 `Mother` 改为“史蒂夫”；英文故事概要中的中央 AI 名称同步改为 `Steve`。同步范围包括线上页面 `public/story-overview.html` 和文档源页 `docs/story/core-story-v2-visual.html`。
+- 多人 WebSocket 服务已清理头盔灯遗留字段：`server/multiplayer.ts` 不再在默认玩家快照和快照归一化中写入已移除的 `lampOn` 字段。
 - 首页火星日期改为 ARES 火星历动态日期：以 `2026-06-27 00:00 Asia/Shanghai` 对应 `2050 年 / 第 30 火星日` 为锚点，每 `88775.244` 秒推进一个 sol，每 `669` sols 进位一年。
 - 首页语言切换只在首页可用；进入游戏后隐藏。按钮已改为右上角约 `24px` 的立体自转国旗小球：中文界面显示美国国旗，英文界面显示中国国旗。
 - 首页已补首屏 critical CSS，避免本地预览服务器或慢网打开时短暂出现白底黑字的未样式化 HTML；语言切换小球改为在 24px 圆形内部滚动 background-position，避免 Safari 把旗面动画渲染成小圆柱。

@@ -23,7 +23,6 @@ const fallbackSnapshot: PlayerSnapshot = {
   quaternion: [0, 0, 0, 1],
   speed: 0,
   flying: false,
-  lampOn: false,
   insideState: "surface",
 };
 
@@ -170,7 +169,6 @@ function normalizeSnapshot(snapshot: PlayerSnapshot): PlayerSnapshot {
     quaternion: normalizeTuple(snapshot.quaternion, 4, 0, [0, 0, 0, 1]) as [number, number, number, number],
     speed: finiteNumber(snapshot.speed, 0, 0, 120),
     flying: Boolean(snapshot.flying),
-    lampOn: Boolean(snapshot.lampOn),
     insideState: ["surface", "habitat", "greenhouse", "rocket", "elevator"].includes(snapshot.insideState) ? snapshot.insideState : "surface",
   };
 }
