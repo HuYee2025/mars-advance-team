@@ -37,7 +37,7 @@
 按任务补充读取：
 
 - 做剧情：读 `docs/lore/`
-- 做角色：读对应角色卡，例如 `docs/lore/alex.md`、`docs/lore/mother.md`、`docs/lore/fufu.md`
+- 做角色：读对应角色卡，例如 `docs/lore/alex.md`、`docs/lore/steve.md`、`docs/lore/fufu.md`
 - 做 AI 对话：读 `docs/lore/dialogue-rules.md`
 - 做美术：读 `docs/art-direction.md` 和 `assets/concepts/`
 - 做代码：读 `docs/tech-plan.md`、`docs/phase-2-plan.md` 和相关 `src/` 文件
@@ -100,7 +100,7 @@
 - 温和现实科幻。
 - 火星基地工程逻辑。
 - Alex 是工程师 + 人类学家。
-- Mother 是机器 AI，不是人形，不是反派。
+- 史蒂夫（Steve）是机器中控 AI，不是人形，不是反派。
 - 机器人是执行者，不是复杂人格角色。
 - 福福是情感陪伴角色，不是战斗单位。
 
