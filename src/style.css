@@ -383,6 +383,34 @@ html[lang="zh-CN"] .title-copy h1 {
   display: none !important;
 }
 
+.is-playing.is-wormhole-whiteout .hud,
+.is-playing.is-wormhole-whiteout .hud-buttons,
+.is-playing.is-wormhole-whiteout #mission-banner,
+.is-playing.is-wormhole-whiteout #labels,
+.is-playing.is-wormhole-whiteout #map-overlay,
+.is-playing.is-wormhole-whiteout #interaction-prompt,
+.is-playing.is-wormhole-whiteout #interaction-choice,
+.is-playing.is-wormhole-whiteout #scale-gun-overlay,
+.is-playing.is-wormhole-whiteout #camera-overlay,
+.is-playing.is-wormhole-whiteout #photo-viewer,
+.is-playing.is-wormhole-whiteout #dialogue-box,
+.is-playing.is-wormhole-whiteout #dialogue-stage,
+.is-playing.is-wormhole-whiteout #exit-confirm,
+.is-playing.is-wormhole-whiteout #joystick,
+.is-playing.is-wormhole-whiteout .mobile-actions,
+.is-playing.is-wormhole-whiteout #controls-guide {
+  display: none !important;
+}
+
+body.is-wormhole-whiteout::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #fff;
+  pointer-events: none;
+}
+
 .is-playing .hud-title {
   display: none;
 }

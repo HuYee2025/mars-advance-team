@@ -52,7 +52,8 @@ type InteractionAction = {
     | "elevator"
     | "habitat"
     | "greenhouse"
-    | "ancientPortal"
+    | "ancientPortalConsider"
+    | "ancientPortalPay"
     | "fufu"
     | "footballPickup"
     | "robot"
@@ -83,6 +84,7 @@ type WormholeFallState = {
   lastTriggerAt: number;
   drift: THREE.Vector2;
   velocity: THREE.Vector2;
+  depth: number;
   spawnNormal: THREE.Vector3;
   spawnForward: THREE.Vector3;
 };
@@ -277,7 +279,11 @@ const WORMHOLE_ORGANIC_RAMP_END = 0.66;
 const WORMHOLE_INITIAL_SPEED_FACTOR = 0.42;
 const WORMHOLE_PLAYER_SCALE_MULTIPLIER = 0.43;
 const WORMHOLE_DRIFT_VISUAL_MULTIPLIER = 2;
-const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.62;
+const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.36;
+const WORMHOLE_DEPTH_RESPONSE = 5.2;
+const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
+const WORMHOLE_WHITEOUT_SECONDS = 2;
+const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
 const SUIT_OXYGEN_MAX = 100;
 const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.294;
@@ -978,6 +984,9 @@ const runtimeEnglishTexts: Record<string, string> = {
   "火星足球进球": "Mars football goal",
   "搭便车": "Hitch ride",
   "找到福福": "Found Fufu",
+  "考虑一下": "Think it over",
+  "支付": "Pay",
+  "你是否愿意为穿越时空之门支付50个火星币？": "Are you willing to pay 50 Mars coins to cross the time gate?",
   "拾取足球": "Pick up football",
   "近火流星": "Near-Mars Meteor",
   "安抚 福福": "Comfort Fufu",
@@ -1035,8 +1044,10 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", "The endless structure inside the arch swallows you. Mars becomes a red point in the distance."],
   ["黑洞下落暂停。按 Q 继续。", "Black-hole descent paused. Press Q to continue."],
   ["黑洞继续下落。", "Black-hole descent resumed."],
-  ["激活时空之门（50金币）", "Activate time gate (50 coins)"],
-  ["金币不足，无法开启时空之门。需要 50 金币。", "Not enough coins. The time gate needs 50 coins."],
+  ["考虑一下", "Think it over"],
+  ["支付", "Pay"],
+  ["你是否愿意为穿越时空之门支付50个火星币？", "Are you willing to pay 50 Mars coins to cross the time gate?"],
+  ["已取消。离开门洞区域后可再次选择。", "Canceled. Leave the doorway area and return to choose again."],
   ["已支付 50 金币。时空之门已开启。", "Paid 50 coins. The time gate is open."],
   ["穿越时空之门", "Time-gate traversal"],
   ["搭便车", "Hitch ride"],
@@ -1308,8 +1319,10 @@ const currentCoinGroups: CoinGroup[] = [];
 let nextCoinRefreshAt = 0;
 let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
 let wormholeFall: WormholeFallState | null = null;
+let wormholeWhiteoutUntil = -Infinity;
 let wormholeTriggerArmed = true;
 let lastWormholeTriggerAt = -Infinity;
+let ancientPortalPromptDismissedInZone = false;
 const awardedEvents = new Set<string>();
 const exploredBuildings = new Set<Interactable["id"]>();
 const hiddenDiscoveries = new Set<string>();
@@ -2092,7 +2105,9 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
 
   const paused = Boolean(wormholeFall?.paused);
   const fallSeconds = wormholeFall ? wormholeElapsed() : progress * WORMHOLE_FALL_DURATION;
+  const depth = wormholeFall?.depth ?? 0;
   const fallSpeedFactor = paused ? 0 : wormholeFallSpeedFactor(progress);
+  const perspectiveSpeedFactor = fallSpeedFactor * (1 - depth * 0.28);
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
   const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
   const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
@@ -2108,7 +2123,7 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     const baseY = wormholeVisual.particleSeeds[seedIndex + 1];
     const seedZ = wormholeVisual.particleSeeds[seedIndex + 2];
     const speed = wormholeVisual.particleSeeds[seedIndex + 3];
-    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2) * Math.max(0.22, wormholeFallSpeedFactor(progress))) % wrapDistance + wrapDistance) % wrapDistance;
+    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2) * Math.max(0.22, perspectiveSpeedFactor)) % wrapDistance + wrapDistance) % wrapDistance;
     const z = -10 - zTravel;
     const depthT = 1 - zTravel / wrapDistance;
     const floatPhase = elapsedTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
@@ -2130,7 +2145,7 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     material.opacity = Number(material.userData.baseOpacity ?? 1) * organicOpacity;
   });
   for (const segment of wormholeVisual.organicSegments) {
-    segment.z += (3.2 + Math.sin(segment.seed) * 0.24) * fallSpeedFactor * delta;
+    segment.z += (3.2 + Math.sin(segment.seed) * 0.24) * perspectiveSpeedFactor * delta;
     if (segment.z > WORMHOLE_ORGANIC_FRONT_Z) {
       segment.z -= WORMHOLE_ORGANIC_LOOP_LENGTH;
       segment.baseRotation += Math.PI * 0.618;
@@ -2588,10 +2603,14 @@ function bindInput() {
   });
   scaleGunShrinkButton.addEventListener("click", () => fireScaleGun("shrink"));
   scaleGunGrowButton.addEventListener("click", () => fireScaleGun("grow"));
-  window.addEventListener("keydown", (event) => {
-    if (!started && handleTitleScreenKey(event)) return;
-    if (!started) return;
-    if (wormholeFall) {
+	  window.addEventListener("keydown", (event) => {
+	    if (!started && handleTitleScreenKey(event)) return;
+	    if (!started) return;
+	    if (isWormholeWhiteoutActive()) {
+	      event.preventDefault();
+	      return;
+	    }
+	    if (wormholeFall) {
       event.preventDefault();
       if (event.code === "KeyC") {
         toggleFirstThirdPersonCamera();
@@ -2654,7 +2673,7 @@ function bindInput() {
       keyState.add(event.code);
       return;
     }
-    if ((interactionChoiceOpen || hasMotherCallInfoActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
+	    if ((interactionChoiceOpen || hasInfoChoiceActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       if (interactionActions.length === 2) {
         selectedInteractionIndex = event.code === "KeyQ" ? 0 : 1;
@@ -4131,8 +4150,10 @@ function animate() {
   if (sunLight) updateSolarArrays(world.solarArrays, sunLight.position);
   updateElevators(world.elevators, delta);
   updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
+  updateWormholeWhiteout();
   const speed = started ? updatePlayer(delta) : 0;
   document.body.classList.toggle("is-wormhole", Boolean(wormholeFall));
+  document.body.classList.toggle("is-wormhole-whiteout", isWormholeWhiteoutActive());
   updateIntroOperationFeedback(speed);
   updateSuitOxygen(delta);
   updateJetpackEnergy(delta);
@@ -4301,7 +4322,7 @@ function updateBackgroundMusicFade() {
     backgroundMusic.volume = 0;
     return;
   }
-  if (wormholeFall) {
+  if (wormholeFall || isWormholeWhiteoutActive()) {
     backgroundMusic.volume = 0;
     return;
   }
@@ -4409,6 +4430,10 @@ function isMapFocusActive() {
 }
 
 function updatePlayer(delta: number) {
+  if (isWormholeWhiteoutActive()) {
+    playerVelocity.set(0, 0, 0);
+    return 0;
+  }
   if (wormholeFall) {
     return updateWormholeFall(delta);
   }
@@ -4482,15 +4507,18 @@ function isWormholeControlKey(code: string) {
 }
 
 function wormholeInputVector() {
-  const x = (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0) - (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0);
-  const y = (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0) - (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0);
-  const vector = new THREE.Vector2(x, y);
+  const x = (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0) - (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0);
+  const vector = new THREE.Vector2(x, 0);
   if (vector.lengthSq() > 1) vector.normalize();
   return vector;
 }
 
+function wormholeDepthInput() {
+  return (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0) - (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0);
+}
+
 function maybeTriggerWormholeFall() {
-  if (!ancientTreeArchObject || wormholeFall) return;
+  if (!ancientTreeArchObject || wormholeFall || isWormholeWhiteoutActive()) return;
   if (elapsedTime < lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) return;
   if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || dialogueOpen || exitConfirmOpen) return;
 
@@ -4507,19 +4535,52 @@ function maybeTriggerWormholeFall() {
     return;
   }
   if (!wormholeTriggerArmed) return;
-  startWormholeFall();
+  startWormholeWhiteout();
 }
 
-function isInsideAncientTreeDoorway(local: THREE.Vector3) {
+function isInsideAncientTreeDoorway(local: THREE.Vector3, scale = 1) {
   const lowerDoorWidth = THREE.MathUtils.lerp(34, 24, THREE.MathUtils.smoothstep(local.y, -8, 18));
   const upperDoorWidth = THREE.MathUtils.lerp(24, 19, THREE.MathUtils.smoothstep(local.y, 50, 92));
-  const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth);
-  return Math.abs(local.x) < doorwayWidth && local.y > -16 && local.y < 122 && Math.abs(local.z) < 42;
+  const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth) * scale;
+  return Math.abs(local.x) < doorwayWidth && local.y > -16 * scale && local.y < 122 * scale && Math.abs(local.z) < 42 * scale;
+}
+
+function startWormholeWhiteout() {
+  if (isWormholeWhiteoutActive() || wormholeFall) return;
+  lastWormholeTriggerAt = elapsedTime;
+  wormholeTriggerArmed = false;
+  wormholeWhiteoutUntil = elapsedTime + WORMHOLE_WHITEOUT_SECONDS;
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
+  promptBox.textContent = "";
+  promptBox.classList.remove("is-visible");
+  interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("interaction-drawer-open");
+  keyState.clear();
+  playerVelocity.set(0, 0, 0);
+  verticalVelocity = 0;
+  disableActiveJetpackForRespawn();
+  backgroundMusic.volume = 0;
+}
+
+function isWormholeWhiteoutActive() {
+  return elapsedTime < wormholeWhiteoutUntil;
+}
+
+function updateWormholeWhiteout() {
+  if (wormholeWhiteoutUntil === -Infinity || wormholeFall) return;
+  if (elapsedTime < wormholeWhiteoutUntil) return;
+  wormholeWhiteoutUntil = -Infinity;
+  startWormholeFall();
 }
 
 function startWormholeFall() {
   const spawnNormal = planetNormal(SPAWN_X, SPAWN_Z, new THREE.Vector3());
   const spawnForward = planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z, new THREE.Vector3()).sub(spawnNormal).projectOnPlane(spawnNormal).normalize();
+  wormholeWhiteoutUntil = -Infinity;
   lastWormholeTriggerAt = elapsedTime;
   wormholeFall = {
     startedAt: elapsedTime,
@@ -4528,6 +4589,7 @@ function startWormholeFall() {
     lastTriggerAt: lastWormholeTriggerAt,
     drift: new THREE.Vector2(),
     velocity: new THREE.Vector2(),
+    depth: 0,
     spawnNormal,
     spawnForward,
   };
@@ -4595,6 +4657,8 @@ function updateWormholeFall(delta: number) {
   }
   const progress = wormholeProgress();
   const input = wormholeInputVector();
+  const targetDepth = wormholeDepthInput();
+  wormholeFall.depth = THREE.MathUtils.lerp(wormholeFall.depth, targetDepth, 1 - Math.pow(0.0025, WORMHOLE_DEPTH_RESPONSE * delta));
   const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
   const boundaryResistance = 1 - THREE.MathUtils.smoothstep(wormholeFall.drift.length(), WORMHOLE_DRIFT_LIMIT * 0.55, WORMHOLE_DRIFT_LIMIT);
   wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), WORMHOLE_DRIFT_CONTROL_STRENGTH * boundaryResistance * delta);
@@ -5169,6 +5233,7 @@ function updateWormholeCamera(delta: number) {
   cameraObstructionLift = 0;
   world.root.visible = false;
   const progress = wormholeProgress();
+  const depth = wormholeFall.depth;
   const normal = playerNormal.clone();
   const right = playerForward.clone().cross(normal).normalize();
   const driftOffset = right
@@ -5196,10 +5261,11 @@ function updateWormholeCamera(delta: number) {
     playerRig.visual.visible = false;
   } else {
     const distanceT = THREE.MathUtils.smoothstep(progress, 0, 0.68);
+    const cameraDolly = THREE.MathUtils.lerp(1.43, 0.77, (depth + 1) / 2);
     const desired = player.position
       .clone()
-      .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT))
-      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.72, 5.06, distanceT));
+      .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT) * cameraDolly)
+      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.72, 5.06, distanceT) * cameraDolly);
     const lookTarget = player.position
       .clone()
       .addScaledVector(normal, THREE.MathUtils.lerp(0.72, 0.52, distanceT))
@@ -5605,7 +5671,7 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 }
 
 function updateMissionState() {
-  if (wormholeFall) {
+  if (wormholeFall || isWormholeWhiteoutActive()) {
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
@@ -5691,6 +5757,7 @@ function updateMissionState() {
   if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
   if (hasMotherCallInfoActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "motherCallAccept");
+  if (hasAncientPortalPaymentActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "ancientPortalPay");
   if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
   updateInteractionPrompts();
   dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
@@ -5698,12 +5765,22 @@ function updateMissionState() {
 
 function buildInteractionActions() {
   const actions: InteractionAction[] = [];
-  if (wormholeFall || isFlightActive()) return actions;
+  if (wormholeFall || isWormholeWhiteoutActive()) return actions;
+  if (isFlightActive()) {
+    if (activeAncientPortal) {
+      actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
+      actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
+    }
+    return actions;
+  }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
   if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
-  if (activeAncientPortal) actions.push({ id: "ancientPortal", label: localizeText("激活时空之门（50金币）") });
+  if (activeAncientPortal) {
+    actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
+    actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
+  }
   if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
@@ -5732,7 +5809,8 @@ function interactionActionPriority(action: InteractionAction) {
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
-    ancientPortal: 1.2,
+    ancientPortalConsider: 1.2,
+    ancientPortalPay: 1.2,
     hitchRide: 1.5,
     photoWall: 2,
     mission: 2,
@@ -5784,6 +5862,29 @@ function hasMotherCallInfoActions() {
   return interactionActions.some(isMotherCallInfoAction);
 }
 
+function isAncientPortalPaymentAction(action: InteractionAction) {
+  return action.id === "ancientPortalConsider" || action.id === "ancientPortalPay";
+}
+
+function hasAncientPortalPaymentActions() {
+  return interactionActions.some(isAncientPortalPaymentAction);
+}
+
+function isInfoChoiceAction(action: InteractionAction) {
+  return isMotherCallInfoAction(action) || isAncientPortalPaymentAction(action);
+}
+
+function hasInfoChoiceActions() {
+  return interactionActions.some(isInfoChoiceAction);
+}
+
+function infoChoiceCopy() {
+  if (hasAncientPortalPaymentActions()) {
+    return { title: localizeText("时空之门"), detail: localizeText("你是否愿意为穿越时空之门支付50个火星币？") };
+  }
+  return { title: tr("info.title"), detail: tr("info.motherCall") };
+}
+
 function renderInteractionChoice() {
   interactionChoice.innerHTML = "";
   if (interactionActions.length === 0) {
@@ -5799,16 +5900,17 @@ function renderInteractionChoice() {
     return;
   }
   document.body.classList.remove("interaction-drawer-open");
-  const isInfoChoice = hasMotherCallInfoActions();
+  const isInfoChoice = hasInfoChoiceActions();
   interactionChoice.classList.remove("is-touch-entry", "is-drawer-open");
   interactionChoice.classList.toggle("is-info-choice", isInfoChoice);
   if (isInfoChoice) {
     const infoHeader = document.createElement("div");
     infoHeader.className = "info-choice-head";
+    const copy = infoChoiceCopy();
     const title = document.createElement("strong");
-    title.textContent = tr("info.title");
+    title.textContent = copy.title;
     const detail = document.createElement("span");
-    detail.textContent = tr("info.motherCall");
+    detail.textContent = copy.detail;
     infoHeader.append(title, detail);
     interactionChoice.appendChild(infoHeader);
   }
@@ -5829,8 +5931,8 @@ function renderInteractionChoice() {
 }
 
 function renderTouchInteractionChoice() {
-  if (hasMotherCallInfoActions()) {
-    renderMotherCallInfoChoice();
+  if (hasInfoChoiceActions()) {
+    renderInfoChoice();
     return;
   }
   interactionChoice.classList.remove("is-info-choice");
@@ -5883,17 +5985,18 @@ function renderTouchInteractionChoice() {
   interactionChoice.setAttribute("aria-hidden", "false");
 }
 
-function renderMotherCallInfoChoice() {
+function renderInfoChoice() {
   interactionChoice.classList.remove("is-drawer-open");
   interactionChoice.classList.add("is-touch-entry", "is-info-choice");
   document.body.classList.remove("interaction-drawer-open");
 
   const infoHeader = document.createElement("div");
   infoHeader.className = "info-choice-head";
+  const copy = infoChoiceCopy();
   const title = document.createElement("strong");
-  title.textContent = tr("info.title");
+  title.textContent = copy.title;
   const detail = document.createElement("span");
-  detail.textContent = tr("info.motherCall");
+  detail.textContent = copy.detail;
   infoHeader.append(title, detail);
   interactionChoice.appendChild(infoHeader);
 
@@ -5965,8 +6068,12 @@ function executeSelectedInteraction() {
     else enterGreenhouse(activeGreenhouseDoor);
     return;
   }
-  if (action.id === "ancientPortal") {
-    activateAncientPortal();
+  if (action.id === "ancientPortalConsider") {
+    dismissAncientPortalPrompt();
+    return;
+  }
+  if (action.id === "ancientPortalPay") {
+    payAncientPortal();
     return;
   }
   if (action.id === "photoWall") {
@@ -6067,10 +6174,30 @@ function interactMission(interactable: Interactable) {
 }
 
 function findActiveAncientPortal() {
-  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
+  if (!started || wormholeFall || isWormholeWhiteoutActive() || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+    return false;
+  }
   if (!ancientTreeArchObject || isAncientPortalOpen()) return false;
+  if (coins < ANCIENT_PORTAL_COST_COINS) return false;
+  const inPaymentZone = isInsideAncientTreePortalPaymentZone();
+  if (!inPaymentZone) {
+    ancientPortalPromptDismissedInZone = false;
+    return false;
+  }
+  return !ancientPortalPromptDismissedInZone;
+}
+
+function isInsideAncientTreePortalPaymentZone() {
+  if (!ancientTreeArchObject) return false;
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
-  return Math.abs(local.x) < 68 && local.y > -20 && local.y < 124 && Math.abs(local.z) < 66;
+  return isInsideAncientTreeDoorway(local, ANCIENT_PORTAL_PROMPT_SCALE);
+}
+
+function isInsideAncientTreeArchDiscoveryRange() {
+  if (!ancientTreeArchObject) return false;
+  const position = new THREE.Vector3();
+  ancientTreeArchObject.getWorldPosition(position);
+  return position.distanceTo(player.position) <= ANCIENT_TREE_ARCH_DISCOVERY_RADIUS;
 }
 
 function isAncientPortalOpen() {
@@ -6078,19 +6205,33 @@ function isAncientPortalOpen() {
   return elapsedTime - openedAt >= 0 && elapsedTime - openedAt < ANCIENT_PORTAL_ACTIVE_SECONDS;
 }
 
-function activateAncientPortal() {
+function dismissAncientPortalPrompt(showFeedback = true) {
+  ancientPortalPromptDismissedInZone = true;
+  activeAncientPortal = false;
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
+  interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open", "is-info-choice");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("interaction-drawer-open");
+  if (showFeedback) showDialogue("时空之门", "已取消。离开门洞区域后可再次选择。", 1.8);
+}
+
+function payAncientPortal() {
   if (!activeAncientPortal || isAncientPortalOpen()) return;
   if (!spendCoins(ANCIENT_PORTAL_COST_COINS)) {
-    showDialogue("时空之门", "金币不足，无法开启时空之门。需要 50 金币。", 2.6);
-    pulseRewardReadout(coinReadout, true);
+    dismissAncientPortalPrompt(false);
     return;
   }
   world.ancientTreePortal.userData.openedAt = elapsedTime;
   world.ancientTreePortal.userData.portalStrength = 0.2;
   world.ancientTreePortal.visible = true;
+  ancientPortalPromptDismissedInZone = true;
   activeAncientPortal = false;
   closeTouchInteractionDrawer();
   interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
   showDialogue("时空之门", "已支付 50 金币。时空之门已开启。", 2.6);
 }
 
@@ -6099,6 +6240,7 @@ function resetAncientPortal() {
   world.ancientTreePortal.userData.portalStrength = 0;
   world.ancientTreePortal.visible = false;
   activeAncientPortal = false;
+  ancientPortalPromptDismissedInZone = false;
 }
 
 function findActiveFufu() {
@@ -7673,7 +7815,7 @@ function updateHiddenDiscoveries() {
       id: ANCIENT_TREE_ARCH_DISCOVERY_ID,
       label: ancientTreeArch.label,
       object: ancientTreeArch.object,
-      radius: 76,
+      radius: ANCIENT_TREE_ARCH_DISCOVERY_RADIUS,
     });
   }
   targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });

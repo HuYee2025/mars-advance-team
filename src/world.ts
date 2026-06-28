@@ -208,6 +208,7 @@ const ANCIENT_TREE_ARCH_HEIGHT = 118;
 const ANCIENT_TREE_ARCH_WIDTH = 92;
 const ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS = 58;
 const ANCIENT_TREE_ARCH_SETTLE = -10.2;
+const ANCIENT_TREE_ARCH_YAW = 0.16;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -218,6 +219,10 @@ const TOWER_SCALE = 1.55;
 const NUMBERED_FACILITY_SCALE = 1.55;
 const VEHICLE_LOOP_SPEED = 0.052;
 const VEHICLE_LOOP_HEADING = THREE.MathUtils.degToRad(50);
+const VEHICLE_ROUTE_STOP_SECONDS = 20;
+const VEHICLE_STOP_ANGLE_THRESHOLD = 0.02;
+const VEHICLE_BASE_STOP_X = expandWorldCoordinate(-18);
+const VEHICLE_BASE_STOP_Z = expandWorldCoordinate(-124);
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
@@ -349,7 +354,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const ancientTreeArchNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
   const ancientTreeArchX = (ancientTreeArchNormal.x / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
   const ancientTreeArchZ = (ancientTreeArchNormal.z / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
-  const ancientTreeArchYaw = 0.16;
+  const ancientTreeArchYaw = ANCIENT_TREE_ARCH_YAW;
   const ancientTreeArch = createAncientTreeArch();
   const ancientTreePortal = createAncientTreePortal();
   ancientTreeArch.add(ancientTreePortal);
@@ -2333,8 +2338,8 @@ function createRovers(
   maintenanceBots: MaintenanceBotConfig[]
 ) {
   const configs = [
-    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 0.25, size: 1.08, kind: "rover", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "01 车辆 电动巡检车" },
-    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 1.25, size: 1.08, kind: "cargo", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "02 车辆 运输车" },
+    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 0, size: 1.08, kind: "rover", route: "stationLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "01 车辆 电动巡检车" },
+    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: Math.PI, size: 1.08, kind: "cargo", route: "stationLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "02 车辆 运输车" },
     ...maintenanceBots,
   ];
   configs.forEach((config) => {
@@ -2914,8 +2919,8 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       updateMaintenanceBotPatrol(rover, elapsed, delta, colliders);
       return;
     }
-    const angle = elapsed * speed + offset;
-    if (route === "meridianLoop" || route === "latitudeLoop" || route === "greatCircleLoop") {
+    const angle = route === "stationLoop" ? updateStationLoopAngle(rover, elapsed, delta, speed, offset) : elapsed * speed + offset;
+    if (route === "meridianLoop" || route === "latitudeLoop" || route === "greatCircleLoop" || route === "stationLoop") {
       const directionSign = speed >= 0 ? 1 : -1;
       const vehicleRadius = kind === "cargo" ? 3.6 : 3.2;
       const targetNormal = avoidFixedColliders(vehicleRouteNormal(route, angle, routeHeading), colliders, vehicleRadius);
@@ -2936,8 +2941,9 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       const yaw = yawFromForward(normal, forward);
       placeObjectOnPlanetNormal(rover, normal, 0.08, yaw);
       setDynamicObjectPlanetCoordinate(rover, normal);
-      updateRoverWheelSpin(rover, elapsed, speed);
-      updateRoverSurfaceEffects(rover, elapsed, delta, speed);
+      const parked = route === "stationLoop" && (rover.userData.stationPauseUntil ?? -Infinity) > elapsed;
+      updateRoverWheelSpin(rover, elapsed, parked ? 0 : speed);
+      updateRoverSurfaceEffects(rover, elapsed, delta, parked ? 0 : speed);
       return;
     }
 
@@ -3089,6 +3095,14 @@ function botWaitSeconds(data: { waitMin: number; waitMax: number; offset: number
 }
 
 function vehicleRouteNormal(route: string, angle: number, routeHeading = 0) {
+  if (route === "stationLoop") {
+    const base = vehicleBaseStopNormal();
+    const tree = vehicleAncientTreeStopNormal();
+    const axis = base.clone().cross(tree);
+    if (axis.lengthSq() < 0.000001) return vehicleRouteNormal("greatCircleLoop", angle, routeHeading);
+    axis.normalize();
+    return base.clone().applyAxisAngle(axis, angle).normalize();
+  }
   if (route === "greatCircleLoop") {
     const direction = new THREE.Vector3(Math.cos(routeHeading), 0, Math.sin(routeHeading));
     return direction.multiplyScalar(Math.sin(angle)).addScaledVector(WORLD_UP, Math.cos(angle)).normalize();
@@ -3097,6 +3111,61 @@ function vehicleRouteNormal(route: string, angle: number, routeHeading = 0) {
     return new THREE.Vector3(Math.sin(angle) * 0.92, Math.cos(angle), Math.sin(angle) * 0.38).normalize();
   }
   return new THREE.Vector3(Math.cos(angle), 0.34, Math.sin(angle)).normalize();
+}
+
+function updateStationLoopAngle(rover: THREE.Group, elapsed: number, delta: number, speed: number, offset: number) {
+  if (typeof rover.userData.routeAngle !== "number") {
+    rover.userData.routeAngle = normalizeRouteAngle(offset);
+    rover.userData.lastStationStopIndex = null;
+  }
+  if ((rover.userData.stationPauseUntil ?? -Infinity) > elapsed) {
+    return Number(rover.userData.routeAngle);
+  }
+
+  let angle = Number(rover.userData.routeAngle);
+  angle = normalizeRouteAngle(angle + speed * delta);
+  const stopIndex = stationStopIndexForAngle(angle);
+  if (stopIndex !== null && rover.userData.lastStationStopIndex !== stopIndex) {
+    angle = stopIndex === 0 ? 0 : vehicleStationTreeAngle();
+    rover.userData.stationPauseUntil = elapsed + VEHICLE_ROUTE_STOP_SECONDS;
+    rover.userData.lastStationStopIndex = stopIndex;
+  }
+  if (stopIndex === null) rover.userData.lastStationStopIndex = null;
+  rover.userData.routeAngle = angle;
+  return angle;
+}
+
+function stationStopIndexForAngle(angle: number) {
+  const normalized = normalizeRouteAngle(angle);
+  if (routeAngleDistance(normalized, 0) < VEHICLE_STOP_ANGLE_THRESHOLD) return 0;
+  if (routeAngleDistance(normalized, vehicleStationTreeAngle()) < VEHICLE_STOP_ANGLE_THRESHOLD) return 1;
+  return null;
+}
+
+function normalizeRouteAngle(angle: number) {
+  return ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+}
+
+function routeAngleDistance(a: number, b: number) {
+  const distance = Math.abs(normalizeRouteAngle(a) - normalizeRouteAngle(b));
+  return Math.min(distance, Math.PI * 2 - distance);
+}
+
+function vehicleBaseStopNormal() {
+  return planetNormal(VEHICLE_BASE_STOP_X, VEHICLE_BASE_STOP_Z, new THREE.Vector3());
+}
+
+function vehicleAncientTreeStopNormal() {
+  const centerNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
+  const archForward = new THREE.Vector3(0, 0, -1).applyAxisAngle(centerNormal, ANCIENT_TREE_ARCH_YAW).projectOnPlane(centerNormal);
+  if (archForward.lengthSq() < 0.000001) {
+    return centerNormal.clone().addScaledVector(WORLD_UP, -centerNormal.dot(WORLD_UP)).normalize();
+  }
+  return centerNormal.clone().addScaledVector(archForward.normalize(), (ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS + 11) / PLANET_RADIUS).normalize();
+}
+
+function vehicleStationTreeAngle() {
+  return Math.acos(THREE.MathUtils.clamp(vehicleBaseStopNormal().dot(vehicleAncientTreeStopNormal()), -1, 1));
 }
 
 function avoidFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[], vehicleRadius: number) {
