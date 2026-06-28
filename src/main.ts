@@ -97,10 +97,24 @@ type WormholeOrganicSegment = {
   twist: number;
 };
 
+type WormholeWhiteoutParticle = {
+  element: HTMLSpanElement;
+  startX: number;
+  startY: number;
+  driftX: number;
+  driftY: number;
+  size: number;
+  opacity: number;
+  shrink: number;
+};
+
 type JetpackSource = "temporary" | "equipment" | null;
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
 const labelsRoot = must<HTMLDivElement>("#labels");
+const wormholeWhiteoutOverlay = must<HTMLElement>("#wormhole-whiteout");
+const wormholeWhiteoutParticlesRoot = must<HTMLDivElement>("#wormhole-whiteout-particles");
+const wormholeWhiteoutCaption = must<HTMLElement>("#wormhole-whiteout-caption");
 const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
@@ -237,11 +251,12 @@ scene.add(playerContactShadow);
 const wormholeVisual = createWormholeFallVisual();
 scene.add(wormholeVisual.group);
 
-const PHOTO_WALL_CAPACITY = 7;
+const PHOTO_WALL_CAPACITY = 36;
 const CAMERA_MIN_ZOOM = 1;
 const CAMERA_MAX_ZOOM = 4;
 const cameraPhotos: Array<{ dataUrl: string; texture: THREE.Texture; takenAt: number }> = [];
-const photoWallFrames: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
+let photoWallScreen: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null = null;
+let photoWallScreenPhotoIndex = -1;
 const world = createMarsWorld(scene);
 const photoWall = createPhotoWall();
 world.habitatDoor.interiorScene.add(photoWall);
@@ -281,6 +296,9 @@ const WORMHOLE_PLAYER_SCALE_MULTIPLIER = 0.43;
 const WORMHOLE_DRIFT_VISUAL_MULTIPLIER = 2;
 const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.36;
 const WORMHOLE_DEPTH_RESPONSE = 5.2;
+const WORMHOLE_VISUAL_SPEED_MULTIPLIER = 2;
+const WORMHOLE_DEPTH_BACK_DOLLY_MULTIPLIER = 1.42;
+const WORMHOLE_WHITEOUT_PARTICLE_COUNT = 190;
 const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
 const WORMHOLE_WHITEOUT_SECONDS = 2;
 const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
@@ -636,6 +654,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "info.reject": "稍后接收",
     "info.accept": "接收",
     "language.button": "English",
+    "wormhole.whiteoutCaption": "这是……",
   },
   "en-US": {
     "app.aria": "Mars Advance Team 3D Demo",
@@ -708,6 +727,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "info.reject": "Receive Later",
     "info.accept": "Receive",
     "language.button": "简体中文",
+    "wormhole.whiteoutCaption": "This is...",
   },
 };
 
@@ -1009,16 +1029,18 @@ const runtimeEnglishTexts: Record<string, string> = {
   "退出游戏确认": "Exit Game Confirm",
   "移动端操作": "Mobile Controls",
   "相机取景框": "Camera Viewfinder",
-  "照片墙查看器": "Photo Wall Viewer",
+  "照片电子屏查看器": "Photo Screen Viewer",
   "火星照片": "Mars photo",
   "相机": "Camera",
   "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上": "Congratulations! You received a camera\nPress G anytime to use the camera\nPhotos will appear on the habitat wall",
   "相机已解锁": "Camera unlocked",
   "尚未获得相机。把足球踢进球门可以获得它。": "Camera not acquired yet. Kick the football into the goal to earn it.",
   "当前空间太窄，无法使用相机。": "This space is too tight to use the camera.",
-  "照片已保存到居住舱照片墙": "Photo saved to the habitat photo wall",
-  "照片墙暂无照片": "The photo wall has no photos yet",
-  "查看照片墙": "View photo wall",
+  "照片已保存到居住舱电子屏": "Photo saved to the habitat screen",
+  "照片电子屏暂无照片": "The photo screen has no photos yet",
+  "查看照片电子屏": "View photo screen",
+  "查看美好瞬间": "View captured moments",
+  "这里保存着你拍下的火星瞬间，按 E 查看。": "Your captured Mars moments are saved here. Press E to view.",
   "已触发当前照片下载": "Current photo download started",
 };
 
@@ -1061,15 +1083,17 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["远古巨树拱门实体", "Ancient Tree Arch body"],
   ["远古巨树拱门根部", "Ancient Tree Arch roots"],
   ["远古巨树拱门", "Ancient Tree Arch"],
-  ["照片墙", "Photo Wall"],
-  ["查看照片墙", "View Photo Wall"],
+  ["照片电子屏", "Photo Screen"],
+  ["查看照片电子屏", "View Photo Screen"],
+  ["查看美好瞬间", "View Captured Moments"],
+  ["这里保存着你拍下的火星瞬间，按 E 查看。", "Your captured Mars moments are saved here. Press E to view."],
   ["照片", "Photo"],
   ["相机", "Camera"],
   ["恭喜！你获得了一台相机", "Congratulations! You received a camera"],
   ["随时按 G 键可以使用相机", "Press G anytime to use the camera"],
   ["照片会展示在居住舱的墙上", "Photos will appear on the habitat wall"],
   ["相机已解锁", "Camera unlocked"],
-  ["照片已保存到居住舱照片墙", "Photo saved to the habitat photo wall"],
+  ["照片已保存到居住舱电子屏", "Photo saved to the habitat screen"],
   ["已触发当前照片下载", "Current photo download started"],
   ["轨道链路", "Orbital Link"],
   ["星链卫星命中", "Starlink satellite hit"],
@@ -1320,9 +1344,11 @@ let nextCoinRefreshAt = 0;
 let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
 let wormholeFall: WormholeFallState | null = null;
 let wormholeWhiteoutUntil = -Infinity;
+let wormholeWhiteoutStartedAt = -Infinity;
 let wormholeTriggerArmed = true;
 let lastWormholeTriggerAt = -Infinity;
 let ancientPortalPromptDismissedInZone = false;
+const wormholeWhiteoutParticles: WormholeWhiteoutParticle[] = [];
 const awardedEvents = new Set<string>();
 const exploredBuildings = new Set<Interactable["id"]>();
 const hiddenDiscoveries = new Set<string>();
@@ -1694,6 +1720,38 @@ function createRadialShadowTexture() {
 function seededNoise(seed: number, salt: number) {
   return THREE.MathUtils.clamp(Math.sin(seed * 12.9898 + salt) * 43758.5453 % 1, -1, 1) * 0.5 + 0.5;
 }
+
+function createWormholeWhiteoutParticles() {
+  if (wormholeWhiteoutParticles.length > 0) return;
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < WORMHOLE_WHITEOUT_PARTICLE_COUNT; i += 1) {
+    const angle = seededNoise(i, 2.7) * Math.PI * 2;
+    const radius = Math.pow(seededNoise(i, 5.4), 1.8);
+    const startX = Math.cos(angle) * radius * 56;
+    const startY = Math.sin(angle) * radius * 42;
+    const driftRadius = 34 + seededNoise(i, 9.8) * 92;
+    const driftAngle = angle + (seededNoise(i, 12.3) - 0.5) * 0.9;
+    const element = document.createElement("span");
+    element.className = "wormhole-whiteout-particle";
+    const size = 9 + Math.pow(seededNoise(i, 15.2), 0.62) * 28;
+    element.style.width = `${size.toFixed(1)}px`;
+    element.style.height = `${size.toFixed(1)}px`;
+    fragment.appendChild(element);
+    wormholeWhiteoutParticles.push({
+      element,
+      startX,
+      startY,
+      driftX: Math.cos(driftAngle) * driftRadius,
+      driftY: Math.sin(driftAngle) * driftRadius,
+      size,
+      opacity: 0.72 + seededNoise(i, 18.6) * 0.28,
+      shrink: 0.58 + seededNoise(i, 21.9) * 0.34,
+    });
+  }
+  wormholeWhiteoutParticlesRoot.appendChild(fragment);
+}
+
+createWormholeWhiteoutParticles();
 
 function createWormholeFallVisual() {
   const group = new THREE.Group();
@@ -2107,9 +2165,11 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   const fallSeconds = wormholeFall ? wormholeElapsed() : progress * WORMHOLE_FALL_DURATION;
   const depth = wormholeFall?.depth ?? 0;
   const fallSpeedFactor = paused ? 0 : wormholeFallSpeedFactor(progress);
-  const perspectiveSpeedFactor = fallSpeedFactor * (1 - depth * 0.28);
+  const depthSpeedFactor = wormholeDepthVisualSpeedMultiplier(depth);
+  const perspectiveSpeedFactor = fallSpeedFactor * WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor;
+  const visualTime = elapsedTime * Math.max(0.1, WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor);
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
-  const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
+  const pulse = 0.86 + Math.sin(visualTime * 18.4) * 0.18 + Math.sin(visualTime * 37.7) * 0.11;
   const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
   const particleOpacity = THREE.MathUtils.lerp(0.7, 0.42, marsPhase) * particleFade;
   wormholeVisual.particleMaterial.opacity = particleOpacity;
@@ -2126,7 +2186,7 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2) * Math.max(0.22, perspectiveSpeedFactor)) % wrapDistance + wrapDistance) % wrapDistance;
     const z = -10 - zTravel;
     const depthT = 1 - zTravel / wrapDistance;
-    const floatPhase = elapsedTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
+    const floatPhase = visualTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
     const tunnelScale = THREE.MathUtils.lerp(0.26, 1.16, depthT);
     const sway = THREE.MathUtils.lerp(0.16, 1.05, depthT);
     wormholeVisual.particlePositions[positionIndex] = baseX * tunnelScale + Math.sin(floatPhase + baseY * 0.03) * sway + drift.x * 0.04;
@@ -2152,13 +2212,13 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     }
     segment.group.position.z = segment.z;
     const depthFactor = THREE.MathUtils.clamp((segment.z - WORMHOLE_ORGANIC_BACK_Z) / WORMHOLE_ORGANIC_LOOP_LENGTH, 0, 1);
-    const segmentPulse = 1 + Math.sin(elapsedTime * 1.4 + segment.seed) * 0.016;
+    const segmentPulse = 1 + Math.sin(visualTime * 1.4 + segment.seed) * 0.016;
     const nearScale = THREE.MathUtils.lerp(0.72, 1.18, depthFactor);
     segment.group.scale.setScalar(nearScale * segmentPulse);
     segment.group.rotation.z =
       segment.baseRotation * 0.08 +
-      elapsedTime * 0.16 +
-      segment.twist * Math.sin(elapsedTime * 0.4 + segment.seed);
+      visualTime * 0.16 +
+      segment.twist * Math.sin(visualTime * 0.4 + segment.seed);
   }
 
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.94, 1);
@@ -3672,66 +3732,61 @@ function captureCameraPhoto() {
     removed?.texture.dispose();
   }
   updatePhotoWallFrames();
-  showDialogue("相机", "照片已保存到居住舱照片墙", 2.2);
+  showDialogue("相机", "照片已保存到居住舱电子屏", 2.2);
 }
 
 function createPhotoWall() {
   const group = new THREE.Group();
-  group.name = "Habitat photo wall";
+  group.name = "Habitat photo screen";
   group.position.set(5.62, -0.08, 0);
   group.rotation.y = -Math.PI / 2;
 
-  const frameLayout = [
-    { x: -1.24, y: 0.56, w: 1.02, h: 0.68 },
-    { x: 0, y: 0.56, w: 1.12, h: 0.76 },
-    { x: 1.28, y: 0.56, w: 0.96, h: 0.64 },
-    { x: -1.42, y: -0.34, w: 0.86, h: 0.62 },
-    { x: -0.42, y: -0.34, w: 0.78, h: 0.58 },
-    { x: 0.58, y: -0.34, w: 0.86, h: 0.62 },
-    { x: 1.55, y: -0.34, w: 0.72, h: 0.54 },
-  ];
-  const railMat = new THREE.MeshStandardMaterial({ color: 0x6e513b, roughness: 0.74, metalness: 0.12 });
+  const screenWidth = 3.58;
+  const screenHeight = 1.86;
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x1e2b31, roughness: 0.46, metalness: 0.52, emissive: 0x07161e, emissiveIntensity: 0.34 });
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0x6fe7ff, transparent: true, opacity: 0.42, toneMapped: false });
+  const screenMat = new THREE.MeshBasicMaterial({ color: 0x071017, transparent: true, opacity: 0.86, toneMapped: false });
 
-  for (const [index, item] of frameLayout.entries()) {
-    const frame = new THREE.Group();
-    frame.position.set(item.x, item.y, 0.02);
-    const photoMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(item.w, item.h),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false })
-    );
-    photoMesh.visible = false;
-    const borderTop = new THREE.Mesh(new THREE.BoxGeometry(item.w + 0.12, 0.045, 0.06), railMat);
-    const borderBottom = borderTop.clone();
-    const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.045, item.h + 0.12, 0.06), railMat);
-    const borderRight = borderLeft.clone();
-    borderTop.position.y = item.h * 0.5 + 0.055;
-    borderBottom.position.y = -item.h * 0.5 - 0.055;
-    borderLeft.position.x = -item.w * 0.5 - 0.055;
-    borderRight.position.x = item.w * 0.5 + 0.055;
-    frame.add(photoMesh, borderTop, borderBottom, borderLeft, borderRight);
-    group.add(frame);
-    photoWallFrames.push(photoMesh);
-  }
+  const backPanel = new THREE.Mesh(new THREE.BoxGeometry(screenWidth + 0.22, screenHeight + 0.2, 0.08), frameMat);
+  backPanel.position.set(0, 0.16, -0.02);
+  backPanel.castShadow = true;
+  group.add(backPanel);
+
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(screenWidth, screenHeight), screenMat);
+  screen.position.set(0, 0.16, 0.035);
+  screen.renderOrder = 4;
+  group.add(screen);
+  photoWallScreen = screen;
+
+  const borderTop = new THREE.Mesh(new THREE.BoxGeometry(screenWidth + 0.16, 0.035, 0.035), glowMat);
+  const borderBottom = borderTop.clone();
+  const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.035, screenHeight + 0.14, 0.035), glowMat);
+  const borderRight = borderLeft.clone();
+  borderTop.position.set(0, screenHeight * 0.5 + 0.245, 0.052);
+  borderBottom.position.set(0, -screenHeight * 0.5 + 0.075, 0.052);
+  borderLeft.position.set(-screenWidth * 0.5 - 0.085, 0.16, 0.052);
+  borderRight.position.set(screenWidth * 0.5 + 0.085, 0.16, 0.052);
+  group.add(borderTop, borderBottom, borderLeft, borderRight);
 
   return group;
 }
 
 function updatePhotoWallFrames() {
-  for (const [index, frame] of photoWallFrames.entries()) {
-    const material = frame.material;
-    if (material.map && !cameraPhotos.some((photo) => photo.texture === material.map)) material.map.dispose();
-    const photoTexture = cameraPhotos[index]?.texture ?? null;
-    material.map = photoTexture;
-    material.opacity = photoTexture ? 1 : 0;
-    material.transparent = !photoTexture;
-    material.needsUpdate = true;
-    frame.visible = Boolean(photoTexture);
-  }
+  if (!photoWallScreen) return;
+  const nextIndex = cameraPhotos.length === 0 ? -1 : Math.floor(elapsedTime / 4) % cameraPhotos.length;
+  if (nextIndex === photoWallScreenPhotoIndex && photoWallScreen.material.map === (nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture : null)) return;
+  photoWallScreenPhotoIndex = nextIndex;
+  const material = photoWallScreen.material;
+  const photoTexture = nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture ?? null : null;
+  material.map = photoTexture;
+  material.color.set(photoTexture ? 0xffffff : 0x071017);
+  material.opacity = photoTexture ? 1 : 0.86;
+  material.needsUpdate = true;
 }
 
 function openPhotoViewer() {
   if (cameraPhotos.length === 0) {
-    showDialogue("照片墙", "照片墙暂无照片", 2);
+    showDialogue("照片电子屏", "照片电子屏暂无照片", 2);
     return;
   }
   if (cameraMode) toggleCameraMode(false);
@@ -4158,6 +4213,7 @@ function animate() {
   updateSuitOxygen(delta);
   updateJetpackEnergy(delta);
   updateCamera(delta);
+  updatePhotoWallFrames();
   updateRovers(world.rovers, elapsedTime, world.colliders);
   if (ridingRover) updateRoverRide(ridingRover, 0);
   updateFootball(delta);
@@ -4549,7 +4605,10 @@ function startWormholeWhiteout() {
   if (isWormholeWhiteoutActive() || wormholeFall) return;
   lastWormholeTriggerAt = elapsedTime;
   wormholeTriggerArmed = false;
+  wormholeWhiteoutStartedAt = elapsedTime;
   wormholeWhiteoutUntil = elapsedTime + WORMHOLE_WHITEOUT_SECONDS;
+  wormholeWhiteoutOverlay.setAttribute("aria-hidden", "false");
+  updateWormholeWhiteoutOverlay(0);
   closeTouchInteractionDrawer();
   interactionChoiceOpen = false;
   interactionActions = [];
@@ -4572,9 +4631,46 @@ function isWormholeWhiteoutActive() {
 
 function updateWormholeWhiteout() {
   if (wormholeWhiteoutUntil === -Infinity || wormholeFall) return;
+  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeWhiteoutStartedAt) / WORMHOLE_WHITEOUT_SECONDS, 0, 1);
+  updateWormholeWhiteoutOverlay(progress);
   if (elapsedTime < wormholeWhiteoutUntil) return;
   wormholeWhiteoutUntil = -Infinity;
+  wormholeWhiteoutStartedAt = -Infinity;
+  wormholeWhiteoutOverlay.setAttribute("aria-hidden", "true");
   startWormholeFall();
+}
+
+function updateWormholeWhiteoutCamera(delta: number) {
+  cameraObstructionLift = 0;
+  world.root.visible = false;
+  playerRig.visual.visible = false;
+  if (scene.background instanceof THREE.Color) scene.background.set(0x000000);
+  if (scene.fog instanceof THREE.FogExp2) {
+    scene.fog.color.set(0x000003);
+    scene.fog.density = 0.00015;
+  }
+  const progress = wormholeWhiteoutStartedAt === -Infinity
+    ? 0
+    : THREE.MathUtils.clamp((elapsedTime - wormholeWhiteoutStartedAt) / WORMHOLE_WHITEOUT_SECONDS, 0, 1);
+  const previewProgress = THREE.MathUtils.lerp(0.004, 0.075, THREE.MathUtils.smoothstep(progress, 0.28, 1));
+  updateWormholeFallVisual(previewProgress, new THREE.Vector2(), delta);
+}
+
+function updateWormholeWhiteoutOverlay(progress: number) {
+  const scatter = THREE.MathUtils.smoothstep(progress, 0.22, 1);
+  const hazeOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.36, 0.98);
+  const captionOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.2, 0.78);
+  wormholeWhiteoutOverlay.style.setProperty("--wormhole-whiteout-opacity", hazeOpacity.toFixed(3));
+  wormholeWhiteoutCaption.style.opacity = captionOpacity.toFixed(3);
+  const pulse = 1 + Math.sin(elapsedTime * 16) * 0.025;
+  for (const particle of wormholeWhiteoutParticles) {
+    const x = particle.startX + particle.driftX * scatter;
+    const y = particle.startY + particle.driftY * scatter;
+    const scale = Math.max(0.05, (1 - particle.shrink * scatter) * pulse);
+    const opacity = particle.opacity * Math.pow(1 - scatter, 1.35);
+    particle.element.style.transform = `translate(-50%, -50%) translate(${x.toFixed(2)}vw, ${y.toFixed(2)}vh) scale(${scale.toFixed(3)})`;
+    particle.element.style.opacity = opacity.toFixed(3);
+  }
 }
 
 function startWormholeFall() {
@@ -4642,6 +4738,11 @@ function wormholeFallSpeedFactor(progress: number) {
   const organicRamp = THREE.MathUtils.smoothstep(progress, 0.02, WORMHOLE_ORGANIC_RAMP_END);
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.56, WORMHOLE_ORGANIC_RAMP_END);
   return THREE.MathUtils.lerp(WORMHOLE_INITIAL_SPEED_FACTOR, 2.85, organicRamp) + finalRush * 1.15;
+}
+
+function wormholeDepthVisualSpeedMultiplier(depth: number) {
+  if (depth < 0) return THREE.MathUtils.lerp(1, 1.5, THREE.MathUtils.clamp(-depth, 0, 1));
+  return THREE.MathUtils.lerp(1, 0.5, THREE.MathUtils.clamp(depth, 0, 1));
 }
 
 function setWormholeFallPaused(paused: boolean) {
@@ -5261,7 +5362,9 @@ function updateWormholeCamera(delta: number) {
     playerRig.visual.visible = false;
   } else {
     const distanceT = THREE.MathUtils.smoothstep(progress, 0, 0.68);
-    const cameraDolly = THREE.MathUtils.lerp(1.43, 0.77, (depth + 1) / 2);
+    const forwardDepth = THREE.MathUtils.clamp(-depth, 0, 1);
+    const backDepth = THREE.MathUtils.clamp(depth, 0, 1);
+    const cameraDolly = THREE.MathUtils.lerp(1, 1.55, forwardDepth) * THREE.MathUtils.lerp(1, 1 - 0.41 * WORMHOLE_DEPTH_BACK_DOLLY_MULTIPLIER, backDepth);
     const desired = player.position
       .clone()
       .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT) * cameraDolly)
@@ -5284,7 +5387,11 @@ function updateWormholeCamera(delta: number) {
 function updateWormholePlayerPose(delta: number) {
   const targetRotation = wormholeFall ? -Math.PI / 2 : 0;
   playerRig.visual.rotation.x = THREE.MathUtils.lerp(playerRig.visual.rotation.x, targetRotation, 1 - Math.pow(0.0004, delta));
-  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * WORMHOLE_PLAYER_SCALE_MULTIPLIER : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
+  const depth = wormholeFall?.depth ?? 0;
+  const perspectiveScale = depth < 0
+    ? THREE.MathUtils.lerp(1, 0.7, THREE.MathUtils.clamp(-depth, 0, 1))
+    : THREE.MathUtils.lerp(1, 1.3, THREE.MathUtils.clamp(depth, 0, 1));
+  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * WORMHOLE_PLAYER_SCALE_MULTIPLIER * perspectiveScale : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
   if (wormholeFall) {
     playerRig.visual.position.y = 1.05 + Math.sin(elapsedTime * 9.5) * 0.035;
     playerRig.leftArm.rotation.x = 0.42 + Math.sin(elapsedTime * 6.7) * 0.04;
@@ -5315,6 +5422,11 @@ function updateCamera(delta: number) {
 
   if (wormholeFall) {
     updateWormholeCamera(delta);
+    return;
+  }
+
+  if (isWormholeWhiteoutActive()) {
+    updateWormholeWhiteoutCamera(delta);
     return;
   }
 
@@ -5775,7 +5887,7 @@ function buildInteractionActions() {
   }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
-  if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
+  if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看美好瞬间") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
   if (activeAncientPortal) {
     actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
@@ -5850,6 +5962,7 @@ function updateInteractionPrompts() {
 
 function singleInteractionPromptText(action: InteractionAction) {
   if (isMotherCallInfoAction(action)) return action.label;
+  if (action.id === "photoWall") return localizeText("这里保存着你拍下的火星瞬间，按 E 查看。");
   if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
   return `E ${action.label}`;
 }
