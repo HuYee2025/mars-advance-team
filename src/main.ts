@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
-import wormholeSwirlGeneratedUrl from "./assets/wormhole-swirl-generated.webp?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
@@ -53,7 +52,9 @@ type InteractionAction = {
     | "elevator"
     | "habitat"
     | "greenhouse"
+    | "ancientPortal"
     | "fufu"
+    | "footballPickup"
     | "robot"
     | "oxygenSupply"
     | "motherCallReject"
@@ -77,11 +78,21 @@ type OxygenSupplyPoint = {
 
 type WormholeFallState = {
   startedAt: number;
+  elapsed: number;
+  paused: boolean;
   lastTriggerAt: number;
   drift: THREE.Vector2;
   velocity: THREE.Vector2;
   spawnNormal: THREE.Vector3;
   spawnForward: THREE.Vector3;
+};
+
+type WormholeOrganicSegment = {
+  group: THREE.Group;
+  z: number;
+  seed: number;
+  baseRotation: number;
+  twist: number;
 };
 
 type JetpackSource = "temporary" | "equipment" | null;
@@ -193,6 +204,11 @@ const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
 const RENDER_PIXEL_RATIO_LIMIT = 1.25;
+const WORMHOLE_ORGANIC_SEGMENT_COUNT = 42;
+const WORMHOLE_ORGANIC_SEGMENT_SPACING = 2.15;
+const WORMHOLE_ORGANIC_FRONT_Z = -8.8;
+const WORMHOLE_ORGANIC_LOOP_LENGTH = WORMHOLE_ORGANIC_SEGMENT_COUNT * WORMHOLE_ORGANIC_SEGMENT_SPACING;
+const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP_LENGTH;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
 renderer.setPixelRatio(renderPixelRatio());
@@ -257,10 +273,16 @@ const WORMHOLE_DRIFT_CENTER_PULL = 8.2;
 const WORMHOLE_DRIFT_DAMPING = 7.4;
 const WORMHOLE_TRIGGER_COOLDOWN = 6;
 const WORMHOLE_TRIGGER_STRENGTH = 0.12;
+const WORMHOLE_ORGANIC_RAMP_END = 0.66;
+const WORMHOLE_INITIAL_SPEED_FACTOR = 0.42;
+const WORMHOLE_PLAYER_SCALE_MULTIPLIER = 0.43;
+const WORMHOLE_DRIFT_VISUAL_MULTIPLIER = 2;
+const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.62;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
 const SUIT_OXYGEN_MAX = 100;
 const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.294;
 const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.5;
+const FUFU_OXYGEN_DRAIN_MULTIPLIER = 0.75;
 const JETPACK_MAX_ENERGY = 100;
 const JETPACK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * 1.25;
 const JETPACK_RECOVERY_SECONDS = 10;
@@ -282,6 +304,12 @@ const SCORE_HIDDEN_DISCOVERY = 30;
 const SCORE_ALL_BUILDINGS_EXPLORED = 100;
 const SCORE_FUNNY_DEFAULT = 10;
 const SCORE_FUNNY_PENALTY = -10;
+const SCORE_FUFU_RESCUE = SCORE_SIDE_TASK;
+const ROVER_RIDE_COST_COINS = 10;
+const SCORE_ROVER_RIDE = 10;
+const ANCIENT_PORTAL_COST_COINS = 50;
+const SCORE_WORMHOLE_TRAVERSAL = 200;
+const ANCIENT_PORTAL_ACTIVE_SECONDS = 28.5;
 const ELEVATOR_FOOT_CLEARANCE = 0.045;
 const CAMERA_OBSTRUCTION_MARGIN = 0.9;
 const CAMERA_OBSTRUCTION_MAX_LIFT = 7.4;
@@ -303,6 +331,9 @@ const FOOTBALL_GOAL_HEIGHT = 2.25;
 const FOOTBALL_GOAL_DEPTH = 1.35;
 const FOOTBALL_GOAL_SAFE_MARGIN = 5.4;
 const FOOTBALL_GOAL_COOLDOWN_SECONDS = 1.2;
+const FOOTBALL_PICKUP_RADIUS = 2.4;
+const FOOTBALL_CARRY_FORWARD_DISTANCE = 1.35;
+const FOOTBALL_CARRY_ALTITUDE = FOOTBALL_REST_ALTITUDE + 1.05;
 const SCORE_FOOTBALL_GOAL = 100;
 const COIN_GROUP_COUNT = 3;
 const COIN_GROUP_SIZE = 10;
@@ -315,6 +346,7 @@ const ROVER_RIDE_PROMPT_RADIUS = 5.4;
 const ROVER_RIDE_SEAT_HEIGHT = 2.28;
 const ROVER_RIDE_EXIT_DISTANCE = 4.7;
 const MYSTERY_CODE = "HUYEE";
+const MONEY_CODE = "MONEY";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
@@ -944,6 +976,9 @@ const runtimeEnglishTexts: Record<string, string> = {
   "居住舱舱门": "Habitat Hatch",
   "点击 ENTER BASE 进入《火星先遣队》。": "Click ENTER BASE to enter Mars Advance Team.",
   "火星足球进球": "Mars football goal",
+  "搭便车": "Hitch ride",
+  "找到福福": "Found Fufu",
+  "拾取足球": "Pick up football",
   "近火流星": "Near-Mars Meteor",
   "安抚 福福": "Comfort Fufu",
   "尚未获得。去黑色方碑处取得它。": "Not acquired yet. Retrieve it from the Black Monolith.",
@@ -994,7 +1029,22 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["未知物体", "Unknown object"],
   ["未知智能体", "Unknown intelligence"],
   ["福福", "Fufu"],
+  ["找到福福", "Found Fufu"],
+  ["喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。生命支持系统同步福福体征后，氧气消耗降低25%。", "Meow. It crawls out from beside the wreck insulation and circles your boots. Steve marks it: unregistered small lifeform. Run an isolation scan in the medical bay first. After syncing Fufu's vitals, life support reduces oxygen consumption by 25%."],
   ["火星足球", "Mars Football"],
+  ["门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", "The endless structure inside the arch swallows you. Mars becomes a red point in the distance."],
+  ["黑洞下落暂停。按 Q 继续。", "Black-hole descent paused. Press Q to continue."],
+  ["黑洞继续下落。", "Black-hole descent resumed."],
+  ["激活时空之门（50金币）", "Activate time gate (50 coins)"],
+  ["金币不足，无法开启时空之门。需要 50 金币。", "Not enough coins. The time gate needs 50 coins."],
+  ["已支付 50 金币。时空之门已开启。", "Paid 50 coins. The time gate is open."],
+  ["穿越时空之门", "Time-gate traversal"],
+  ["搭便车", "Hitch ride"],
+  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
+  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
+  ["拾取足球", "Pick up football"],
+  ["已拾取。按 Q 放下。", "Picked up. Press Q to put it down."],
+  ["已放下。", "Put down."],
   ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
   ["火星足球进球", "Mars football goal"],
   ["远古巨树拱门实体", "Ancient Tree Arch body"],
@@ -1109,7 +1159,9 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["跳", "Jump"],
   ["要不要搭便车？", "Need a ride?"],
   ["下车", "Get off"],
-  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press E anytime to get off."],
+  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
+  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
+  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
   ["已下车。", "You got off."],
   ["主体", "Main Body"],
   ["升降梯塔", "Elevator Tower"],
@@ -1176,15 +1228,21 @@ let rocketDoorOpen = false;
 let insideRocket = false;
 let stormStrength = 0;
 let activeGreenhouseDoor: GreenhouseDoorControl | null = null;
+let activeAncientPortal = false;
 let activeRobot: THREE.Group | null = null;
 let activeFufu = false;
+let activeFootball = false;
 let activeOxygenSupply: string | null = null;
 let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
 let staminaWarningShown = false;
 let fufuRescued = false;
+let footballCarried = false;
 let mysteryCodeProgress = "";
+let moneyCodeProgress = "";
+let moneyCheatCoinsRemaining = 0;
+let moneyCheatTimer: ReturnType<typeof window.setInterval> | null = null;
 let mobileFlightCodeProgress = "";
 let flightModeEnabled = false;
 let jetpackUnlocked = false;
@@ -1693,7 +1751,7 @@ function createWormholeFallVisual() {
 
   const veilMaterial = new THREE.SpriteMaterial({
     map: createWormholeVeilTexture(),
-    color: 0x0a1c46,
+    color: 0xf1e4c8,
     transparent: true,
     opacity: 0,
     depthWrite: false,
@@ -1706,39 +1764,9 @@ function createWormholeFallVisual() {
   veil.renderOrder = 29;
   group.add(veil);
 
-  const swirlMaterial = new THREE.SpriteMaterial({
-    map: createWormholeGeneratedTexture(),
-    color: 0x82e8ff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
-  const swirl = new THREE.Sprite(swirlMaterial);
-  swirl.position.set(0, 0, -82);
-  swirl.scale.set(190, 132, 1);
-  swirl.renderOrder = 29;
-  group.add(swirl);
-
-  const tunnelRingMaterials = [0x7cf8ff, 0x2f8cff, 0xff4fd8].map((color, index) => new THREE.SpriteMaterial({
-    map: createWormholeRingTexture(),
-    color,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-    rotation: index * 0.7,
-  }));
-  const tunnelRings = tunnelRingMaterials.map((material, index) => {
-    const ring = new THREE.Sprite(material);
-    ring.position.set(0, 0, -58 - index * 42);
-    ring.scale.setScalar(46 + index * 34);
-    ring.renderOrder = 30;
-    group.add(ring);
-    return ring;
-  });
+  const organicTunnel = createWormholeOrganicTunnel();
+  organicTunnel.group.renderOrder = 30;
+  group.add(organicTunnel.group);
 
   return {
     group,
@@ -1750,11 +1778,176 @@ function createWormholeFallVisual() {
     mars,
     marsMaterial,
     veilMaterial,
-    swirl,
-    swirlMaterial,
-    tunnelRings,
-    tunnelRingMaterials,
+    organicTunnel: organicTunnel.group,
+    organicSegments: organicTunnel.segments,
+    organicMaterials: organicTunnel.materials,
   };
+}
+
+function createWormholeOrganicTunnel() {
+  const group = new THREE.Group();
+  group.name = "Organic loop tunnel";
+  group.visible = false;
+
+  const materials = [
+    createOrganicTunnelMaterial(0xe8dfca, 0.68, 0.04, 1),
+    createOrganicTunnelMaterial(0xb9b29d, 0.84, 0.02, 0.92),
+    createOrganicTunnelMaterial(0x151511, 0.9, 0.12, 0.94),
+    createOrganicTunnelMaterial(0x2f3028, 0.78, 0.18, 0.78),
+    createOrganicTunnelMaterial(0xf8f2df, 0.42, 0.08, 1),
+  ];
+  materials[4].emissive.set(0x342d20);
+
+  const geometries = {
+    rib: new THREE.TorusGeometry(6.85, 0.085, 7, 128),
+    innerRib: new THREE.TorusGeometry(4.05, 0.052, 6, 96),
+    panel: new THREE.BoxGeometry(1, 1, 1),
+    inset: new THREE.BoxGeometry(1, 1, 1),
+    strut: new THREE.BoxGeometry(1, 1, 1),
+    tooth: new THREE.BoxGeometry(1, 1, 1),
+  };
+
+  const segments = Array.from({ length: WORMHOLE_ORGANIC_SEGMENT_COUNT }, (_, index) => {
+    const segment = createWormholeOrganicSegment(index, geometries, materials);
+    group.add(segment.group);
+    return segment;
+  });
+
+  return { group, segments, materials };
+}
+
+function createOrganicTunnelMaterial(color: number, roughness: number, metalness: number, baseOpacity: number) {
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness,
+    transparent: true,
+    opacity: 0,
+    depthWrite: true,
+  });
+  material.userData.baseOpacity = baseOpacity;
+  return material;
+}
+
+function createWormholeOrganicSegment(
+  index: number,
+  geometries: {
+    rib: THREE.BufferGeometry;
+    innerRib: THREE.BufferGeometry;
+    panel: THREE.BufferGeometry;
+    inset: THREE.BufferGeometry;
+    strut: THREE.BufferGeometry;
+    tooth: THREE.BufferGeometry;
+  },
+  materials: THREE.MeshStandardMaterial[],
+): WormholeOrganicSegment {
+  const group = new THREE.Group();
+  const seed = index * 19.73 + 3.1;
+  const z = WORMHOLE_ORGANIC_FRONT_Z - index * WORMHOLE_ORGANIC_SEGMENT_SPACING;
+  const baseRotation = seededNoise(seed, 0.37) * Math.PI * 2;
+  const radiusPulse = 0.72 + seededNoise(seed, 0.4) * 0.7;
+  const ovalX = 1 + (seededNoise(seed, 1.2) - 0.5) * 0.16;
+  const ovalY = 1 + (seededNoise(seed, 2.2) - 0.5) * 0.18;
+
+  const rib = new THREE.Mesh(geometries.rib, index % 4 === 0 ? materials[4] : materials[1]);
+  rib.scale.set(ovalX * (1 + radiusPulse * 0.025), ovalY, 1);
+  rib.rotation.z = baseRotation * 0.35;
+  group.add(rib);
+
+  if (index % 2 === 0) {
+    const innerRib = new THREE.Mesh(geometries.innerRib, materials[2]);
+    innerRib.position.z = -0.18;
+    innerRib.scale.set(ovalY * 1.06, ovalX * 0.96, 1);
+    innerRib.rotation.z = baseRotation * -0.52;
+    group.add(innerRib);
+  }
+
+  const panelCount = 10 + Math.floor(seededNoise(seed, 3.6) * 6);
+  for (let i = 0; i < panelCount; i += 1) {
+    const localSeed = seed + i * 5.217;
+    const angle = baseRotation + (i / panelCount) * Math.PI * 2 + (seededNoise(localSeed, 0.1) - 0.5) * 0.08;
+    const radial = 5.9 + seededNoise(localSeed, 1) * 2.05;
+    const tangential = 0.54 + seededNoise(localSeed, 2) * 1.2;
+    const depth = 0.32 + seededNoise(localSeed, 3) * 0.94;
+    const height = 0.16 + seededNoise(localSeed, 4) * 0.54;
+    const x = Math.cos(angle) * radial * ovalX;
+    const y = Math.sin(angle) * radial * ovalY;
+    const material = seededNoise(localSeed, 5) > 0.42 ? materials[0] : materials[2];
+
+    const panel = createWormholeOrganicBlock(
+      geometries.panel,
+      material,
+      new THREE.Vector3(x, y, (seededNoise(localSeed, 6) - 0.5) * 0.44),
+      angle,
+      new THREE.Vector3(height, tangential, depth),
+    );
+    panel.rotation.x = (seededNoise(localSeed, 7) - 0.5) * 0.15;
+    panel.rotation.y = (seededNoise(localSeed, 8) - 0.5) * 0.18;
+    group.add(panel);
+
+    if (seededNoise(localSeed, 9) > 0.36) {
+      const insetRadius = radial - 0.32 - seededNoise(localSeed, 10) * 0.55;
+      group.add(createWormholeOrganicBlock(
+        geometries.inset,
+        seededNoise(localSeed, 11) > 0.58 ? materials[3] : materials[2],
+        new THREE.Vector3(Math.cos(angle) * insetRadius * ovalX, Math.sin(angle) * insetRadius * ovalY, 0.27),
+        angle,
+        new THREE.Vector3(0.05, tangential * 0.54, 0.08),
+      ));
+    }
+
+    if (i % 3 === 0) {
+      const strutRadius = 4.78 + seededNoise(localSeed, 12) * 0.65;
+      const strut = createWormholeOrganicBlock(
+        geometries.strut,
+        materials[3],
+        new THREE.Vector3(Math.cos(angle) * strutRadius * ovalX, Math.sin(angle) * strutRadius * ovalY, -0.18),
+        angle + Math.PI * 0.5,
+        new THREE.Vector3(0.035, 0.96 + seededNoise(localSeed, 13) * 1.52, 0.04),
+      );
+      strut.rotation.y = 0.2 + seededNoise(localSeed, 14) * 0.38;
+      group.add(strut);
+    }
+  }
+
+  const toothCount = 7 + Math.floor(seededNoise(seed, 20.4) * 5);
+  for (let i = 0; i < toothCount; i += 1) {
+    const localSeed = seed + i * 9.33;
+    const angle = baseRotation * 1.7 + (i / toothCount) * Math.PI * 2;
+    const radius = 3.12 + seededNoise(localSeed, 1) * 0.84;
+    const tooth = createWormholeOrganicBlock(
+      geometries.tooth,
+      seededNoise(localSeed, 2) > 0.52 ? materials[0] : materials[2],
+      new THREE.Vector3(Math.cos(angle) * radius * ovalX, Math.sin(angle) * radius * ovalY, 0.08),
+      angle,
+      new THREE.Vector3(0.22 + seededNoise(localSeed, 3) * 0.48, 0.1, 0.48 + seededNoise(localSeed, 4) * 0.48),
+    );
+    tooth.rotation.x = Math.PI * 0.5 + (seededNoise(localSeed, 5) - 0.5) * 0.14;
+    group.add(tooth);
+  }
+
+  group.position.z = z;
+  return {
+    group,
+    z,
+    seed,
+    baseRotation,
+    twist: (seededNoise(seed, 40.1) - 0.5) * 1.8,
+  };
+}
+
+function createWormholeOrganicBlock(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  position: THREE.Vector3,
+  rotationZ: number,
+  scale: THREE.Vector3,
+) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.copy(position);
+  mesh.rotation.z = rotationZ;
+  mesh.scale.copy(scale);
+  return mesh;
 }
 
 function createWormholeVoidTexture() {
@@ -1892,133 +2085,14 @@ function createWormholeVeilTexture() {
   return texture;
 }
 
-function createWormholeGeneratedTexture() {
-  const texture = new THREE.TextureLoader().load(wormholeSwirlGeneratedUrl);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function createWormholeSwirlTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 1024;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.clearRect(0, 0, 1024, 1024);
-    const center = 512;
-    const bg = ctx.createRadialGradient(center, center, 34, center, center, 504);
-    bg.addColorStop(0, "rgba(0,0,0,1)");
-    bg.addColorStop(0.18, "rgba(0,6,18,0.98)");
-    bg.addColorStop(0.46, "rgba(10,80,130,0.54)");
-    bg.addColorStop(0.76, "rgba(18,118,170,0.36)");
-    bg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, 1024, 1024);
-
-    ctx.globalCompositeOperation = "lighter";
-    for (let i = 0; i < 860; i += 1) {
-      const seed = seededNoise(i, 11.2);
-      const angle = seededNoise(i, 8.7) * Math.PI * 2;
-      const radius = 70 + Math.pow(seededNoise(i, 3.3), 0.7) * 430;
-      const x = center + Math.cos(angle) * radius;
-      const y = center + Math.sin(angle) * radius * 0.86;
-      const size = 0.8 + seed * 3.2;
-      ctx.fillStyle = `rgba(180,238,255,${0.18 + seed * 0.42})`;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    for (let i = 0; i < 360; i += 1) {
-      const seed = seededNoise(i, 31.7);
-      const arm = i % 6;
-      const t = i / 360;
-      const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 6.6 + seed * 0.55;
-      const radius = 58 + t * 418;
-      const x = center + Math.cos(angle) * radius;
-      const y = center + Math.sin(angle) * radius * 0.82;
-      const size = 3 + seed * 17 + t * 14;
-      const dot = ctx.createRadialGradient(x, y, 0, x, y, size);
-      dot.addColorStop(0, `rgba(160,235,255,${0.14 + seed * 0.26})`);
-      dot.addColorStop(0.46, `rgba(45,150,220,${0.08 + seed * 0.16})`);
-      dot.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = dot;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    for (let arm = 0; arm < 6; arm += 1) {
-      ctx.strokeStyle = arm % 2 === 0 ? "rgba(105,220,255,0.34)" : "rgba(85,120,255,0.22)";
-      ctx.lineWidth = arm % 2 === 0 ? 15 : 8;
-      ctx.beginPath();
-      for (let step = 0; step < 150; step += 1) {
-        const t = step / 149;
-        const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 5.4;
-        const radius = 46 + t * 424;
-        const x = center + Math.cos(angle) * radius;
-        const y = center + Math.sin(angle) * radius * 0.84;
-        if (step === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-
-    ctx.globalCompositeOperation = "source-over";
-    const core = ctx.createRadialGradient(center, center, 22, center, center, 210);
-    core.addColorStop(0, "rgba(0,0,0,1)");
-    core.addColorStop(0.58, "rgba(0,0,0,0.72)");
-    core.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, 1024, 1024);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function createWormholeRingTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.clearRect(0, 0, 512, 512);
-    const center = 256;
-    const rings = [
-      { radius: 138, alpha: 0.9, width: 10 },
-      { radius: 162, alpha: 0.48, width: 6 },
-      { radius: 198, alpha: 0.34, width: 4 },
-    ];
-    for (const ring of rings) {
-      const gradient = ctx.createRadialGradient(center, center, ring.radius - ring.width * 2, center, center, ring.radius + ring.width * 2);
-      gradient.addColorStop(0, "rgba(255,255,255,0)");
-      gradient.addColorStop(0.42, `rgba(255,255,255,${ring.alpha})`);
-      gradient.addColorStop(0.58, `rgba(255,255,255,${ring.alpha * 0.82})`);
-      gradient.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(center, center, ring.radius + ring.width * 3, 0, Math.PI * 2);
-      ctx.arc(center, center, ring.radius - ring.width * 3, 0, Math.PI * 2, true);
-      ctx.fill();
-    }
-    const core = ctx.createRadialGradient(center, center, 4, center, center, 96);
-    core.addColorStop(0, "rgba(0,0,0,0.94)");
-    core.addColorStop(0.38, "rgba(0,0,0,0.64)");
-    core.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, 512, 512);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta: number) {
   wormholeVisual.group.visible = true;
   wormholeVisual.group.position.copy(camera.position);
   wormholeVisual.group.quaternion.copy(camera.quaternion);
 
-  const fallSeconds = wormholeFall ? elapsedTime - wormholeFall.startedAt : progress * WORMHOLE_FALL_DURATION;
+  const paused = Boolean(wormholeFall?.paused);
+  const fallSeconds = wormholeFall ? wormholeElapsed() : progress * WORMHOLE_FALL_DURATION;
+  const fallSpeedFactor = paused ? 0 : wormholeFallSpeedFactor(progress);
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
   const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
   const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
@@ -2034,7 +2108,7 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     const baseY = wormholeVisual.particleSeeds[seedIndex + 1];
     const seedZ = wormholeVisual.particleSeeds[seedIndex + 2];
     const speed = wormholeVisual.particleSeeds[seedIndex + 3];
-    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2)) % wrapDistance + wrapDistance) % wrapDistance;
+    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2) * Math.max(0.22, wormholeFallSpeedFactor(progress))) % wrapDistance + wrapDistance) % wrapDistance;
     const z = -10 - zTravel;
     const depthT = 1 - zTravel / wrapDistance;
     const floatPhase = elapsedTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
@@ -2048,28 +2122,29 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   particlePosition.needsUpdate = true;
 
   wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
-  wormholeVisual.swirl.position.set(drift.x * 0.035, drift.y * 0.035, -92);
-  wormholeVisual.swirl.scale.set(
-    THREE.MathUtils.lerp(190, 236, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
-    THREE.MathUtils.lerp(132, 164, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
-    1,
-  );
-  wormholeVisual.swirlMaterial.rotation = elapsedTime * 0.18;
-  wormholeVisual.swirlMaterial.opacity = THREE.MathUtils.lerp(0.84, 0.2, marsPhase) * (1 - THREE.MathUtils.smoothstep(progress, 0.84, 1));
 
-  wormholeVisual.tunnelRings.forEach((ring, index) => {
-    const ringPhase = (fallSeconds * (0.34 + index * 0.08) + index * 0.24) % 1;
-    const z = THREE.MathUtils.lerp(-34, -170, ringPhase);
-    const scale = THREE.MathUtils.lerp(38 + index * 8, 148 + index * 28, ringPhase);
-    ring.position.set(
-      Math.sin(fallSeconds * 0.52 + index) * 2.8 + drift.x * 0.03,
-      Math.cos(fallSeconds * 0.44 + index * 1.7) * 2.2 + drift.y * 0.03,
-      z,
-    );
-    ring.scale.setScalar(scale);
-    ring.material.rotation = elapsedTime * (0.08 + index * 0.035) + index * 0.9;
-    ring.material.opacity = (0.012 + index * 0.006 + pulse * 0.006) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
+  const organicOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.04) * (1 - THREE.MathUtils.smoothstep(progress, 0.62, 0.74));
+  wormholeVisual.organicTunnel.visible = organicOpacity > 0.01;
+  wormholeVisual.organicTunnel.position.set(drift.x * 0.035, drift.y * 0.035, 0);
+  wormholeVisual.organicMaterials.forEach((material) => {
+    material.opacity = Number(material.userData.baseOpacity ?? 1) * organicOpacity;
   });
+  for (const segment of wormholeVisual.organicSegments) {
+    segment.z += (3.2 + Math.sin(segment.seed) * 0.24) * fallSpeedFactor * delta;
+    if (segment.z > WORMHOLE_ORGANIC_FRONT_Z) {
+      segment.z -= WORMHOLE_ORGANIC_LOOP_LENGTH;
+      segment.baseRotation += Math.PI * 0.618;
+    }
+    segment.group.position.z = segment.z;
+    const depthFactor = THREE.MathUtils.clamp((segment.z - WORMHOLE_ORGANIC_BACK_Z) / WORMHOLE_ORGANIC_LOOP_LENGTH, 0, 1);
+    const segmentPulse = 1 + Math.sin(elapsedTime * 1.4 + segment.seed) * 0.016;
+    const nearScale = THREE.MathUtils.lerp(0.72, 1.18, depthFactor);
+    segment.group.scale.setScalar(nearScale * segmentPulse);
+    segment.group.rotation.z =
+      segment.baseRotation * 0.08 +
+      elapsedTime * 0.16 +
+      segment.twist * Math.sin(elapsedTime * 0.4 + segment.seed);
+  }
 
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.94, 1);
   const marsScale = THREE.MathUtils.lerp(0.12, 24, Math.pow(marsPhase, 1.7)) + finalRush * 134;
@@ -2522,6 +2597,14 @@ function bindInput() {
         toggleFirstThirdPersonCamera();
         return;
       }
+      if (event.code === "KeyE") {
+        setWormholeFallPaused(true);
+        return;
+      }
+      if (event.code === "KeyQ") {
+        setWormholeFallPaused(false);
+        return;
+      }
       if (isWormholeControlKey(event.code)) keyState.add(event.code);
       return;
     }
@@ -2546,11 +2629,6 @@ function bindInput() {
     }
     if (handleExpandedMapKey(event)) return;
     if (cameraMode && handleCameraModeKey(event)) return;
-    if (ridingRover && event.code === "KeyE") {
-      event.preventDefault();
-      exitRoverRide();
-      return;
-    }
     if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
@@ -2559,6 +2637,16 @@ function bindInput() {
     if (scaleGunAiming && isScaleGunAimControlKey(event.code)) {
       event.preventDefault();
       keyState.add(event.code);
+      return;
+    }
+    if (ridingRover && event.code === "KeyQ") {
+      event.preventDefault();
+      exitRoverRide();
+      return;
+    }
+    if (!ridingRover && footballCarried && event.code === "KeyQ") {
+      event.preventDefault();
+      dropFootball();
       return;
     }
     if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
@@ -2806,20 +2894,30 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
   const key = event.key.toUpperCase();
   if (!/^[A-Z]$/.test(key)) return false;
 
-  const next = `${mysteryCodeProgress}${key}`;
-  if (MYSTERY_CODE.startsWith(next)) {
-    mysteryCodeProgress = next;
+  const nextMystery = `${mysteryCodeProgress}${key}`;
+  const nextMoney = `${moneyCodeProgress}${key}`;
+  const matchesMystery = MYSTERY_CODE.startsWith(nextMystery);
+  const matchesMoney = MONEY_CODE.startsWith(nextMoney);
+
+  if (matchesMystery || matchesMoney) {
+    mysteryCodeProgress = matchesMystery ? nextMystery : "";
+    moneyCodeProgress = matchesMoney ? nextMoney : "";
     event.preventDefault();
     if (mysteryCodeProgress === MYSTERY_CODE) {
       mysteryCodeProgress = "";
       activateTemporaryJetpack();
     }
+    if (moneyCodeProgress === MONEY_CODE) {
+      moneyCodeProgress = "";
+      activateMoneyCheat();
+    }
     return true;
   }
 
   mysteryCodeProgress = MYSTERY_CODE.startsWith(key) ? key : "";
-  if (mysteryCodeProgress) event.preventDefault();
-  return mysteryCodeProgress.length > 0;
+  moneyCodeProgress = MONEY_CODE.startsWith(key) ? key : "";
+  if (mysteryCodeProgress || moneyCodeProgress) event.preventDefault();
+  return mysteryCodeProgress.length > 0 || moneyCodeProgress.length > 0;
 }
 
 function handleKeyboardFlightCodeKey(event: KeyboardEvent) {
@@ -3357,7 +3455,7 @@ function toggleScaleGunAiming(force?: boolean) {
 }
 
 function canUseScaleGun() {
-  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover;
+  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
 }
 
 function isScaleGunAimControlKey(code: string) {
@@ -3434,7 +3532,7 @@ function awardCamera() {
 }
 
 function canUseCamera() {
-  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !photoViewerOpen;
+  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !photoViewerOpen;
 }
 
 function toggleCameraMode(force?: boolean) {
@@ -3898,6 +3996,8 @@ function startGame() {
   exitConfirmOpen = false;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
+  resetAncientPortal();
   world.habitatDoor.open = false;
   world.habitatDoor.occupied = false;
   world.habitatDoor.doorPanels.visible = true;
@@ -3924,7 +4024,9 @@ function startGame() {
   clearScaleGunEffects();
   resetCameraSystem();
   resetPlayerToSpawn();
+  respawnFootball();
   resetFufu();
+  resetAncientPortal();
   resetStick();
   multiplayer.connect();
   startBackgroundMusic();
@@ -3968,6 +4070,7 @@ function returnToTitle() {
   clearMapHoldTimer();
   keyState.clear();
   resetPlayerToSpawn();
+  respawnFootball();
   resetFufu();
   resetStick();
   document.body.classList.remove("is-playing", "hud-collapsed", "mission-panel-open", "map-open", "map-expanded");
@@ -4035,7 +4138,7 @@ function animate() {
   updateJetpackEnergy(delta);
   updateCamera(delta);
   updateRovers(world.rovers, elapsedTime, world.colliders);
-  if (ridingRover) updateRoverRide(ridingRover);
+  if (ridingRover) updateRoverRide(ridingRover, 0);
   updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
@@ -4327,7 +4430,7 @@ function updatePlayer(delta: number) {
     return updateElevatorRide(delta, ridingElevator);
   }
   if (ridingRover) {
-    return updateRoverRide(ridingRover);
+    return updateRoverRide(ridingRover, delta);
   }
   if (cameraMode) {
     return updateCameraModePlayer(delta);
@@ -4420,6 +4523,8 @@ function startWormholeFall() {
   lastWormholeTriggerAt = elapsedTime;
   wormholeFall = {
     startedAt: elapsedTime,
+    elapsed: 0,
+    paused: false,
     lastTriggerAt: lastWormholeTriggerAt,
     drift: new THREE.Vector2(),
     velocity: new THREE.Vector2(),
@@ -4439,11 +4544,14 @@ function startWormholeFall() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
+  resetAncientPortal();
   disableActiveJetpackForRespawn();
   scaleGunAiming = false;
   cameraMode = false;
@@ -4457,12 +4565,35 @@ function startWormholeFall() {
   playerAltitudeOffset = 0;
   placePlayerOnPlanet();
   updateWormholeFallVisual(0, wormholeFall.drift, 0);
-  showDialogue("远古巨树拱门", "门洞中的蓝白光吞没了你。火星在远处变成一个红色的点。", 4.2);
+  showDialogue("远古巨树拱门", "门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", 4.2);
+}
+
+function wormholeElapsed() {
+  return wormholeFall ? wormholeFall.elapsed : 0;
+}
+
+function wormholeProgress() {
+  return THREE.MathUtils.clamp(wormholeElapsed() / WORMHOLE_FALL_DURATION, 0, 1);
+}
+
+function wormholeFallSpeedFactor(progress: number) {
+  const organicRamp = THREE.MathUtils.smoothstep(progress, 0.02, WORMHOLE_ORGANIC_RAMP_END);
+  const finalRush = THREE.MathUtils.smoothstep(progress, 0.56, WORMHOLE_ORGANIC_RAMP_END);
+  return THREE.MathUtils.lerp(WORMHOLE_INITIAL_SPEED_FACTOR, 2.85, organicRamp) + finalRush * 1.15;
+}
+
+function setWormholeFallPaused(paused: boolean) {
+  if (!wormholeFall || wormholeFall.paused === paused) return;
+  wormholeFall.paused = paused;
+  showDialogue("远古巨树拱门", paused ? "黑洞下落暂停。按 Q 继续。" : "黑洞继续下落。", 1.5);
 }
 
 function updateWormholeFall(delta: number) {
   if (!wormholeFall) return 0;
-  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  if (!wormholeFall.paused) {
+    wormholeFall.elapsed = Math.min(WORMHOLE_FALL_DURATION, wormholeFall.elapsed + delta);
+  }
+  const progress = wormholeProgress();
   const input = wormholeInputVector();
   const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
   const boundaryResistance = 1 - THREE.MathUtils.smoothstep(wormholeFall.drift.length(), WORMHOLE_DRIFT_LIMIT * 0.55, WORMHOLE_DRIFT_LIMIT);
@@ -4505,6 +4636,7 @@ function finishWormholeFall() {
   orbitYawOffset = 0;
   camera.fov = 54;
   camera.updateProjectionMatrix();
+  awardRepeatableScore(SCORE_WORMHOLE_TRAVERSAL, localizeText("穿越时空之门"));
   messageUntil = Math.max(messageUntil, performance.now() + 2200);
   showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
   window.setTimeout(() => {
@@ -4773,11 +4905,27 @@ function updateFootball(delta: number) {
     return;
   }
 
+  if (footballCarried) {
+    updateCarriedFootball(delta);
+    rememberRoverPositions();
+    return;
+  }
+
   applyPlayerFootballCollision();
   applyRoverFootballCollisions(delta);
   integrateFootballMotion(delta);
   resolveFootballStaticCollisions();
   checkFootballGoal();
+  updateFootballVisual(football, delta);
+}
+
+function updateCarriedFootball(delta: number) {
+  const carryNormal = playerNormal.clone().addScaledVector(playerForward, FOOTBALL_CARRY_FORWARD_DISTANCE / PLANET_RADIUS).normalize();
+  football.normal.copy(carryNormal);
+  football.velocity.set(0, 0, 0);
+  football.altitude = FOOTBALL_CARRY_ALTITUDE;
+  football.verticalVelocity = 0;
+  football.lastPlayerKickAt = elapsedTime;
   updateFootballVisual(football, delta);
 }
 
@@ -4944,6 +5092,8 @@ function checkFootballGoal() {
 }
 
 function respawnFootball() {
+  footballCarried = false;
+  activeFootball = false;
   football.normal.copy(planetNormal(FOOTBALL_SPAWN_X, FOOTBALL_SPAWN_Z, new THREE.Vector3()));
   football.velocity.set(0, 0, 0);
   football.altitude = FOOTBALL_REST_ALTITUDE;
@@ -4951,6 +5101,37 @@ function respawnFootball() {
   football.lastPlayerKickAt = elapsedTime + 0.35;
   football.ball.quaternion.identity();
   updateFootballVisual(football, 0);
+}
+
+function findActiveFootball() {
+  if (!started || footballCarried || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+    return false;
+  }
+  return surfaceDistanceBetween(playerNormal, football.normal) < FOOTBALL_PICKUP_RADIUS;
+}
+
+function pickupFootball() {
+  if (footballCarried || !activeFootball) return;
+  footballCarried = true;
+  activeFootball = false;
+  updateCarriedFootball(0);
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  showDialogue("火星足球", "已拾取。按 Q 放下。", 1.8);
+}
+
+function dropFootball(showMessage = true) {
+  if (!footballCarried) return;
+  const dropNormal = playerNormal.clone().addScaledVector(playerForward, FOOTBALL_CARRY_FORWARD_DISTANCE / PLANET_RADIUS).normalize();
+  footballCarried = false;
+  activeFootball = false;
+  football.normal.copy(dropNormal);
+  football.velocity.set(0, 0, 0);
+  football.altitude = FOOTBALL_REST_ALTITUDE;
+  football.verticalVelocity = 0;
+  football.lastPlayerKickAt = elapsedTime + 0.25;
+  updateFootballVisual(football, 0);
+  if (showMessage) showDialogue("火星足球", "已放下。", 1.4);
 }
 
 function rememberRoverPositions() {
@@ -4987,10 +5168,13 @@ function updateWormholeCamera(delta: number) {
   if (!wormholeFall) return;
   cameraObstructionLift = 0;
   world.root.visible = false;
-  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  const progress = wormholeProgress();
   const normal = playerNormal.clone();
   const right = playerForward.clone().cross(normal).normalize();
-  const driftOffset = right.clone().multiplyScalar(wormholeFall.drift.x * 0.24).addScaledVector(playerForward, wormholeFall.drift.y * 0.24);
+  const driftOffset = right
+    .clone()
+    .multiplyScalar(wormholeFall.drift.x * 0.24 * WORMHOLE_DRIFT_VISUAL_MULTIPLIER)
+    .addScaledVector(playerForward, wormholeFall.drift.y * 0.24 * WORMHOLE_DRIFT_VISUAL_MULTIPLIER);
   const isFirstPerson = cameraDistance <= 0.9;
 
   if (scene.background instanceof THREE.Color) {
@@ -5019,7 +5203,7 @@ function updateWormholeCamera(delta: number) {
     const lookTarget = player.position
       .clone()
       .addScaledVector(normal, THREE.MathUtils.lerp(0.72, 0.52, distanceT))
-      .addScaledVector(playerForward, 0.04)
+      .addScaledVector(playerForward, WORMHOLE_PLAYER_SCREEN_UP_OFFSET)
       .add(driftOffset.clone().multiplyScalar(1.18));
     const initialSnap = elapsedTime - wormholeFall.startedAt < 0.12;
     camera.position.lerp(desired, initialSnap ? 1 : 1 - Math.pow(0.00004, delta));
@@ -5034,7 +5218,7 @@ function updateWormholeCamera(delta: number) {
 function updateWormholePlayerPose(delta: number) {
   const targetRotation = wormholeFall ? -Math.PI / 2 : 0;
   playerRig.visual.rotation.x = THREE.MathUtils.lerp(playerRig.visual.rotation.x, targetRotation, 1 - Math.pow(0.0004, delta));
-  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * 1.42 : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
+  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * WORMHOLE_PLAYER_SCALE_MULTIPLIER : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
   if (wormholeFall) {
     playerRig.visual.position.y = 1.05 + Math.sin(elapsedTime * 9.5) * 0.035;
     playerRig.leftArm.rotation.x = 0.42 + Math.sin(elapsedTime * 6.7) * 0.04;
@@ -5193,6 +5377,9 @@ function resetPlayerToSpawn() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
+  activeFootball = false;
+  footballCarried = false;
   world.habitatDoor.occupied = false;
   world.habitatDoor.interiorScene.visible = false;
   setHabitatInteriorMode(false);
@@ -5225,6 +5412,8 @@ function respawnInsideHabitat() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeFootball = false;
+  footballCarried = false;
   insideGreenhouse = false;
   world.greenhouseDoor.occupied = false;
   world.greenhouseDoor.doorPanels.visible = true;
@@ -5422,8 +5611,10 @@ function updateMissionState() {
     activeElevator = null;
     activeHabitatDoor = null;
     activeGreenhouseDoor = null;
+    activeAncientPortal = false;
     activeRobot = null;
     activeFufu = false;
+    activeFootball = false;
     activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
@@ -5443,8 +5634,10 @@ function updateMissionState() {
     activeElevator = null;
     activeHabitatDoor = null;
     activeGreenhouseDoor = null;
+    activeAncientPortal = false;
     activeRobot = null;
     activeFufu = false;
+    activeFootball = false;
     activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
@@ -5466,8 +5659,10 @@ function updateMissionState() {
   activeElevator = findActiveElevator();
   activeHabitatDoor = findActiveHabitatDoor();
   activeGreenhouseDoor = findActiveGreenhouseDoor();
+  activeAncientPortal = findActiveAncientPortal();
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = ridingRover;
   let bestDistance = Infinity;
@@ -5490,6 +5685,7 @@ function updateMissionState() {
     awardBuildingExploration(activeExplorable);
   }
   activeFufu = findActiveFufu();
+  activeFootball = findActiveFootball();
   activeRobot = findActiveRobot();
   activeOxygenSupply = findActiveOxygenSupply();
   if (!activeRideRover) activeRideRover = findActiveRideRover();
@@ -5507,9 +5703,11 @@ function buildInteractionActions() {
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
   if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
+  if (activeAncientPortal) actions.push({ id: "ancientPortal", label: localizeText("激活时空之门（50金币）") });
   if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
+  if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
   if (pendingMotherCall) {
@@ -5534,11 +5732,13 @@ function interactionActionPriority(action: InteractionAction) {
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
+    ancientPortal: 1.2,
     hitchRide: 1.5,
     photoWall: 2,
     mission: 2,
     robot: 3,
     fufu: 3,
+    footballPickup: 3,
   };
   return priority[action.id];
 }
@@ -5572,6 +5772,7 @@ function updateInteractionPrompts() {
 
 function singleInteractionPromptText(action: InteractionAction) {
   if (isMotherCallInfoAction(action)) return action.label;
+  if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
   return `E ${action.label}`;
 }
 
@@ -5725,7 +5926,6 @@ function getInteractionChoiceSignature() {
 
 function interact() {
   if (ridingRover) {
-    exitRoverRide();
     return;
   }
   if (wormholeFall || isFlightActive()) return;
@@ -5765,12 +5965,20 @@ function executeSelectedInteraction() {
     else enterGreenhouse(activeGreenhouseDoor);
     return;
   }
+  if (action.id === "ancientPortal") {
+    activateAncientPortal();
+    return;
+  }
   if (action.id === "photoWall") {
     openPhotoViewer();
     return;
   }
   if (action.id === "fufu") {
     rescueFufu();
+    return;
+  }
+  if (action.id === "footballPickup") {
+    pickupFootball();
     return;
   }
   if (action.id === "robot" && activeRobot) {
@@ -5858,6 +6066,41 @@ function interactMission(interactable: Interactable) {
   }
 }
 
+function findActiveAncientPortal() {
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
+  if (!ancientTreeArchObject || isAncientPortalOpen()) return false;
+  const local = ancientTreeArchObject.worldToLocal(player.position.clone());
+  return Math.abs(local.x) < 68 && local.y > -20 && local.y < 124 && Math.abs(local.z) < 66;
+}
+
+function isAncientPortalOpen() {
+  const openedAt = Number(world.ancientTreePortal.userData.openedAt ?? -Infinity);
+  return elapsedTime - openedAt >= 0 && elapsedTime - openedAt < ANCIENT_PORTAL_ACTIVE_SECONDS;
+}
+
+function activateAncientPortal() {
+  if (!activeAncientPortal || isAncientPortalOpen()) return;
+  if (!spendCoins(ANCIENT_PORTAL_COST_COINS)) {
+    showDialogue("时空之门", "金币不足，无法开启时空之门。需要 50 金币。", 2.6);
+    pulseRewardReadout(coinReadout, true);
+    return;
+  }
+  world.ancientTreePortal.userData.openedAt = elapsedTime;
+  world.ancientTreePortal.userData.portalStrength = 0.2;
+  world.ancientTreePortal.visible = true;
+  activeAncientPortal = false;
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  showDialogue("时空之门", "已支付 50 金币。时空之门已开启。", 2.6);
+}
+
+function resetAncientPortal() {
+  world.ancientTreePortal.userData.openedAt = -Infinity;
+  world.ancientTreePortal.userData.portalStrength = 0;
+  world.ancientTreePortal.visible = false;
+  activeAncientPortal = false;
+}
+
 function findActiveFufu() {
   if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
   return fufu.position.distanceTo(player.position) < 3.4;
@@ -5868,7 +6111,8 @@ function rescueFufu() {
   activeFufu = false;
   fufuForward.copy(playerForward);
   fufuSideStep = "medical";
-  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。", 5.6);
+  awardTaskScore("side_fufu_rescue", "找到福福", SCORE_FUFU_RESCUE);
+  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。生命支持系统同步福福体征后，氧气消耗降低25%。", 6.4);
   setCurrentMissionText();
 }
 
@@ -5920,6 +6164,7 @@ function resetRunUiAfterRespawn() {
   activeGreenhouseDoor = null;
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
@@ -5955,7 +6200,8 @@ function updateSuitOxygen(delta: number) {
   if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
-  const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
+  const fufuOxygenBonus = fufuRescued ? FUFU_OXYGEN_DRAIN_MULTIPLIER : 1;
+  const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1) * fufuOxygenBonus;
   suitOxygen = Math.max(0, suitOxygen - oxygenDrain * delta);
   if (moving) {
     const staminaDrain = !grounded ? STAMINA_JUMP_DRAIN_PER_SECOND : sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_WALK_DRAIN_PER_SECOND;
@@ -6052,6 +6298,15 @@ function isRideableRover(rover: THREE.Group) {
 
 function enterRoverRide(rover: THREE.Group) {
   if (!isRideableRover(rover)) return;
+  if (coins < ROVER_RIDE_COST_COINS) {
+    showDialogue("车辆", "金币不足，搭便车需要 10 个金币。", 2.4);
+    pulseRewardReadout(coinReadout, true);
+    playPenaltySound();
+    return;
+  }
+  if (footballCarried) dropFootball(false);
+  if (!spendCoins(ROVER_RIDE_COST_COINS)) return;
+  awardRepeatableScore(SCORE_ROVER_RIDE, localizeText("搭便车"));
   ridingRover = rover;
   activeRideRover = rover;
   exitFrontCamera = null;
@@ -6063,10 +6318,10 @@ function enterRoverRide(rover: THREE.Group) {
   verticalVelocity = 0;
   grounded = true;
   setFirstPersonCamera();
-  updateRoverRide(rover);
+  updateRoverRide(rover, 0);
   closeTouchInteractionDrawer();
   interactionChoiceOpen = false;
-  showDialogue("车辆", "已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", 3.2);
+  showDialogue("车辆", "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", 3.2);
 }
 
 function exitRoverRide() {
@@ -6095,7 +6350,7 @@ function exitRoverRide() {
   showDialogue("车辆", "已下车。", 1.8);
 }
 
-function updateRoverRide(rover: THREE.Group) {
+function updateRoverRide(rover: THREE.Group, delta = 0) {
   if (!rover.parent || !isRideableRover(rover)) {
     ridingRover = null;
     activeRideRover = null;
@@ -6108,7 +6363,17 @@ function updateRoverRide(rover: THREE.Group) {
   const roverForward = new THREE.Vector3(0, 0, -1).transformDirection(rover.matrixWorld).projectOnPlane(roverUp);
   player.position.copy(seatWorld);
   playerNormal.copy(roverUp);
-  if (roverForward.lengthSq() > 0.000001) playerForward.copy(roverForward.normalize());
+  let fallbackForward = roverForward.lengthSq() > 0.000001 ? roverForward.normalize() : new THREE.Vector3(0, 0, -1).projectOnPlane(roverUp);
+  if (fallbackForward.lengthSq() < 0.000001) fallbackForward = new THREE.Vector3(1, 0, 0).projectOnPlane(roverUp);
+  fallbackForward.normalize();
+  playerForward.projectOnPlane(playerNormal);
+  if (playerForward.lengthSq() < 0.000001) playerForward.copy(fallbackForward);
+  else playerForward.normalize();
+  if (scaleGunAiming) {
+    updateScaleGunAimInput(delta);
+  } else {
+    updateRoverPassengerLook(delta);
+  }
   player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
   player.rotateY(headingFromForward(playerNormal, playerForward));
   playerVelocity.set(0, 0, 0);
@@ -6116,6 +6381,22 @@ function updateRoverRide(rover: THREE.Group) {
   verticalVelocity = 0;
   grounded = true;
   return 0;
+}
+
+function updateRoverPassengerLook(delta: number) {
+  let turnInput = 0;
+  if (keyState.has("KeyA") || keyState.has("ArrowLeft")) turnInput += 1;
+  if (keyState.has("KeyD") || keyState.has("ArrowRight")) turnInput -= 1;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(playerNormal, turnInput * 1.35 * delta).projectOnPlane(playerNormal).normalize();
+  }
+  if (cameraMode) return;
+  let pitchInput = 0;
+  if (keyState.has("KeyW") || keyState.has("ArrowUp")) pitchInput += 1;
+  if (keyState.has("KeyS") || keyState.has("ArrowDown")) pitchInput -= 1;
+  if (Math.abs(pitchInput) > 0.001) {
+    pitch = THREE.MathUtils.clamp(pitch + pitchInput * 0.72 * delta, 0.12, 0.92);
+  }
 }
 
 function findActiveGreenhouseDoor() {
@@ -6548,27 +6829,8 @@ function addLabel(landmark: Landmark): LabelAnchor {
 }
 
 function updateLabels() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
   labels.forEach((anchor) => {
-    const worldPosition = new THREE.Vector3();
-    anchor.object.getWorldPosition(worldPosition);
-    worldPosition.addScaledVector(worldPosition.clone().normalize(), 4.2);
-    const distance = worldPosition.distanceTo(player.position);
-    const projected = worldPosition.clone().project(camera);
-    const screenY = ((-projected.y + 1) / 2) * height;
-    const visible =
-      started &&
-      !(anchor.object === fufu && fufuRescued) &&
-      distance < anchor.distance &&
-      projected.z > -1 &&
-      projected.z < 1 &&
-      Math.abs(projected.x) < 1.15 &&
-      Math.abs(projected.y) < 1.15 &&
-      !(width < 560 && screenY < 170);
-    anchor.element.style.left = `${((projected.x + 1) / 2) * width}px`;
-    anchor.element.style.top = `${screenY}px`;
-    anchor.element.classList.toggle("is-visible", visible);
+    anchor.element.classList.remove("is-visible");
   });
 }
 
@@ -7255,6 +7517,33 @@ function awardCoins(amount: number) {
   pulseRewardReadout(coinReadout, false);
 }
 
+function activateMoneyCheat() {
+  moneyCheatCoinsRemaining += 100;
+  showRewardFloat(`+100 ${tr("reward.coins")}`, false);
+  playCoinDing();
+  if (moneyCheatTimer) return;
+  moneyCheatTimer = window.setInterval(() => {
+    if (moneyCheatCoinsRemaining <= 0) {
+      if (moneyCheatTimer) window.clearInterval(moneyCheatTimer);
+      moneyCheatTimer = null;
+      return;
+    }
+    moneyCheatCoinsRemaining -= 1;
+    awardCoins(1);
+    if (moneyCheatCoinsRemaining % 10 === 0) playCoinDing();
+  }, 10);
+}
+
+function spendCoins(amount: number) {
+  if (amount <= 0) return false;
+  if (coins < amount) return false;
+  coins -= amount;
+  updateRewardReadouts();
+  pulseRewardReadout(coinReadout, true);
+  showRewardFloat(`-${amount} ${tr("reward.coins")}`, true);
+  return true;
+}
+
 function updateRewardReadouts() {
   coinReadout.textContent = formatRewardCount(coins, "$");
   scoreReadout.textContent = scorePoints > 0 ? formatRewardCount(scorePoints, "0") : "0";
@@ -7742,6 +8031,11 @@ function resetQuestState() {
   elonDialogueIndex = 0;
   scorePoints = 0;
   coins = 0;
+  moneyCheatCoinsRemaining = 0;
+  if (moneyCheatTimer) {
+    window.clearInterval(moneyCheatTimer);
+    moneyCheatTimer = null;
+  }
   currentRank = "internPatrol";
   motherCallRetryAt = 0;
   pendingMotherCallQueuedAt = -Infinity;

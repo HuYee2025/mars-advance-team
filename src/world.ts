@@ -1986,12 +1986,12 @@ function getAncientTreePortalTexture() {
 }
 
 export function updateAncientTreePortal(portal: THREE.Group, elapsed: number) {
-  const cycleDuration = 180;
   const activeDuration = 28.5;
-  const cycle = elapsed % cycleDuration;
-  const active = cycle < activeDuration;
-  const fadeIn = THREE.MathUtils.smoothstep(cycle, 1.0, 5.4);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, activeDuration - 6.6, activeDuration);
+  const openedAt = Number(portal.userData.openedAt ?? -Infinity);
+  const activeAge = elapsed - openedAt;
+  const active = activeAge >= 0 && activeAge < activeDuration;
+  const fadeIn = THREE.MathUtils.smoothstep(activeAge, 0.2, 1.2);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(activeAge, activeDuration - 4.8, activeDuration);
   const strength = active ? Math.max(0, Math.min(fadeIn, fadeOut)) : 0;
   portal.userData.portalStrength = strength;
   portal.visible = strength > 0.01;
