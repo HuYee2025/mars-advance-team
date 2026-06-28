@@ -302,6 +302,7 @@ const WORMHOLE_WHITEOUT_PARTICLE_COUNT = 190;
 const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
 const WORMHOLE_WHITEOUT_SECONDS = 2;
 const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
+const FUFU_SURFACE_ALTITUDE = 0.13;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
 const SUIT_OXYGEN_MAX = 100;
 const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.294;
@@ -759,8 +760,8 @@ const exactEnglishTexts: Record<string, string> = {
   "太阳": "Sun",
   "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
   "02 车辆 运输车": "02 Vehicle Cargo Rover",
-  "NASA 火星车 Perseverance / Jezero Crater": "NASA Rover Perseverance / Jezero Crater",
-  "NASA 火星车 Perseverance": "NASA Rover Perseverance",
+  "NASA 机遇号火星车遗迹 / Meridiani Planum": "NASA Opportunity Rover Site / Meridiani Planum",
+  "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
   "坠毁飞船残骸": "Crashed ship wreckage",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
@@ -5637,7 +5638,7 @@ function resetFufu() {
   fufuNextWanderAt = 0;
   fufu.visible = true;
   fufuNormal.copy(world.fufuRescueSite.normal);
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, world.fufuRescueSite.yaw);
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, world.fufuRescueSite.yaw);
   fufuForward.copy(new THREE.Vector3(0, 0, -1).applyQuaternion(fufu.quaternion).projectOnPlane(fufuNormal).normalize());
   fufuRestForward.copy(fufuForward);
 }
@@ -5687,7 +5688,7 @@ function updateFufu(delta: number) {
   if (playerDistance > 28) {
     fufuNormal.copy(targetNormal);
     fufuForward.copy(playerForward);
-    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
     settleFufuAnimation(delta);
     return;
   }
@@ -5695,7 +5696,7 @@ function updateFufu(delta: number) {
   if (targetDistance < 1.15 && playerDistance < 7.5) {
     const relaxedForward = playerForward.clone().projectOnPlane(fufuNormal).normalize();
     turnFufuToward(relaxedForward, delta, 0.7);
-    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
     settleFufuAnimation(delta);
     return;
   }
@@ -5710,7 +5711,7 @@ function updateFufu(delta: number) {
   const stepAngle = Math.min((targetSpeed * delta) / PLANET_RADIUS, Math.acos(dot));
   fufuNormal.multiplyScalar(Math.cos(stepAngle)).addScaledVector(tangent, Math.sin(stepAngle)).normalize();
   turnFufuToward(tangent, delta, 1.8);
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
   fufuSpeed = THREE.MathUtils.lerp(fufuSpeed, targetSpeed, 1 - Math.pow(0.002, delta));
 }
 
@@ -5726,7 +5727,7 @@ function updateWaitingFufu(delta: number) {
     : fufuRestForward.clone().applyAxisAngle(fufuNormal, Math.sin(elapsedTime * 0.48) * 0.82 + Math.sin(elapsedTime * 1.05) * 0.16);
   if (lookDirection.lengthSq() > 0.000001) turnFufuToward(lookDirection.normalize(), delta, seesPlayer ? 1.2 : 0.48);
 
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
   settleFufuAnimation(delta);
 }
 
@@ -6358,7 +6359,7 @@ function resetAncientPortal() {
 
 function findActiveFufu() {
   if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
-  return fufu.position.distanceTo(player.position) < 3.4;
+  return fufu.position.distanceTo(player.position) < 2.6;
 }
 
 function rescueFufu() {
@@ -7355,7 +7356,7 @@ function mapTypeForLabel(label: string) {
 function mysteryDiscoveryIdForLabel(label: string) {
   if (label.includes("远古巨树拱门")) return ANCIENT_TREE_ARCH_DISCOVERY_ID;
   if (label.includes("黑色方碑")) return "monolith";
-  if (label.includes("NASA 火星车") || label.includes("Perseverance")) return `unknown:${label}`;
+  if (label.includes("机遇号火星车") || label.includes("Opportunity")) return `unknown:${label}`;
   if (label.includes("埃隆") || label.includes("Elon")) return `unknown:${label}`;
   return null;
 }
@@ -7724,10 +7725,10 @@ function awardExplorationScore(eventId: string, label: string, points = SCORE_BU
   awardScore(`explore:${eventId}`, points, label, "explore");
 }
 
-function awardHiddenDiscovery(eventId: string, label: string) {
+function awardHiddenDiscovery(eventId: string, label: string, points = SCORE_HIDDEN_DISCOVERY) {
   if (hiddenDiscoveries.has(eventId)) return;
   hiddenDiscoveries.add(eventId);
-  awardExplorationScore(`hidden:${eventId}`, tr("score.discovery", { label: localizeLabel(label) }), SCORE_HIDDEN_DISCOVERY);
+  awardExplorationScore(`hidden:${eventId}`, tr("score.discovery", { label: localizeLabel(label) }), points);
 }
 
 function awardFunnyScore(eventId: string, label: string, points = SCORE_FUNNY_DEFAULT) {
@@ -7902,7 +7903,7 @@ function awardColliderExploration(colliderLabel: string) {
 
 function updateHiddenDiscoveries() {
   if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) return;
-  const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number }> = [
+  const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number; points?: number }> = [
     { id: "monolith", label: "黑色方碑", object: world.monolith.object, radius: 22 },
   ];
   for (const [index, item] of world.unnumberedObjects.entries()) {
@@ -7913,13 +7914,14 @@ function updateHiddenDiscoveries() {
       radius: item.label ? 18 : 34,
     });
   }
-  const nasaRover = world.landmarks.find((landmark) => landmark.label.includes("NASA 火星车") || landmark.label.includes("Perseverance"));
+  const nasaRover = world.landmarks.find((landmark) => landmark.label.includes("机遇号火星车") || landmark.label.includes("Opportunity"));
   if (nasaRover) {
     targets.push({
       id: `unknown:${nasaRover.label}`,
       label: nasaRover.label,
       object: nasaRover.object,
       radius: 16,
+      points: 50,
     });
   }
   const ancientTreeArch = world.landmarks.find((landmark) => landmark.label.includes("远古巨树拱门"));
@@ -7938,7 +7940,7 @@ function updateHiddenDiscoveries() {
     if (hiddenDiscoveries.has(target.id)) continue;
     const position = new THREE.Vector3();
     target.object.getWorldPosition(position);
-    if (position.distanceTo(player.position) <= target.radius) awardHiddenDiscovery(target.id, target.label);
+    if (position.distanceTo(player.position) <= target.radius) awardHiddenDiscovery(target.id, target.label, target.points);
   }
 }
 

@@ -223,6 +223,7 @@ const VEHICLE_ROUTE_STOP_SECONDS = 30;
 const VEHICLE_STOP_ANGLE_THRESHOLD = 0.02;
 const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
 const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
+const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
@@ -381,7 +382,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     completed: false,
   });
 
-  const wreckNormal = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
+  const wreckNormal = CRASHED_SHIP_SITE_NORMAL.clone();
   const wreckX = (wreckNormal.x / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
   const wreckZ = (wreckNormal.z / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
   const wreckYaw = 0.52;
@@ -2365,17 +2366,17 @@ function createRovers(
 }
 
 function addNasaPerseveranceRover(parent: THREE.Group, colliders: CircleCollider[], landmarks: Landmark[]) {
-  const x = spread(78);
-  const z = spread(56);
-  const yaw = -0.64;
+  const x = expandWorldCoordinate(-200);
+  const z = expandWorldCoordinate(0);
+  const yaw = 1.08;
   const rover = createPerseveranceRover(0.82);
   rover.userData.dynamicMap = true;
   rover.userData.planetX = x;
   rover.userData.planetZ = z;
-  placeObjectOnPlanet(rover, x, z, 0.1, yaw);
+  placeObjectOnPlanet(rover, x, z, -0.16, yaw);
   parent.add(rover);
-  landmarks.push(landmark("NASA 火星车 Perseverance / Jezero Crater", rover, x, z, 30, 190));
-  colliders.push(circle(x, z, 2.2, "NASA 火星车 Perseverance"));
+  landmarks.push(landmark("NASA 机遇号火星车遗迹 / Meridiani Planum", rover, x, z, 30, 190));
+  colliders.push(circle(x, z, 2.2, "NASA 机遇号火星车遗迹"));
 }
 
 function createRover(size: number) {
@@ -3142,6 +3143,7 @@ function vehicleStopAnglesForGreatCircle(routeHeading: number) {
   return [
     nearestGreatCircleLoopAngle(vehicleAncientTreeStopNormal(), routeHeading),
     nearestGreatCircleLoopAngle(vehicleBaseTargetNormal(), routeHeading),
+    nearestGreatCircleLoopAngle(vehicleCrashedShipTargetNormal(), routeHeading),
   ];
 }
 
@@ -3161,6 +3163,10 @@ function routeAngleDistance(a: number, b: number) {
 
 function vehicleBaseTargetNormal() {
   return planetNormal(VEHICLE_BASE_TARGET_X, VEHICLE_BASE_TARGET_Z, new THREE.Vector3());
+}
+
+function vehicleCrashedShipTargetNormal() {
+  return CRASHED_SHIP_SITE_NORMAL.clone();
 }
 
 function vehicleAncientTreeStopNormal() {
