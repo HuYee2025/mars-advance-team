@@ -65,9 +65,7 @@ body {
   position: absolute;
   inset: 0;
   z-index: 20;
-  display: grid;
-  align-items: start;
-  justify-items: center;
+  display: block;
   padding: clamp(22px, 5vw, 64px);
   padding-top: clamp(132px, 24vh, 260px);
   pointer-events: auto;
@@ -97,8 +95,11 @@ body {
 }
 
 .title-copy {
-  position: relative;
-  width: min(620px, 100%);
+  position: absolute;
+  top: clamp(132px, 24vh, 260px);
+  left: 50%;
+  width: min(920px, calc(100vw - clamp(44px, 10vw, 128px)));
+  transform: translateX(-50%);
   display: grid;
   gap: 16px;
   justify-items: center;
@@ -106,14 +107,22 @@ body {
 }
 
 .title-copy h1 {
+  width: 100%;
   font-size: clamp(42px, 9vw, 96px);
   font-weight: 1200;
   line-height: 1.08;
+  text-align: center;
 }
 
 .title-copy h1 span {
   display: block;
   white-space: nowrap;
+  text-align: center;
+}
+
+html[lang="en-US"] .title-copy h1 {
+  max-width: min(100%, 1040px);
+  font-size: clamp(44px, 5.6vw, 96px);
 }
 
 html[lang="zh-CN"] .title-copy h1 {
@@ -2707,8 +2716,10 @@ body:not(.hud-collapsed) #hud-toggle,
 }
 
 @media (max-width: 520px) {
-  #title-screen {
-    align-items: center;
+  .title-copy {
+    top: clamp(172px, 24vh, 260px);
+    width: min(92vw, 420px);
+    transform: translateX(-50%);
   }
 
   .title-copy h1 {
@@ -2716,7 +2727,7 @@ body:not(.hud-collapsed) #hud-toggle,
   }
 
   html[lang="en-US"] .title-copy h1 {
-    width: min-content;
+    width: 100%;
     font-size: clamp(34px, 11vw, 46px);
     line-height: 1.02;
   }
@@ -2735,6 +2746,10 @@ body:not(.hud-collapsed) #hud-toggle,
 
   h1 {
     max-width: 8em;
+  }
+
+  .title-copy h1 {
+    max-width: none;
   }
 
   .status-grid dt {
