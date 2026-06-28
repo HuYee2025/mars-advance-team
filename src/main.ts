@@ -144,6 +144,7 @@ const mapRadar = must<HTMLDivElement>("#map-radar");
 const mapCompass = must<HTMLDivElement>("#map-compass");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
 const mapHeading = must<HTMLDivElement>("#map-heading");
+const fpsValue = must<HTMLElement>("#fps-value");
 const mapList = must<HTMLDivElement>("#map-list");
 const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
@@ -191,9 +192,10 @@ const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
 const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
+const RENDER_PIXEL_RATIO_LIMIT = 1.25;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+renderer.setPixelRatio(renderPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -585,13 +587,15 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.coin": "金币",
     "map.sun": "太阳",
     "map.headingLabel": "方位",
+    "perf.fpsAria": "信号延迟",
+    "perf.fpsLabel": "信号延迟",
     "interaction.title": "互动",
     "interaction.choose": "选择互动",
     "interaction.close": "收起",
     "interaction.count": "{count} 个可互动项",
     "info.title": "信息栏",
     "info.motherCall": "收到史蒂夫的一条信息，是否接收？",
-    "info.reject": "拒绝",
+    "info.reject": "稍后接收",
     "info.accept": "接收",
     "language.button": "English",
   },
@@ -655,13 +659,15 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.coin": "Coin",
     "map.sun": "Sun",
     "map.headingLabel": "HDG",
+    "perf.fpsAria": "Signal lag",
+    "perf.fpsLabel": "Signal Lag",
     "interaction.title": "Interact",
     "interaction.choose": "Choose Interaction",
     "interaction.close": "Close",
     "interaction.count": "{count} actions",
     "info.title": "Info",
     "info.motherCall": "Message from Steve. Receive it?",
-    "info.reject": "Reject",
+    "info.reject": "Receive Later",
     "info.accept": "Receive",
     "language.button": "简体中文",
   },
@@ -979,7 +985,7 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
   ["基地中央 AI 史蒂夫正在呼叫。", "Base central AI Steve is calling."],
   ["史蒂夫：巡航员亚历克斯！收到请回话", "Steve: Patrol Officer Alex! Respond if you copy."],
-  ["已拒绝接收。史蒂夫将在稍后重试。", "Reception rejected. Steve will retry shortly."],
+  ["已设为稍后接收。史蒂夫将在2分钟后重试。", "Set to receive later. Steve will retry in 2 minutes."],
   ["居住舱补给柜", "Habitat supply locker"],
   ["氧气生产站", "Oxygen Plant"],
   ["登陆飞船补给舱", "Lander supply bay"],
@@ -1130,7 +1136,11 @@ let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number } | null =
 let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
+const PERFORMANCE_SAMPLE_INTERVAL_MS = 500;
 let lastFrameTime = performance.now();
+let performanceSampleStartedAt = lastFrameTime;
+let performanceSampleFrames = 0;
+let performanceSampleFrameMsTotal = 0;
 let elapsedTime = 0;
 let started = false;
 let activeInteractable: Interactable | null = null;
@@ -1217,7 +1227,11 @@ let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
 let dialogueOpen = false;
 let pendingMotherCall: DialogueSceneId | null = null;
+const MOTHER_CALL_IDLE_DISMISS_SECONDS = 30;
+const MOTHER_CALL_IDLE_RETRY_SECONDS = 60;
+const MOTHER_CALL_DELAY_RETRY_SECONDS = 120;
 let motherCallRetryAt = 0;
+let pendingMotherCallQueuedAt = -Infinity;
 let gameStartElapsed = 0;
 let introMovementConfirmed = false;
 let introIdlePromptShown = false;
@@ -3319,6 +3333,7 @@ function toggleScaleGunAiming(force?: boolean) {
   if (next === scaleGunAiming) return;
   scaleGunAiming = next;
   if (scaleGunAiming) {
+    suppressTransientInfoWindows();
     scaleGunCameraDistanceBefore = cameraDistance;
     cameraDistance = CAMERA_MIN_DISTANCE;
     pitch = 0.34;
@@ -3436,6 +3451,7 @@ function toggleCameraMode(force?: boolean) {
   if (next === cameraMode) return;
   cameraMode = next;
   if (cameraMode) {
+    suppressTransientInfoWindows();
     if (scaleGunAiming) toggleScaleGunAiming(false);
     cameraDistanceBeforeCamera = cameraDistance;
     cameraDistance = CAMERA_MIN_DISTANCE;
@@ -3603,6 +3619,7 @@ function openPhotoViewer() {
   }
   if (cameraMode) toggleCameraMode(false);
   photoViewerOpen = true;
+  suppressTransientInfoWindows();
   photoViewerIndex = THREE.MathUtils.clamp(photoViewerIndex, 0, cameraPhotos.length - 1);
   photoViewerZoom = 1;
   clearMovementInputState();
@@ -3935,6 +3952,7 @@ function returnToTitle() {
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   introCallQueued = false;
   introMovementConfirmed = false;
   introIdlePromptShown = false;
@@ -3998,7 +4016,9 @@ function resetStick(_event?: PointerEvent) {
 
 function animate() {
   const now = performance.now();
-  const delta = Math.min((now - lastFrameTime) / 1000, 0.033);
+  const frameDurationMs = now - lastFrameTime;
+  updatePerformanceReadout(now, frameDurationMs);
+  const delta = Math.min(frameDurationMs / 1000, 0.033);
   lastFrameTime = now;
   elapsedTime += delta;
 
@@ -4055,6 +4075,18 @@ function animate() {
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
+}
+
+function updatePerformanceReadout(now: number, frameDurationMs: number) {
+  performanceSampleFrames += 1;
+  performanceSampleFrameMsTotal += frameDurationMs;
+  const sampleDuration = now - performanceSampleStartedAt;
+  if (sampleDuration < PERFORMANCE_SAMPLE_INTERVAL_MS) return;
+  const averageFrameMs = performanceSampleFrames > 0 ? performanceSampleFrameMsTotal / performanceSampleFrames : sampleDuration;
+  fpsValue.textContent = Math.round(averageFrameMs).toString().padStart(3, "0");
+  performanceSampleStartedAt = now;
+  performanceSampleFrames = 0;
+  performanceSampleFrameMsTotal = 0;
 }
 
 function startBackgroundMusic() {
@@ -4200,12 +4232,23 @@ function starlinkDisplayStatus() {
 }
 
 function updateScheduledCalls() {
-  if (!started || dialogueOpen || pendingMotherCall || introCallQueued) return;
+  if (!started || isFocusOverlayActive()) return;
+  if (pendingMotherCall) {
+    updatePendingMotherCallTimeout();
+    return;
+  }
+  if (introCallQueued) return;
   if (missionStep !== "intro") return;
   if (elapsedTime < motherCallRetryAt) return;
   if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
   queueMotherCall("intro", "基地中央 AI 史蒂夫正在呼叫。");
+}
+
+function updatePendingMotherCallTimeout() {
+  if (!pendingMotherCall) return;
+  if (elapsedTime - pendingMotherCallQueuedAt < MOTHER_CALL_IDLE_DISMISS_SECONDS) return;
+  deferPendingMotherCall(MOTHER_CALL_IDLE_RETRY_SECONDS);
 }
 
 function canShowIntroOperationToast() {
@@ -5394,7 +5437,7 @@ function updateMissionState() {
     dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
     return;
   }
-  if (dialogueOpen) {
+  if (isFocusOverlayActive()) {
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
@@ -5412,6 +5455,9 @@ function updateMissionState() {
     interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
     interactionChoice.setAttribute("aria-hidden", "true");
     document.body.classList.remove("interaction-drawer-open");
+    if (dialogueOpen) {
+      suppressTransientInfoWindows();
+    }
     dialogueBox.classList.remove("is-visible");
     return;
   }
@@ -5742,16 +5788,13 @@ function executeSelectedInteraction() {
     return;
   }
   if (action.id === "motherCallReject" && pendingMotherCall) {
-    pendingMotherCall = null;
-    introCallQueued = false;
-    motherCallRetryAt = elapsedTime + 8;
-    setCurrentMissionText();
-    showDialogue("信息栏", "已拒绝接收。史蒂夫将在稍后重试。", 3);
+    deferPendingMotherCall(MOTHER_CALL_DELAY_RETRY_SECONDS, "已设为稍后接收。史蒂夫将在2分钟后重试。");
     return;
   }
   if (action.id === "motherCallAccept" && pendingMotherCall) {
     const scene = pendingMotherCall;
     pendingMotherCall = null;
+    pendingMotherCallQueuedAt = -Infinity;
     openDialogueScene(scene);
     return;
   }
@@ -6852,6 +6895,7 @@ function resetDialogueState() {
   activeDialogueNode = null;
   dialogueOpen = false;
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   motherCallRetryAt = 0;
   dialogueHistory.length = 0;
   appliedDialogueChoiceEffects.clear();
@@ -6867,11 +6911,22 @@ function resetDialogueState() {
 
 function queueMotherCall(scene: DialogueSceneId, mission: string) {
   pendingMotherCall = scene;
+  pendingMotherCallQueuedAt = elapsedTime;
   setMission(mission);
+}
+
+function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
+  pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
+  introCallQueued = false;
+  motherCallRetryAt = elapsedTime + retrySeconds;
+  setCurrentMissionText();
+  if (feedback) showDialogue("信息栏", feedback, 3);
 }
 
 function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   motherCallRetryAt = 0;
   if (scene !== "robot") {
     characters.repairRobot.name = "A-12";
@@ -6880,6 +6935,7 @@ function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = s
   activeDialogueNode = startNode;
   dialogueHistory.length = 0;
   dialogueOpen = true;
+  suppressTransientInfoWindows();
   keyState.clear();
   resetStick();
   messageUntil = 0;
@@ -7688,6 +7744,7 @@ function resetQuestState() {
   coins = 0;
   currentRank = "internPatrol";
   motherCallRetryAt = 0;
+  pendingMotherCallQueuedAt = -Infinity;
   completedAnyTask = false;
   awardedEvents.clear();
   exploredBuildings.clear();
@@ -7988,8 +8045,19 @@ function updateMissionAfterLanguageChange() {
 }
 
 function showDialogue(speaker: string, text: string, seconds: number) {
+  if (isFocusOverlayActive()) return;
   dialogueBox.innerHTML = `<strong>${localizeText(speaker)}</strong><span>${localizeText(text)}</span>`;
   messageUntil = performance.now() + seconds * 1000;
+}
+
+function isFocusOverlayActive() {
+  return dialogueOpen || cameraMode || scaleGunAiming || photoViewerOpen;
+}
+
+function suppressTransientInfoWindows() {
+  messageUntil = 0;
+  dialogueBox.innerHTML = "";
+  dialogueBox.classList.remove("is-visible");
 }
 
 function updateReadouts() {
@@ -8027,7 +8095,12 @@ function updateReadouts() {
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(renderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function renderPixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, RENDER_PIXEL_RATIO_LIMIT);
 }
 
 function isTouchLike() {
