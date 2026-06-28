@@ -81,8 +81,8 @@
           </h1>
           <p class="title-text" data-i18n="title.text">终于，火星基地迎来了第一位人类居民。</p>
           <div class="title-actions">
-            <button id="enter-base" class="title-action title-action-primary" type="button" data-i18n="title.enter">进入基地</button>
-            <button id="story-summary" class="title-action title-action-secondary" type="button" data-i18n="title.story">故事概要</button>
+            <button id="enter-base" class="title-action title-action-primary" type="button" data-key="E" data-i18n="title.enter">进入基地</button>
+            <button id="story-summary" class="title-action title-action-secondary" type="button" data-key="Q" data-i18n="title.story">故事概要</button>
           </div>
         </div>
       </section>
@@ -117,8 +117,8 @@
             <h2 data-i18n="hud.people">人员</h2>
             <dl>
               <div>
-                <dt>Alex</dt>
-                <dd id="rank-readout">巡航员</dd>
+                <dt id="rank-readout">巡航员</dt>
+                <dd data-i18n="hud.playerName">亚历克斯</dd>
               </div>
               <div>
                 <dt data-i18n="hud.suitOxygen">氧气</dt>
@@ -239,12 +239,12 @@
       </section>
       <section id="exit-confirm" aria-label="退出游戏确认" aria-hidden="true">
         <div class="exit-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title">
-          <p class="exit-confirm-kicker">SYSTEM</p>
-          <h2 id="exit-confirm-title" data-i18n="exit.title">要退出当前游戏吗？</h2>
-          <p class="exit-confirm-text" data-i18n="exit.text">退出会返回主页，当前巡检进度不会保留。</p>
+          <p class="exit-confirm-kicker">PAUSE</p>
+          <h2 id="exit-confirm-title" data-i18n="exit.title">暂停</h2>
+          <p class="exit-confirm-text" data-i18n="exit.text">基地模拟已暂停，当前巡检进度仅保留在本次游玩中。</p>
           <div class="exit-confirm-actions">
-            <button id="exit-resume" class="exit-confirm-action is-selected" type="button" data-i18n="exit.resume">返回游戏</button>
-            <button id="exit-title" class="exit-confirm-action" type="button" data-i18n="exit.quit">退出游戏</button>
+            <button id="exit-resume" class="exit-confirm-action is-selected" type="button" data-i18n="exit.resume">继续巡检</button>
+            <button id="exit-title" class="exit-confirm-action" type="button" data-i18n="exit.quit">返回主页</button>
           </div>
         </div>
       </section>

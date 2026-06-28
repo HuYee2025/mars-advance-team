@@ -143,6 +143,7 @@ export type GreenhouseDoorControl = {
   root: THREE.Object3D;
   doorPanels: THREE.Object3D;
   interiorLight: THREE.PointLight;
+  treeColliders: Array<{ x: number; z: number; radius: number }>;
   occupied: boolean;
   promptRadius: number;
   label: string;
@@ -401,7 +402,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   placeObjectOnPlanet(habitat, habitatX, habitatZ, 2.0, habitatYaw);
   base.add(habitat);
   landmarks.push(landmark("01 建筑 居住舱", habitat, habitatX, habitatZ, 34, 220));
-  addMaintenanceBot("01 机器人 居住舱维修工", habitatX, habitatZ, habitatYaw, 0, -8.6, "01 建筑 居住舱", "居住舱是 Alex 的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。");
+  addMaintenanceBot("01 机器人 居住舱维修工", habitatX, habitatZ, habitatYaw, 0, -8.6, "01 建筑 居住舱", "居住舱是亚历克斯的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。");
   interactables.push({
     id: "habitatCheck",
     label: "01 建筑 居住舱",
@@ -447,9 +448,9 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     greenhouseX,
     greenhouseZ,
     greenhouseYaw,
-    [-9, -4.5, 0, 4.5, 9],
-    [-5.4, 0.4, 6.2],
-    3.0,
+    [-9.2, -6.9, -4.6, -2.3, 0, 2.3, 4.6, 6.9, 9.2],
+    [-5.8, -3.5, -1.2, 1.1, 3.4, 5.7, 7.4],
+    2.25,
     "温室生态舱外壳",
     () => !greenhouseDoor.occupied
   );
@@ -769,7 +770,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   function shipBriefing(label: string) {
     if (label.includes("登陆飞船")) {
-      return "登陆飞船把第一位人类居民送到 ARES BASE ALPHA。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。";
+      return "登陆飞船把第一位人类居民送到阿瑞斯阿尔法基地。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。";
     }
     if (label.includes("货运飞船")) {
       return "货运飞船运输备件、补给、工具和可展开设备。我负责货舱锁定、升降梯、电池包和外部固定点。";
@@ -1500,15 +1501,70 @@ function createGreenhouse(flickerLights: THREE.PointLight[]) {
   doorSeal.position.set(0, 0.76, -4.16);
   doorPanels.add(doorLeft, doorRight, doorSeal);
 
-  const soil = mat(0x2c2118, 1);
-  const leaf = mat(0x5fa45e, 0.8);
-  for (let i = 0; i < 7; i += 1) {
-    const bed = box(0.5, 0.18, 2.5, soil);
-    bed.position.set(-2.25 + i * 0.75, 0.62, 0);
-    const plant = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.65, 6), leaf);
-    plant.position.set(bed.position.x, 1.0, 0.26);
-    plant.castShadow = true;
-    group.add(bed, plant);
+  const leaf = mat(0x4f9a53, 0.78);
+  const leafDark = mat(0x2f6f43, 0.88);
+  const trunk = mat(0x6b4b2d, 0.82, 0.05);
+  const shrub = mat(0x376d3f, 0.9);
+  const treeColliders = [
+    { x: -2.38, z: -1.95, radius: 0.48, height: 1.35 },
+    { x: -1.45, z: -2.28, radius: 0.38, height: 1.05 },
+    { x: 1.96, z: -2.12, radius: 0.44, height: 1.28 },
+    { x: 2.72, z: -1.18, radius: 0.5, height: 1.58 },
+    { x: -2.7, z: -0.72, radius: 0.54, height: 1.7 },
+    { x: -1.72, z: -0.22, radius: 0.34, height: 0.95 },
+    { x: 1.24, z: -0.78, radius: 0.38, height: 1.12 },
+    { x: 2.18, z: 0.06, radius: 0.48, height: 1.45 },
+    { x: -2.32, z: 0.72, radius: 0.44, height: 1.3 },
+    { x: -1.18, z: 1.2, radius: 0.36, height: 1.02 },
+    { x: 1.45, z: 0.86, radius: 0.52, height: 1.62 },
+    { x: 2.48, z: 1.35, radius: 0.4, height: 1.18 },
+    { x: -2.05, z: 2.28, radius: 0.5, height: 1.54 },
+    { x: -0.82, z: 2.62, radius: 0.34, height: 1.0 },
+    { x: 1.22, z: 2.2, radius: 0.46, height: 1.38 },
+    { x: 2.48, z: 2.36, radius: 0.36, height: 1.05 },
+    { x: 0.14, z: -1.78, radius: 0.24, height: 0.72, shrub: true },
+    { x: -0.48, z: -0.58, radius: 0.22, height: 0.66, shrub: true },
+    { x: 0.34, z: 0.48, radius: 0.24, height: 0.7, shrub: true },
+    { x: -0.08, z: 1.58, radius: 0.22, height: 0.62, shrub: true },
+  ];
+
+  const path = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.625, -2.95),
+    new THREE.Vector3(0.92, 0.626, -1.72),
+    new THREE.Vector3(-0.42, 0.626, -0.42),
+    new THREE.Vector3(0.72, 0.626, 0.92),
+    new THREE.Vector3(0.02, 0.626, 2.62),
+  ]);
+  const pathPoints = path.getPoints(48);
+  const pathGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+  const pathLine = new THREE.Line(
+    pathGeometry,
+    new THREE.LineBasicMaterial({ color: 0x9ccf8c, transparent: true, opacity: 0.34 })
+  );
+  group.add(pathLine);
+
+  for (const [index, tree] of treeColliders.entries()) {
+    const treeGroup = new THREE.Group();
+    treeGroup.position.set(tree.x, 0.62, tree.z);
+    if (tree.shrub) {
+      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(tree.radius * 0.9, 0), shrub);
+      crown.position.y = tree.height * 0.42;
+      crown.scale.set(1, 0.72, 1);
+      crown.castShadow = true;
+      treeGroup.add(crown);
+    } else {
+      const trunkMesh = new THREE.Mesh(new THREE.CylinderGeometry(tree.radius * 0.16, tree.radius * 0.22, tree.height * 0.42, 5), trunk);
+      trunkMesh.position.y = tree.height * 0.21;
+      trunkMesh.castShadow = true;
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(tree.radius * 0.92, tree.height * 0.78, 7), index % 3 === 0 ? leafDark : leaf);
+      crown.position.y = tree.height * 0.72;
+      crown.castShadow = true;
+      const crownTop = new THREE.Mesh(new THREE.ConeGeometry(tree.radius * 0.68, tree.height * 0.54, 7), leaf);
+      crownTop.position.y = tree.height * 1.02;
+      crownTop.castShadow = true;
+      treeGroup.add(trunkMesh, crown, crownTop);
+    }
+    group.add(treeGroup);
   }
 
   const light = new THREE.PointLight(0x8cffaa, 1.4, 14);
@@ -1519,6 +1575,7 @@ function createGreenhouse(flickerLights: THREE.PointLight[]) {
     root: group,
     doorPanels,
     interiorLight: light,
+    treeColliders: treeColliders.map(({ x, z, radius }) => ({ x, z, radius })),
     occupied: false,
     promptRadius: 15,
     label: "02 建筑 温室生态舱",

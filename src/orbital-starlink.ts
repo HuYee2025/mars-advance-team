@@ -18,19 +18,16 @@ export type StarlinkConstellation = {
   anchor: THREE.Object3D;
   satellites: StarlinkSatellite[];
   planetRadius: number;
-  maxSatellites: number;
-  batchSize: number;
-  releaseIntervalSols: number;
-  nextReleaseSol: number | null;
+  trainCount: number;
+  satellitesPerTrain: number;
   initialized: boolean;
 };
 
 const MARS_RADIUS_KM = 3390;
 const LOW_ORBIT_KM = 360;
 const RELAY_ORBIT_KM = 525;
-const FIRST_BATCH_SIZE = 10;
-const MAX_SATELLITES = 120;
-const RELEASE_INTERVAL_SOLS = 24;
+const STARLINK_TRAIN_COUNT = 5;
+const SATELLITES_PER_TRAIN = 7;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchPosition = new THREE.Vector3();
 const scratchForward = new THREE.Vector3();
@@ -51,32 +48,14 @@ export function createStarlinkConstellation(planetRadius: number) {
     anchor,
     satellites: [],
     planetRadius,
-    maxSatellites: MAX_SATELLITES,
-    batchSize: FIRST_BATCH_SIZE,
-    releaseIntervalSols: RELEASE_INTERVAL_SOLS,
-    nextReleaseSol: null,
+    trainCount: STARLINK_TRAIN_COUNT,
+    satellitesPerTrain: SATELLITES_PER_TRAIN,
     initialized: false,
   };
 
-  generateStarlinkBatch(constellation, 0);
+  generateFixedStarlinkTrains(constellation);
   constellation.initialized = true;
   return constellation;
-}
-
-export function ensureStarlinkSchedule(constellation: StarlinkConstellation, currentSol: number) {
-  if (constellation.nextReleaseSol === null) constellation.nextReleaseSol = currentSol + constellation.releaseIntervalSols;
-}
-
-export function maybeGenerateScheduledStarlinkBatch(constellation: StarlinkConstellation, currentSol: number) {
-  ensureStarlinkSchedule(constellation, currentSol);
-  while (
-    constellation.nextReleaseSol !== null &&
-    currentSol >= constellation.nextReleaseSol &&
-    constellation.satellites.length < constellation.maxSatellites
-  ) {
-    generateStarlinkBatch(constellation, constellation.satellites.length);
-    constellation.nextReleaseSol += constellation.releaseIntervalSols;
-  }
 }
 
 export function updateStarlinkConstellation(constellation: StarlinkConstellation, elapsedSeconds: number, stormStrength: number) {
@@ -93,70 +72,53 @@ export function updateStarlinkConstellation(constellation: StarlinkConstellation
     satellite.object.quaternion.setFromUnitVectors(WORLD_UP, scratchPosition.clone().normalize());
     satellite.object.rotateY(Math.atan2(scratchForward.x, scratchForward.z));
 
-    const glint = 0.72 + Math.sin(elapsedSeconds * 1.7 + index * 0.83) * 0.18;
-    satellite.light.intensity = (satellite.layer === "relay" ? 0.18 : 0.14) * stormDimming * glint;
-    satellite.object.visible = stormStrength < 0.96 || index % 3 === 0;
+    const glint = 0.82 + Math.sin(elapsedSeconds * 1.45 + index * 0.83) * 0.18;
+    satellite.light.intensity = (satellite.layer === "relay" ? 0.34 : 0.26) * stormDimming * glint;
+    satellite.object.visible = stormStrength < 0.97 || index % 2 === 0;
   });
 }
 
-export function starlinkStatusText(constellation: StarlinkConstellation, currentSol: number) {
-  const remaining = remainingSolsUntilNextBatch(constellation, currentSol);
-  return `Starlink-M ${constellation.satellites.length}/${constellation.maxSatellites}｜下一批：${remaining} sols`;
+export function starlinkStatusText(constellation: StarlinkConstellation) {
+  return `Starlink-M ${constellation.trainCount}组 x ${constellation.satellitesPerTrain}｜${constellation.satellites.length}颗在轨`;
 }
 
-export function starlinkStatusTextEn(constellation: StarlinkConstellation, currentSol: number) {
-  const remaining = remainingSolsUntilNextBatch(constellation, currentSol);
-  return `Starlink-M ${constellation.satellites.length}/${constellation.maxSatellites} | Next batch: ${remaining} sols`;
+export function starlinkStatusTextEn(constellation: StarlinkConstellation) {
+  return `Starlink-M ${constellation.trainCount} groups x ${constellation.satellitesPerTrain} | ${constellation.satellites.length} in orbit`;
 }
 
-function remainingSolsUntilNextBatch(constellation: StarlinkConstellation, currentSol: number) {
-  if (constellation.satellites.length >= constellation.maxSatellites) return 0;
-  if (constellation.nextReleaseSol === null) return constellation.releaseIntervalSols;
-  return Math.max(0, constellation.nextReleaseSol - currentSol);
-}
-
-function generateStarlinkBatch(constellation: StarlinkConstellation, seedOffset: number) {
-  const batchIndex = Math.floor(seedOffset / FIRST_BATCH_SIZE);
+function generateFixedStarlinkTrains(constellation: StarlinkConstellation) {
   const orbitUnitPerKm = constellation.planetRadius / MARS_RADIUS_KM;
   const lowOrbitAltitude = LOW_ORBIT_KM * orbitUnitPerKm;
   const relayOrbitAltitude = RELAY_ORBIT_KM * orbitUnitPerKm;
-  const configs: Array<{ layer: StarlinkSatellite["layer"]; altitude: number; inclination: number; trainIndex: number; memberIndex: number }> = [
-    ...Array.from({ length: 5 }, (_, memberIndex) => ({
-      layer: "coverage" as const,
-      altitude: lowOrbitAltitude,
-      inclination: THREE.MathUtils.degToRad(28),
-      trainIndex: 0,
-      memberIndex,
-    })),
-    ...Array.from({ length: 5 }, (_, memberIndex) => ({
-      layer: "relay" as const,
-      altitude: relayOrbitAltitude,
-      inclination: THREE.MathUtils.degToRad(48),
-      trainIndex: 1,
-      memberIndex,
-    })),
+  const trainConfigs: Array<{ layer: StarlinkSatellite["layer"]; altitude: number; inclination: number; raan: number; direction: 1 | -1 }> = [
+    { layer: "coverage", altitude: lowOrbitAltitude, inclination: THREE.MathUtils.degToRad(18), raan: THREE.MathUtils.degToRad(8), direction: 1 },
+    { layer: "coverage", altitude: lowOrbitAltitude * 1.08, inclination: THREE.MathUtils.degToRad(36), raan: THREE.MathUtils.degToRad(78), direction: -1 },
+    { layer: "polar", altitude: lowOrbitAltitude * 1.16, inclination: THREE.MathUtils.degToRad(66), raan: THREE.MathUtils.degToRad(148), direction: 1 },
+    { layer: "coverage", altitude: lowOrbitAltitude * 1.24, inclination: THREE.MathUtils.degToRad(42), raan: THREE.MathUtils.degToRad(224), direction: -1 },
+    { layer: "relay", altitude: relayOrbitAltitude, inclination: THREE.MathUtils.degToRad(58), raan: THREE.MathUtils.degToRad(304), direction: 1 },
   ];
 
-  configs.forEach((config, index) => {
-    if (constellation.satellites.length >= constellation.maxSatellites) return;
-    const absoluteIndex = seedOffset + index;
-    const raan = (batchIndex * 0.47 + config.trainIndex * 1.34) % (Math.PI * 2);
-    const phase = batchIndex * 0.37 + config.trainIndex * Math.PI + config.memberIndex * 0.046;
+  trainConfigs.forEach((config, trainIndex) => {
+    const raan = config.raan;
     const orbitAxis = orbitAxisFromInclination(config.inclination, raan);
     const orbitRight = new THREE.Vector3(Math.cos(raan), 0, Math.sin(raan)).normalize();
     const orbitForward = orbitAxis.clone().cross(orbitRight).normalize();
-    const satellite = createStarlinkSatellite({
-      id: `starlink-m-${String(absoluteIndex + 1).padStart(3, "0")}`,
-      layer: config.layer,
-      orbitAxis,
-      orbitRight,
-      orbitForward,
-      orbitRadius: constellation.planetRadius + config.altitude,
-      phase,
-      angularSpeed: (config.layer === "relay" ? 0.011 : 0.016) * (config.trainIndex === 0 ? 1 : -1),
+    const trainPhase = trainIndex * 1.17;
+    Array.from({ length: constellation.satellitesPerTrain }, (_, memberIndex) => {
+      const absoluteIndex = trainIndex * constellation.satellitesPerTrain + memberIndex;
+      const satellite = createStarlinkSatellite({
+        id: `starlink-m-${String(absoluteIndex + 1).padStart(3, "0")}`,
+        layer: config.layer,
+        orbitAxis,
+        orbitRight,
+        orbitForward,
+        orbitRadius: constellation.planetRadius + config.altitude,
+        phase: trainPhase + memberIndex * 0.044,
+        angularSpeed: (config.layer === "relay" ? 0.012 : 0.017) * config.direction,
+      });
+      constellation.satellites.push(satellite);
+      constellation.group.add(satellite.object);
     });
-    constellation.satellites.push(satellite);
-    constellation.group.add(satellite.object);
   });
 }
 
@@ -185,7 +147,7 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     metalness: 0.32,
   });
 
-  const visibleScale = data.layer === "relay" ? 0.25 : 0.22;
+  const visibleScale = data.layer === "relay" ? 0.34 : 0.31;
   const bus = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.15), bodyMaterial);
   const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.012, 0.12), antennaMaterial);
   antenna.position.y = -0.026;
@@ -197,10 +159,10 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     map: getStarlinkGlintTexture(),
     color: data.layer === "relay" ? 0xb8e8ff : 0xf4fbff,
     transparent: true,
-    opacity: data.layer === "relay" ? 0.66 : 0.58,
+    opacity: data.layer === "relay" ? 0.9 : 0.82,
     depthWrite: false,
   }));
-  glint.scale.setScalar(data.layer === "relay" ? 0.48 : 0.42);
+  glint.scale.setScalar(data.layer === "relay" ? 0.72 : 0.64);
 
   const hitArea = new THREE.Mesh(
     new THREE.SphereGeometry(4.1, 8, 6),
@@ -223,7 +185,7 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     }
   });
 
-  const light = new THREE.PointLight(data.layer === "relay" ? 0x9fe2ff : 0xf7fbff, data.layer === "relay" ? 0.12 : 0.09, 18);
+  const light = new THREE.PointLight(data.layer === "relay" ? 0x9fe2ff : 0xf7fbff, data.layer === "relay" ? 0.24 : 0.18, 26);
   object.add(light);
   return { ...data, object, light };
 }

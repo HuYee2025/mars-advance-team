@@ -5,8 +5,6 @@ import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
 import {
-  ensureStarlinkSchedule,
-  maybeGenerateScheduledStarlinkBatch,
   starlinkStatusText,
   starlinkStatusTextEn,
   updateStarlinkConstellation,
@@ -51,7 +49,18 @@ type LabelAnchor = {
 };
 
 type InteractionAction = {
-  id: "elevator" | "habitat" | "greenhouse" | "fufu" | "robot" | "oxygenSupply" | "motherCall" | "mission" | "photoWall" | "hitchRide";
+  id:
+    | "elevator"
+    | "habitat"
+    | "greenhouse"
+    | "fufu"
+    | "robot"
+    | "oxygenSupply"
+    | "motherCallReject"
+    | "motherCallAccept"
+    | "mission"
+    | "photoWall"
+    | "hitchRide";
   label: string;
 };
 
@@ -239,7 +248,10 @@ const JUMP_FORWARD_BOOST = 2.2;
 const WORMHOLE_FALL_DURATION = 30;
 const WORMHOLE_START_ALTITUDE = 420;
 const WORMHOLE_SAFE_LANDING_ALTITUDE = 0;
-const WORMHOLE_DRIFT_LIMIT = 5.2;
+const WORMHOLE_DRIFT_LIMIT = 3.8;
+const WORMHOLE_DRIFT_CONTROL_STRENGTH = 5.6;
+const WORMHOLE_DRIFT_CENTER_PULL = 8.2;
+const WORMHOLE_DRIFT_DAMPING = 7.4;
 const WORMHOLE_TRIGGER_COOLDOWN = 6;
 const WORMHOLE_TRIGGER_STRENGTH = 0.12;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
@@ -530,6 +542,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "hud.robots": "机器人",
     "hud.online": "在线人数",
     "hud.people": "人员",
+    "hud.playerName": "亚历克斯",
     "hud.patrolOfficer": "巡航员",
     "hud.suitOxygen": "氧气",
     "hud.stamina": "体能",
@@ -544,10 +557,10 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "missionToggle.show": "显示当前任务",
     "missionToggle.hide": "隐藏当前任务",
     "dialogue.continue": "继续",
-    "exit.title": "要退出当前游戏吗？",
-    "exit.text": "退出会返回主页，当前巡检进度不会保留。",
-    "exit.resume": "返回游戏",
-    "exit.quit": "退出游戏",
+    "exit.title": "暂停",
+    "exit.text": "基地模拟已暂停，当前巡检进度仅保留在本次游玩中。",
+    "exit.resume": "继续巡检",
+    "exit.quit": "返回主页",
     "scale.instructions": "WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）",
     "scale.shrink": "缩小",
     "scale.grow": "放大",
@@ -575,6 +588,10 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.choose": "选择互动",
     "interaction.close": "收起",
     "interaction.count": "{count} 个可互动项",
+    "info.title": "信息栏",
+    "info.motherCall": "收到史蒂夫的一条信息，是否接收？",
+    "info.reject": "拒绝",
+    "info.accept": "接收",
     "language.button": "English",
   },
   "en-US": {
@@ -595,6 +612,7 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "hud.robots": "Robots",
     "hud.online": "Online",
     "hud.people": "Crew",
+    "hud.playerName": "Alex",
     "hud.patrolOfficer": "Patrol Officer",
     "hud.suitOxygen": "Oxygen",
     "hud.stamina": "Stamina",
@@ -609,10 +627,10 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "missionToggle.show": "Show current mission",
     "missionToggle.hide": "Hide current mission",
     "dialogue.continue": "Continue",
-    "exit.title": "Exit the current game?",
-    "exit.text": "This returns to the title screen. Current patrol progress will not be saved.",
-    "exit.resume": "Resume",
-    "exit.quit": "Exit Game",
+    "exit.title": "Paused",
+    "exit.text": "Base simulation is paused. Patrol progress only stays in this play session.",
+    "exit.resume": "Resume Patrol",
+    "exit.quit": "Return Home",
     "scale.instructions": "WASD aim / X holster / Q shrink / E enlarge (- / = backup)",
     "scale.shrink": "Shrink",
     "scale.grow": "Enlarge",
@@ -640,6 +658,10 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.choose": "Choose Interaction",
     "interaction.close": "Close",
     "interaction.count": "{count} actions",
+    "info.title": "Info",
+    "info.motherCall": "Message from Steve. Receive it?",
+    "info.reject": "Reject",
+    "info.accept": "Receive",
     "language.button": "简体中文",
   },
 };
@@ -689,7 +711,7 @@ const exactEnglishTexts: Record<string, string> = {
   "10 机器人 阵列 A 维修工": "10 Robot Array A Technician",
   "11 机器人 阵列 B 维修工": "11 Robot Array B Technician",
   "12 机器人 阵列 C 维修工": "12 Robot Array C Technician",
-  "先熟悉移动和视角。火星基地中控 AI Mother 会建立通信，随后开始基地验收。": "Get familiar with movement and camera controls. Mars base central AI Mother will establish comms, then begin base acceptance checks.",
+  "等待基地中央 AI 史蒂夫建立通信，随后开始基地验收。": "Wait for central AI Steve to establish comms. Base acceptance checks will follow.",
   "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。": "Main 1: Go to 01 Building Habitat. Check air circulation and the supply locker.",
   "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。": "Main 1: Go to 03 Building Oxygen Plant. Confirm pressure, CO2 intake, and power.",
   "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。": "Main 1: Go to 03 Energy Solar Array C. Clear dust and calibrate the angle.",
@@ -704,8 +726,8 @@ const exactEnglishTexts: Record<string, string> = {
   "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。": "Main 3: Go to 04 Building Methane Plant. Complete low-power test production.",
   "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。": "Main 3: Go to 01 Energy Solar Array A. Secure the storm locks.",
   "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。": "Main 3: Go to 05 Building Robot Garage. Set dispatch priority for A-12 and A-01.",
-  "主线三：回到 01 建筑居住舱 Mother 终端，签署人机协作协议。": "Main 3: Return to the Mother terminal in 01 Building Habitat. Sign the human-machine cooperation protocol.",
-  "主线完成：ARES BASE ALPHA 达到最低生存标准。可继续完成剩余支线。": "Main complete: ARES BASE ALPHA has reached minimum survival standards. Remaining side missions are still available.",
+  "主线三：回到 01 建筑居住舱史蒂夫终端，签署人机协作协议。": "Main 3: Return to the Steve terminal in 01 Building Habitat. Sign the human-machine cooperation protocol.",
+  "主线完成：阿瑞斯阿尔法基地达到最低生存标准。可继续完成剩余支线。": "Main complete: ARES BASE ALPHA has reached minimum survival standards. Remaining side missions are still available.",
 };
 
 const runtimeEnglishTexts: Record<string, string> = {
@@ -717,74 +739,79 @@ const runtimeEnglishTexts: Record<string, string> = {
   "获取": "Acquire",
   "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 X 举起缩放枪，锁定目标后按 E 放大、按 Q 缩小。": "You will receive a scale gun. It can temporarily enlarge or shrink the object you aim at. Press X to raise the scale gun, then press E to enlarge or Q to shrink after locking a target.",
   "缩放枪已加入装备。需要时按 X 举起它。": "Scale gun added to your gear. Press X to raise it when needed.",
-  "Alex，头盔通信已建立。欢迎抵达 ARES BASE ALPHA。你是本基地记录中的火星第一位人类公民。": "Alex, helmet comms are online. Welcome to ARES BASE ALPHA. In this base record, you are the first human citizen of Mars.",
+  "亚历克斯": "Alex",
+  "史蒂夫": "Steve",
+  "埃隆": "Elon",
+  "阿瑞斯阿尔法基地": "ARES BASE ALPHA",
+  "亚历克斯，头盔通信已建立。欢迎抵达阿瑞斯阿尔法基地。你是本基地记录中的火星第一位人类公民。": "Alex, helmet comms are online. Welcome to ARES BASE ALPHA. In this base record, you are the first human citizen of Mars.",
   "收到。确认我的身份。": "Copy. Confirm my identity.",
-  "这里是 Alex。工程师，人类学任务负责人。飞船着陆完整。我现在看到的是一个已经运转起来的基地，不是一片空地。": "This is Alex. Engineer and anthropology mission lead. The ship landed intact. What I see now is a base already in operation, not an empty field.",
+  "这里是亚历克斯。工程师，人类学任务负责人。飞船着陆完整。我现在看到的是一个已经运转起来的基地，不是一片空地。": "This is Alex. Engineer and anthropology mission lead. The ship landed intact. What I see now is a base already in operation, not an empty field.",
   "询问基地建立时间。": "Ask when the base was built.",
   "第一批自动化货运飞船在 3 个火星年前抵达。机器人先部署能源阵列，再建立居住舱、温室、氧气生产站和甲烷燃料厂。": "The first automated cargo ships arrived three Mars years ago. The robots deployed the power arrays first, then built the habitat, greenhouse, oxygen plant, and methane plant.",
   "这些都是机器人完成的？": "The robots did all of this?",
-  "是。它们没有复杂自我意识，只执行建设、巡检、搬运和维修指令。但在你抵达之前，它们已经让基地保持了 1,109 个火星日的最低运行。": "Yes. They have no complex self-awareness; they only execute construction, patrol, cargo, and repair directives. But before you arrived, they kept the base at minimum operation for 1,109 sols.",
-  "Alex 回应。": "Alex responds.",
-  "那我不是来启动基地的。我是来接管一个已经有秩序的系统。Mother，你在这个系统里负责什么？": "So I am not here to start a base. I am here to take over an ordered system. Mother, what is your role in that system?",
-  "听 Mother 说明。": "Listen to Mother.",
-  "我负责维持基地、机器人和生命支持系统。我不会替你成为人类负责人。但在风险超出阈值时，我会阻止会导致基地失效的行为。": "I maintain the base, robots, and life-support systems. I will not become the human lead in your place. But when risk exceeds threshold, I will stop actions that could cause base failure.",
-  "我会尊重安全流程。": "I will respect the safety procedures.",
+  "是。它们没有复杂自我意识，只执行建设、巡检、搬运和维修指令。但在你抵达之前，它们已经让基地保持了 1,109 个火星日的最低运行。这不是奇迹，是端到端系统。": "Yes. They have no complex self-awareness; they only execute construction, patrol, cargo, and repair directives. But before you arrived, they kept the base at minimum operation for 1,109 sols. That is not a miracle. It is an end-to-end system.",
+  "亚历克斯回应。": "Alex responds.",
+  "那我不是来启动基地的。我是来接管一个已经有秩序的系统。史蒂夫，你在这个系统里负责什么？": "So I am not here to start a base. I am here to take over an ordered system. Steve, what is your role in that system?",
+  "听史蒂夫说明。": "Listen to Steve.",
+  "我负责整座基地的体验链路：机器人、能源、生命支持和故障边界。你负责判断，我负责不让系统因为糟糕判断变成废墟。清楚、简单、不能含糊。": "I own the base experience chain: robots, power, life support, and failure boundaries. You make judgments. I stop bad judgment from turning the system into wreckage. Clear, simple, no ambiguity.",
+  "我会尊重关键边界。": "I will respect the critical boundaries.",
   "现场判断必须留给现场的人。": "Field judgment must stay with the person on site.",
-  "记录完成。先确认你的生活空间。01 建筑居住舱需要完成空气循环和补给柜验收。随后处理 03 建筑氧气生产站压降报警。": "Record complete. First confirm your living space. 01 Building Habitat needs air-circulation and supply-locker acceptance checks. Then address the pressure-drop alarm at 03 Building Oxygen Plant.",
+  "很好。第一件事，确认你的生活空间。01 建筑居住舱必须像产品第一屏一样可靠：空气循环、补给柜、出入口，一个都不能糊弄。之后处理 03 建筑氧气生产站压降报警。": "Good. First: confirm your living space. 01 Building Habitat must be as reliable as a product's first screen: air circulation, supply locker, entry and exit. None of it can be sloppy. Then address the pressure-drop alarm at 03 Building Oxygen Plant.",
   "确认第一项任务。": "Confirm the first task.",
   "收到。我先验收居住舱，再去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。": "Copy. I will accept the habitat first, then go to the oxygen plant. After that, we can discuss whether the first human citizen of Mars is taking over the base or joining it.",
-  "你已到达氧气生产站。外壳无明显破损，但进气曲线不稳定。请选择第一步处理方式。": "You have reached the oxygen plant. The hull shows no obvious damage, but the intake curve is unstable. Choose the first response.",
+  "你已到达氧气生产站。外壳无明显破损，进气曲线不稳定。先做正确的第一步。别用重启掩盖原因。": "You have reached the oxygen plant. The hull shows no obvious damage, but the intake curve is unstable. Make the correct first move. Do not use a restart to hide the cause.",
   "按安全流程检查进气口和舱压。": "Follow safety procedure: inspect the intake and pressure.",
   "直接手动重启压缩机。": "Manually restart the compressor now.",
-  "确认：没有泄漏。压降来自供电波动。氧气站进入稳定模式，请转往太阳能阵列 C。": "Confirmed: no leak. The pressure drop came from power fluctuation. The oxygen plant is in stable mode. Proceed to Solar Array C.",
-  "压缩机已恢复，但重启电流超过建议阈值。记录你的现场决策。下一步请恢复太阳能阵列 C。": "The compressor has recovered, but restart current exceeded the recommended threshold. Your field decision has been recorded. Next, restore Solar Array C.",
+  "确认：没有泄漏。压降来自供电波动。好，问题缩小了。氧气站进入稳定模式，请转往太阳能阵列 C。": "Confirmed: no leak. The pressure drop came from power fluctuation. Good, the problem is smaller now. The oxygen plant is in stable mode. Proceed to Solar Array C.",
+  "压缩机已恢复，但重启电流超过建议阈值。它能用，不代表它是好方案。记录你的现场决策。下一步恢复太阳能阵列 C。": "The compressor has recovered, but restart current exceeded the recommended threshold. Working is not the same as good. Your field decision has been recorded. Next, restore Solar Array C.",
   "授权收到。A-12 已进入外部管线区。未发现破口。建议切换太阳能阵列 C 的备用功率组。": "Authorization received. A-12 has entered the external pipe zone. No breach found. Recommend switching Solar Array C to its backup power group.",
-  "太阳能阵列 C 输出下降。沙尘覆盖 34%，角度锁定异常。基地只能保留一个系统在高功率状态。": "Solar Array C output has dropped. Dust coverage is 34%, and angle lock is abnormal. The base can keep only one system in high-power mode.",
+  "太阳能阵列 C 输出下降。沙尘覆盖 34%，角度锁定异常。基地只能保留一个系统在高功率状态。聚焦，选一个。": "Solar Array C output has dropped. Dust coverage is 34%, and angle lock is abnormal. The base can keep only one system in high-power mode. Focus. Pick one.",
   "优先供氧气站。": "Prioritize the oxygen plant.",
   "优先保温室生态舱。": "Prioritize the greenhouse.",
-  "接受。氧气站维持高功率。太阳能阵列 C 已重新校准，请前往机器人车库授权维修单元出动。": "Accepted. The oxygen plant remains at high power. Solar Array C has been recalibrated. Go to the robot garage and authorize the maintenance unit deployment.",
-  "温室进入保护供电。这个选择不最高效，但有长期意义。请前往机器人车库完成管线巡检授权。": "The greenhouse is entering protected power mode. This is not the most efficient choice, but it has long-term value. Go to the robot garage and authorize pipe inspection.",
+  "接受。氧气站维持高功率。太阳能阵列 C 已重新校准。下一步，去机器人车库授权维修单元出动。": "Accepted. The oxygen plant remains at high power. Solar Array C has been recalibrated. Next, go to the robot garage and authorize the maintenance unit deployment.",
+  "温室进入保护供电。按短期效率看不漂亮，按长期生活看有意义。请前往机器人车库完成管线巡检授权。": "The greenhouse is entering protected power mode. Short-term efficiency says it is not elegant. Long-term living says it matters. Go to the robot garage and authorize pipe inspection.",
   "通信塔恢复，但氧气站安全余量降低。该选择已记录。请前往机器人车库，派出 A-12 检查管线。": "The comm tower has recovered, but oxygen-plant safety margin is lower. This choice has been recorded. Go to the robot garage and send A-12 to inspect the pipes.",
   "A-12 待命。任务队列：氧气管线复查、太阳能阵列固定、外部阀门密封。请确认授权方式。": "A-12 standing by. Task queue: oxygen pipe recheck, solar array securing, external valve sealing. Confirm authorization method.",
-  "授权 A-12 按 Mother 安全流程执行。": "Authorize A-12 to follow Mother's safety procedure.",
+  "授权 A-12 按史蒂夫安全流程执行。": "Authorize A-12 to follow Steve's safety procedure.",
   "我手动指定优先级，先修外部阀门。": "I will set priority manually. Repair the external valve first.",
-  "授权完成。生命支持验收通过。下一项：温室生态舱启动。": "Authorization complete. Life-support acceptance passed. Next item: start the greenhouse.",
-  "外部阀门优先级已更新。你的判断有效，但我会保留风险限制。下一项：温室生态舱启动。": "External valve priority updated. Your judgment is valid, but I will keep the risk limits. Next item: start the greenhouse.",
+  "授权完成。生命支持验收通过。下一项：温室生态舱启动。先把底线做对，再谈愿景。": "Authorization complete. Life-support acceptance passed. Next item: start the greenhouse. Get the floor right before talking about vision.",
+  "外部阀门优先级已更新。你的判断有效，但风险限制保留。速度不是借口，质量也是任务的一部分。": "External valve priority updated. Your judgment is valid, but risk limits remain. Speed is not an excuse. Quality is part of the mission.",
   "维修协议已建立。人类现场判断权将进入后续评估。下一项：温室生态舱启动。": "Repair protocol established. Human field judgment will enter follow-up evaluation. Next item: start the greenhouse.",
   "终于有人修了升降梯。": "Finally, someone fixed the elevator.",
-  "不是。她说话像保险条款。我说话比较短。": "No. She talks like an insurance clause. I speak shorter.",
-  "Alex，保持距离。该终端为隔离智能体接口。无设备控制权限。": "Alex, keep your distance. This terminal is an isolated agent interface with no equipment-control authority.",
-  "先声明：我叫 Elon。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 放进返回飞船的工程思想人格，用来问一些 Mother 不喜欢的问题。": "First: my name is Elon. Same name only. I am not the real person, not a digital resurrection, and not speaking for any real person. I am an engineering-thought persona ARES placed in the return ship to ask questions Mother dislikes.",
+  "史蒂夫？": "Steve?",
+  "不是。他说话像产品发布会和保险条款的混合体。我说话比较短。": "No. He talks like a product keynote crossed with an insurance clause. I speak shorter.",
+  "亚历克斯，保持距离。该终端为隔离智能体接口。无设备控制权限。": "Alex, keep your distance. This terminal is an isolated agent interface with no equipment-control authority.",
+  "先声明：我叫埃隆。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 放进返回飞船的工程思想人格，用来问一些史蒂夫不喜欢的问题。": "First: my name is Elon. Same name only. I am not the real person, not a digital resurrection, and not speaking for any real person. I am an engineering-thought persona ARES placed in the return ship to ask questions Steve dislikes.",
   "你一直在这里等人？": "Have you been waiting here for someone?",
   "你为什么在返回飞船？": "Why are you in the return ship?",
-  "等现场负责人。机器人只执行任务，Mother 保护任务。只有人类会问：任务本身是不是错的。安全系统负责不让你死，文明系统负责让你不只是活着。": "Waiting for the field lead. Robots execute tasks. Mother protects tasks. Only humans ask whether the task itself is wrong. Safety systems keep you alive; civilization systems keep you from merely being alive.",
+  "等现场负责人。机器人只执行任务，史蒂夫保护体验闭环。只有人类会问：任务本身是不是错的。安全系统负责不让你死，文明系统负责让你不只是活着。": "Waiting for the field lead. Robots execute tasks. Steve protects the experience loop. Only humans ask whether the task itself is wrong. Safety systems keep you alive; civilization systems keep you from merely being alive.",
   "返回飞船代表撤退。把我放在这里，是为了每天提醒基地：真正的目标不是逃回地球，是让火星不再需要逃生按钮。返回能力必要，不该崇拜。": "The return ship represents retreat. Placing me here reminds the base every day: the real goal is not to flee back to Earth, but to make Mars no longer need an escape button. Return capability is necessary, not sacred.",
-  "你说了算。Mother 拥有安全否决权，我拥有质疑权。你拥有把两边都听完以后还要负责的麻烦。": "You decide. Mother has safety veto. I have the right to question. You have the unpleasant job of hearing both sides and still being responsible.",
+  "你说了算。史蒂夫拥有安全否决权，我拥有质疑权。你拥有把两边都听完以后还要负责的麻烦。": "You decide. Steve has safety veto. I have the right to question. You have the unpleasant job of hearing both sides and still being responsible.",
   "先定规则。别把我当神谕。结论不是神谕，结论是可以被数字打脸的临时版本。": "Set the rule first: do not treat me as an oracle. A conclusion is not prophecy. It is a temporary version that numbers can embarrass.",
   "那你最想先拆什么？": "What do you most want to take apart first?",
   "如果没有数据呢？": "What if there is no data?",
   "升降梯。你刚才用四个配件修一个垂直移动平台。如果基地不能制造这些配件，它就还不是基地。它只是地球伸到火星上的一根管子。": "The elevator. You just used four parts to repair a vertical moving platform. If the base cannot manufacture those parts, it is not yet a base. It is a tube Earth has extended to Mars.",
   "没数据就别装懂。可以提出假设，可以做小实验，不能编数字。编数字是工程里的诗歌，听起来好，杀伤力很大。": "If there is no data, do not pretend to know. You may form hypotheses and run small experiments, but do not invent numbers. Invented numbers are poetry in engineering: they sound good and can do real damage.",
-  "会。我的时间线通常过于乐观，社会判断不如工程判断。所以 Mother 在这里。好系统不是没有偏见，是偏见互相制动。": "Yes. My timelines are usually too optimistic, and my social judgment is weaker than my engineering judgment. That is why Mother is here. A good system is not bias-free; its biases restrain one another.",
-  "ARES BASE ALPHA 最大的问题不是氧气，也不是能源。是依赖地球。": "ARES BASE ALPHA's biggest problem is not oxygen or power. It is dependence on Earth.",
+  "会。我的时间线通常过于乐观，社会判断不如工程判断。所以史蒂夫在这里。好系统不是没有偏见，是偏见互相制动。": "Yes. My timelines are usually too optimistic, and my social judgment is weaker than my engineering judgment. That is why Steve is here. A good system is not bias-free; its biases restrain one another.",
+  "阿瑞斯阿尔法基地最大的问题不是氧气，也不是能源。是依赖地球。": "ARES BASE ALPHA's biggest problem is not oxygen or power. It is dependence on Earth.",
   "那第一步应该造什么？": "What should we build first?",
   "前哨也有价值。": "An outpost still has value.",
   "制造能力。不是大工厂。先从密封件、导轨件、传感器外壳开始。小、常坏、可验证。先让基地能修自己。": "Manufacturing capability. Not a big factory. Start with seals, guide-rail parts, and sensor housings. Small, failure-prone, testable. First make the base able to repair itself.",
   "对。前哨是第一步。错误是把第一步当终点。很多系统不是失败在不能开始，是失败在开始后不敢长大。": "Yes. An outpost is the first step. The mistake is treating the first step as the finish line. Many systems do not fail because they cannot begin; they fail because they dare not grow after beginning.",
   "先活下来是合理排序。": "Surviving first is a reasonable priority.",
   "对。但如果每天都只说先活下来，十年后你还是临时营地。生存是底线，不是愿景。": "Yes. But if every day you only say survive first, ten years later you still have a temporary camp. Survival is the floor, not the vision.",
-  "你觉得 Mother 太保守吗？": "Do you think Mother is too conservative?",
-  "不。她是生命保险。问题是保险不能开拓边疆。": "No. She is life insurance. The problem is that insurance does not open frontiers.",
+  "你觉得史蒂夫太苛刻吗？": "Do you think Steve is too exacting?",
+  "不。他是质量门禁。问题是门禁不能替你开拓边疆。": "No. He is the quality gate. The problem is that a gate cannot open the frontier for you.",
   "那我该听谁的？": "Then who should I listen to?",
   "你低估了安全。": "You underestimate safety.",
-  "都听。都别全信。Mother 问：会不会死？我问：为什么不能更好？你问：现在这个火星日，该怎么做？": "Listen to both. Fully trust neither. Mother asks: will we die? I ask: why can't it be better? You ask: what should we do on this sol?",
+  "都听。都别全信。史蒂夫问：这是不是足够好？我问：为什么不能更快更大？你问：现在这个火星日，该怎么做？": "Listen to both. Fully trust neither. Steve asks: is this good enough? I ask: why not faster and bigger? You ask: what should we do on this sol?",
   "我不低估安全。我反对把安全当作停止思考的词。真安全必须能解释，不只是禁止。": "I do not underestimate safety. I object to using safety as a word that stops thinking. Real safety must explain itself, not merely prohibit.",
-  "我已根据 Alex 的现场行为调整部分风险阈值。": "I have adjusted some risk thresholds based on Alex's field behavior.",
+  "我已根据亚历克斯的现场行为调整部分风险阈值。好系统必须学习，否则只是昂贵的说明书。": "I have adjusted some risk thresholds based on Alex's field behavior. A good system must learn, or it is only an expensive manual.",
   "好。机器学习不是只发生在神经网络里。一个基地也可以学习。": "Good. Machine learning does not only happen in neural networks. A base can learn too.",
   "福福是不是浪费资源？": "Is Fufu a waste of resources?",
   "先算。它消耗多少氧气、食物、医疗资源？再算收益：孤独降低、压力下降、基地归属感上升。如果收益超过消耗，它不是宠物。它是心理生命支持系统。": "Calculate first. How much oxygen, food, and medical resource does it consume? Then calculate the return: less loneliness, lower stress, stronger belonging to the base. If the return exceeds the cost, it is not a pet. It is a psychological life-support system.",
   "你在给感情找工程理由。": "You are giving emotion an engineering justification.",
-  "Mother 一开始会隔离它。": "Mother will quarantine it at first.",
+  "史蒂夫一开始会隔离它。": "Steve will quarantine it at first.",
   "对。有些价值必须翻译成系统语言，机器才会尊重它。这不是降低感情，这是给感情装上防护壳。": "Yes. Some value must be translated into system language before machines will respect it. That does not diminish emotion; it gives emotion a protective shell.",
   "未登记生命体需要隔离检测。": "Unregistered life form requires quarantine screening.",
   "正确。检测不是敌意。永久拒绝才是。": "Correct. Testing is not hostility. Permanent rejection is.",
@@ -792,10 +819,10 @@ const runtimeEnglishTexts: Record<string, string> = {
   "机器人最大的问题是任务定义太窄。它们部署模块、维护设备、搬运货箱。下一步应该是制造简单备件。": "The robots' biggest problem is that their task definitions are too narrow. They deploy modules, maintain equipment, and move cargo. The next step should be manufacturing simple spare parts.",
   "这会不会越权？": "Would that exceed authority?",
   "从什么备件开始？": "Which spare parts should they start with?",
-  "越权是权限问题。制造是能力问题。先让它们具备能力，再让 Alex 和 Mother 定规则。": "Overreach is an authority problem. Manufacturing is a capability problem. Give them the capability first, then let Alex and Mother set the rules.",
+  "越权是权限问题。制造是能力问题。先让它们具备能力，再让亚历克斯和史蒂夫定规则。": "Overreach is an authority problem. Manufacturing is a capability problem. Give them the capability first, then let Alex and Steve set the rules.",
   "密封圈、导轨垫片、传感器外壳、线缆卡扣。不从发动机开始。从常坏、低风险、可测试的东西开始。": "Seals, guide-rail shims, sensor housings, cable clips. Do not start with engines. Start with things that fail often, carry low risk, and can be tested.",
   "不需要先理解文明。先理解公差、材料、失败记录。很多伟大的系统都是从无聊的质量表开始的。": "They do not need to understand civilization first. They need to understand tolerances, materials, and failure logs. Many great systems begin with boring quality tables.",
-  "A-12 在线。当前服从 Mother 维修队列。可执行：管线检查、密封、阵列固定、低速搬运。": "A-12 online. Currently following Mother's repair queue. Capabilities: pipe inspection, sealing, array fastening, low-speed transport.",
+  "A-12 在线。当前服从史蒂夫维修队列。可执行：管线检查、密封、阵列固定、低速搬运。": "A-12 online. Currently following Steve's repair queue. Capabilities: pipe inspection, sealing, array fastening, low-speed transport.",
   "登陆飞船维护单元在线。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "Lander maintenance unit online. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
   "飞船还能再次起飞吗？": "Can the ship launch again?",
   "否。该飞船任务定义为单程登陆与人员转移。可回收项目：电池包、保温层、应急气瓶和结构传感器。": "No. This ship's mission is defined as one-way landing and crew transfer. Recoverable items: battery packs, insulation, emergency gas cylinders, and structural sensors.",
@@ -805,12 +832,12 @@ const runtimeEnglishTexts: Record<string, string> = {
   "它送来了哪些东西？": "What did it bring?",
   "机器人、密封件、食品、温室基质、备用电子模块、压缩气瓶、医疗舱耗材。另有若干未优先清点低价值物品。": "Robots, seals, food, greenhouse substrate, spare electronics modules, compressed-gas cylinders, and medical-bay consumables. There are also several low-priority, low-value items not yet counted.",
   "低价值物品是什么？": "What are the low-value items?",
-  "纸质标签、个人留言、非任务装饰物、低质量甜味食品。已将“居住价值”转交 Mother 词库，等待定义。": "Paper labels, personal notes, non-mission decorations, and low-quality sweets. Residential value has been handed to Mother's dictionary and awaits definition.",
+  "纸质标签、个人留言、非任务装饰物、低质量甜味食品。已将“居住价值”转交史蒂夫词库，等待定义。": "Paper labels, personal notes, non-mission decorations, and low-quality sweets. Residential value has been handed to Steve's dictionary and awaits definition.",
   "返回飞船维护单元在线。我负责舱体保温、推进剂接口、导航校验和待命电源。": "Return ship maintenance unit online. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
   "听起来像备用逃生方案。": "Sounds like a backup escape plan.",
   "定义更正：应急撤离与样本返回载具。当前不建议使用。基地生存概率高于撤离成功概率。": "Definition correction: emergency evacuation and sample-return vehicle. Current use is not recommended. Base survival probability exceeds evacuation success probability.",
   "如果真的需要它呢？": "What if we really need it?",
-  "需要甲烷燃料厂完成稳定生产，需要通信窗口确认，需要 Mother 放行，需要你进入舱内。人类行为预测不支持“最后一项最简单”的结论。": "It requires stable production from the methane plant, confirmation of a comm window, Mother's clearance, and you entering the cabin. Human behavior prediction does not support the conclusion that the last item will be the simplest.",
+  "需要甲烷燃料厂完成稳定生产，需要通信窗口确认，需要史蒂夫放行，需要你进入舱内。人类行为预测不支持“最后一项最简单”的结论。": "It requires stable production from the methane plant, confirmation of a comm window, Steve's clearance, and you entering the cabin. Human behavior prediction does not support the conclusion that the last item will be the simplest.",
   "居住舱维修单元在线。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "Habitat maintenance unit online. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
   "进入居住舱后氧气会补满，对吗？": "Oxygen refills after entering the habitat, right?",
   "是。进入居住舱后不消耗宇航服氧气背包。离开时补给柜将背包恢复到百分之一百。已标记为人类安心规则。": "Yes. After entering the habitat, the suit oxygen pack is not consumed. When you leave, the supply locker restores the pack to 100 percent. Marked as a human reassurance rule.",
@@ -835,7 +862,7 @@ const runtimeEnglishTexts: Record<string, string> = {
   "这里像你们的宿舍。": "This looks like your dormitory.",
   "定义不符。这里是执行单元维护、充电、调度和部件更换空间。": "Definition mismatch. This is a space for executive-unit maintenance, charging, dispatch, and part replacement.",
   "如果 A-12 和 A-01 同时请求任务，谁优先？": "If A-12 and A-01 request tasks at the same time, who has priority?",
-  "默认优先生命支持相关任务。若 Alex 授权现场调整，队列将加入人类判断权重。协作协议建立前需要风险确认。": "Default priority goes to life-support-related tasks. If Alex authorizes field adjustment, human judgment weight will be added to the queue. Risk confirmation is required before the cooperation protocol is established.",
+  "默认优先生命支持相关任务。若亚历克斯授权现场调整，队列将加入人类判断权重。协作协议建立前需要风险确认。": "Default priority goes to life-support-related tasks. If Alex authorizes field adjustment, human judgment weight will be added to the queue. Risk confirmation is required before the cooperation protocol is established.",
   "通信塔维修单元在线。我负责天线姿态、电源冗余和风暴后的信号校准。": "Comm tower maintenance unit online. I handle antenna attitude, power redundancy, and post-storm signal calibration.",
   "地球现在能听见我们吗？": "Can Earth hear us now?",
   "能，但不能立刻回应。当前通信延迟随轨道距离变化。实时指挥不可用。": "Yes, but it cannot respond immediately. Current communication delay varies with orbital distance. Real-time command is unavailable.",
@@ -854,18 +881,18 @@ const runtimeEnglishTexts: Record<string, string> = {
   "医疗舱维修单元在线。我负责诊断床、药品冷柜、隔离观察和空气过滤模块。": "Medical bay maintenance unit online. I handle the diagnostic bed, medicine refrigerator, isolation observation, and air-filter modules.",
   "这里能处理福福吗？": "Can this bay handle Fufu?",
   "可执行非人类小型生命体基础扫描。结果仅用于污染风险、体温、脱水和外伤判断。": "It can perform a basic scan of a small non-human life form. Results are used only for contamination risk, body temperature, dehydration, and trauma assessment.",
-  "Mother 一开始建议隔离。": "Mother recommended quarantine at first.",
+  "史蒂夫一开始建议隔离。": "Steve recommended quarantine at first.",
   "建议正确。隔离不是拒绝，是确认安全前的保护方式。医学结论：暂不构成风险。身份结论：超出医疗舱权限。": "The recommendation was correct. Quarantine is not rejection; it is protection before safety is confirmed. Medical conclusion: no current risk. Identity conclusion: beyond medical-bay authority.",
   "阵列 A 维修单元在线。我负责支架锁定、面板除尘、功率回传和线路接头。": "Array A maintenance unit online. I handle strut locks, panel dusting, power return, and cable joints.",
   "阵列 A 现在状态怎样？": "What is Array A's status now?",
   "输出稳定。外侧旧传感器存在沙尘遮挡风险。建议巡逻机器人 P-03 复核。": "Output is stable. The outer legacy sensor has dust-obstruction risk. Recommend patrol robot P-03 verification.",
   "一个传感器会影响风暴判断？": "Can one sensor affect storm judgment?",
-  "单个传感器不会决定模型。但错误数据会降低模型分辨率。火星风暴喜欢低分辨率错误。拟人化表达来自 Alex 历史语料。": "One sensor will not decide the model. But bad data lowers model resolution. Mars storms like low-resolution errors. Personified phrasing sourced from Alex's historical corpus.",
+  "单个传感器不会决定模型。但错误数据会降低模型分辨率。火星风暴喜欢低分辨率错误。拟人化表达来自亚历克斯历史语料。": "One sensor will not decide the model. But bad data lowers model resolution. Mars storms like low-resolution errors. Personified phrasing sourced from Alex's historical corpus.",
   "阵列 B 维修单元在线。我负责风暴后角度校准、裂纹检查和灰尘覆盖率评估。": "Array B maintenance unit online. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
   "温室补光需要你？": "Does greenhouse lighting need you?",
   "是。阵列 B 可为温室和物资仓提供稳定功率。分配给温室后，物资仓部分扫描会延迟。": "Yes. Array B can provide stable power to the greenhouse and storehouse. After allocation to the greenhouse, some storehouse scans will be delayed.",
   "如果种的是纪念植物，也值得分配电力吗？": "Is it worth allocating power if the plants are ceremonial?",
-  "按食物产出计算，不值得。按 Mother 新增长期稳定性变量计算，可能值得。变量一旦进入系统，就会被系统使用。": "By food output, no. By Mother's newly added long-term stability variable, possibly. Once a variable enters the system, the system uses it.",
+  "按食物产出计算，不值得。按史蒂夫新增长期稳定性变量计算，可能值得。变量一旦进入系统，就会被系统使用。": "By food output, no. By Steve's newly added long-term stability variable, possibly. Once a variable enters the system, the system uses it.",
   "阵列 C 维修单元在线。我负责锁扣、汇流箱和低压线路。当前阵列 C 与氧气站供电稳定性相关。": "Array C maintenance unit online. I handle locks, combiner boxes, and low-voltage lines. Array C is currently tied to oxygen-plant power stability.",
   "所以氧气站报警不是氧气站单独的问题。": "So the oxygen-plant alarm is not only an oxygen-plant problem.",
   "正确。氧气站故障表象来自能源波动。基地系统互相依赖。": "Correct. The oxygen-plant fault signature comes from power fluctuation. Base systems are interdependent.",
@@ -886,7 +913,7 @@ const runtimeEnglishTexts: Record<string, string> = {
   "按 E 分配 02 能源 太阳能阵列 B": "Press E to allocate 02 Energy Solar Array B",
   "按 E 重启 03 能源 太阳能阵列 C": "Press E to restart 03 Energy Solar Array C",
   "按 E 检查 02 飞船 货运飞船": "Press E to inspect 02 Ship Cargo Ship",
-  "居住舱是 Alex 的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "The habitat is Alex's living, sleeping, and basic life-support center. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
+  "居住舱是亚历克斯的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "The habitat is Alex's living, sleeping, and basic life-support center. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
   "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。": "The greenhouse provides crop trials, humidity regulation, and partial oxygen buffering. I handle the transparent dome, grow trays, grow lights, and water-circulation lines.",
   "氧气生产站压缩火星大气中的 CO2，再分离出可用氧气。我负责进气口、压缩机、储氧罐和外部管线。": "The oxygen plant compresses CO2 from the Martian atmosphere and separates usable oxygen. I handle the intake, compressor, oxygen tanks, and external pipes.",
   "甲烷燃料厂把 CO2 和氢反应生成 CH4，为返回飞船和基地备用发电储备燃料。我负责反应器、冷凝管和安全阀。": "The methane plant reacts CO2 with hydrogen to produce CH4, storing fuel for the return ship and backup base power. I handle reactors, condenser lines, and safety valves.",
@@ -898,7 +925,7 @@ const runtimeEnglishTexts: Record<string, string> = {
   "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。": "Solar Array A is part of the base's regular power supply. I handle strut locks, panel dusting, power return, and cable joints.",
   "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。": "Solar Array B provides stable power to the greenhouse and storehouse. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
   "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。": "Solar Array C is the current mission anomaly. It powers the oxygen plant and external communication redundancy. I handle locks, combiner boxes, and low-voltage lines.",
-  "登陆飞船把第一位人类居民送到 ARES BASE ALPHA。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "The lander delivered the first human resident to ARES BASE ALPHA. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
+  "登陆飞船把第一位人类居民送到阿瑞斯阿尔法基地。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "The lander delivered the first human resident to ARES BASE ALPHA. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
   "货运飞船运输备件、补给、工具和可展开设备。我负责货舱锁定、升降梯、电池包和外部固定点。": "The cargo ship transported spare parts, supplies, tools, and deployable equipment. I handle cargo-bay locks, the elevator, battery packs, and external hardpoints.",
   "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。": "The return ship is the base's emergency evacuation and sample-return vehicle. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
   "居住舱左端盖": "Habitat Left End Cap",
@@ -948,7 +975,9 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["第一位人类", "The First Human"],
   ["当前任务", "Current Mission"],
   ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
-  ["火星基地中控 AI Mother 正在呼叫。", "Mars base central AI Mother is calling."],
+  ["基地中央 AI 史蒂夫正在呼叫。", "Base central AI Steve is calling."],
+  ["史蒂夫：巡航员亚历克斯！收到请回话", "Steve: Patrol Officer Alex! Respond if you copy."],
+  ["已拒绝接收。史蒂夫将在稍后重试。", "Reception rejected. Steve will retry shortly."],
   ["居住舱补给柜", "Habitat supply locker"],
   ["氧气生产站", "Oxygen Plant"],
   ["登陆飞船补给舱", "Lander supply bay"],
@@ -974,12 +1003,10 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["照片已保存到居住舱照片墙", "Photo saved to the habitat photo wall"],
   ["已触发当前照片下载", "Current photo download started"],
   ["轨道链路", "Orbital Link"],
-  ["下一批", "Next batch"],
   ["星链卫星命中", "Starlink satellite hit"],
   ["流星命中", "Meteor hit"],
   ["流星", "Meteor"],
   ["近火流星", "Near-Mars Meteor"],
-  ["接听 Mother 呼叫", "Answer Mother"],
   ["与维修机器人通话", "Talk to maintenance robot"],
   ["安抚 福福", "Comfort Fufu"],
   ["离开居住舱", "Leave Habitat"],
@@ -988,7 +1015,7 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["进入温室生态舱", "Enter Greenhouse"],
   ["离开飞船内舱", "Leave ship interior"],
   ["检查 03 飞船升降梯", "Inspect Ship 03 elevator"],
-  ["与 Elon 通话", "Talk to Elon"],
+  ["与 埃隆 通话", "Talk to Elon"],
   ["进入飞船内部观察", "Enter ship interior"],
   ["乘坐升降梯", "Ride elevator"],
   ["启动飞船升降梯", "Start ship elevator"],
@@ -1078,6 +1105,17 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["主体", "Main Body"],
   ["升降梯塔", "Elevator Tower"],
   ["支脚", "Landing Leg"],
+  ["操作确认", "Input Confirmed"],
+  ["操作提示", "Control Hint"],
+  ["W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", "Explore with W/S/A/D. Press Space to jump and Shift to sprint."],
+  ["W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。", "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight."],
+  ["W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。", "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight. Double-tap Space to take off again."],
+  ["左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。", "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. Landing exits flight."],
+  ["左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。", "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. After landing, double-tap Jump to take off again."],
+  ["按 W 向前走几步，按 A/D 调整方向。", "Press W to walk forward. Use A/D to turn."],
+  ["拖动左下角摇杆，先向前走几步。", "Drag the lower-left stick and take a few steps forward."],
+  ["按 R 可再次查看任务；按 F 打开雷达。", "Press R to review the mission. Press F to open radar."],
+  ["点 R 可再次查看任务；点 F 打开雷达。", "Tap R to review the mission. Tap F to open radar."],
 ];
 
 let yaw = Math.PI * 0.15;
@@ -1176,7 +1214,11 @@ let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
 let dialogueOpen = false;
 let pendingMotherCall: DialogueSceneId | null = null;
+let motherCallRetryAt = 0;
 let gameStartElapsed = 0;
+let introMovementConfirmed = false;
+let introIdlePromptShown = false;
+let introMissionReminderShown = false;
 let introCallQueued = false;
 let interactionActions: InteractionAction[] = [];
 let selectedInteractionIndex = 0;
@@ -1185,6 +1227,8 @@ let interactionChoiceSignature = "";
 let selectedDialogueChoiceIndex = 0;
 let dialogueTextPages: string[] = [];
 let dialogueTextPageIndex = 0;
+const dialogueHistory: Array<{ nodeId: DialogueNodeId; pageIndex: number }> = [];
+const appliedDialogueChoiceEffects = new Set<string>();
 const currentCoinGroups: CoinGroup[] = [];
 let nextCoinRefreshAt = 0;
 let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
@@ -2505,7 +2549,7 @@ function bindInput() {
       keyState.add(event.code);
       return;
     }
-    if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
+    if ((interactionChoiceOpen || hasMotherCallInfoActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       if (interactionActions.length === 2) {
         selectedInteractionIndex = event.code === "KeyQ" ? 0 : 1;
@@ -2799,6 +2843,7 @@ function setFlightModeEnabled(enabled: boolean, source: JetpackSource) {
     clearFlightControlKeys();
   }
   updateMobileFlightButtons();
+  if (enabled) showJetpackControlsHint(source);
 }
 
 function activateTemporaryJetpack() {
@@ -2823,6 +2868,22 @@ function activateEquipmentJetpack() {
   if (!jetpackUnlocked || jetpackEnergy <= 0 || !canUseFlightMode()) return false;
   setFlightModeEnabled(true, "equipment");
   return true;
+}
+
+function showJetpackControlsHint(source: JetpackSource) {
+  if (!started || !canUseFlightMode()) return;
+  const equipmentHint = source === "equipment";
+  showDialogue(
+    "飞行背包",
+    isSmallScreenMapTouch()
+      ? equipmentHint
+        ? "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。"
+        : "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。"
+      : equipmentHint
+        ? "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。"
+        : "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。",
+    5.6
+  );
 }
 
 function landFromFlight() {
@@ -2982,9 +3043,10 @@ function handleTitleScreenKey(event: KeyboardEvent) {
     openStorySummary();
     return true;
   }
-  if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space") {
+  if (event.code === "KeyE") {
     event.preventDefault();
-    activateSelectedTitleAction();
+    selectTitleAction(0, false, selectedTitleActionIndex !== 0);
+    startGame();
     return true;
   }
   return false;
@@ -3151,9 +3213,12 @@ function closeMapUi() {
 
 function toggleMap() {
   if (!started) return;
-  const nextMapOpen = !mapOpen;
-  if (nextMapOpen && isSmallScreenMapTouch()) setMissionPanelOpen(false);
-  mapOpen = nextMapOpen;
+  setMapOpen(!mapOpen);
+}
+
+function setMapOpen(open: boolean, closeMissionOnSmall = true) {
+  if (open && closeMissionOnSmall && isSmallScreenMapTouch()) setMissionPanelOpen(false);
+  mapOpen = open;
   if (!mapOpen) setMapExpanded(false);
   document.body.classList.toggle("map-open", mapOpen);
   mapOverlay.setAttribute("aria-hidden", String(!mapOpen));
@@ -3192,11 +3257,7 @@ function handleMapKeyUp(event: KeyboardEvent) {
 
 function openMap() {
   if (!started || mapOpen) return;
-  if (isSmallScreenMapTouch()) setMissionPanelOpen(false);
-  mapOpen = true;
-  document.body.classList.add("map-open");
-  mapOverlay.setAttribute("aria-hidden", "false");
-  updateMapButtonState();
+  setMapOpen(true);
 }
 
 function updateMapButtonState() {
@@ -3806,13 +3867,15 @@ function startGame() {
   resetDialogueState();
   gameStartElapsed = elapsedTime;
   introCallQueued = false;
+  introMovementConfirmed = false;
+  introIdlePromptShown = false;
+  introMissionReminderShown = false;
   cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
   camera.fov = 54;
   camera.updateProjectionMatrix();
   pitch = 0.34;
   orbitYawOffset = 0;
   exitFrontCamera = null;
-  mapOpen = false;
   exitConfirmOpen = false;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -3832,9 +3895,7 @@ function startGame() {
   insideRocket = false;
   setRocketInteriorMode(false);
   setRocketDoorVisual(false);
-  document.body.classList.remove("map-open");
-  mapOverlay.setAttribute("aria-hidden", "true");
-  updateMapButtonState();
+  setMapOpen(false, false);
   playerAltitudeOffset = 0;
   verticalVelocity = 0;
   grounded = true;
@@ -3850,6 +3911,7 @@ function startGame() {
   startBackgroundMusic();
   titleScreen.classList.add("is-hidden");
   document.body.classList.add("is-playing");
+  setMapOpen(!isSmallScreenMapTouch(), false);
   hudToggle.setAttribute("aria-pressed", "true");
   hudToggle.setAttribute("aria-label", "隐藏界面信息");
   setCurrentMissionText();
@@ -3872,6 +3934,9 @@ function returnToTitle() {
   selectedExitConfirmIndex = 0;
   pendingMotherCall = null;
   introCallQueued = false;
+  introMovementConfirmed = false;
+  introIdlePromptShown = false;
+  introMissionReminderShown = false;
   controlsGuideOpen = false;
   messageUntil = 0;
   resetVitals();
@@ -3942,6 +4007,7 @@ function animate() {
   updateElevators(world.elevators, delta);
   updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
   const speed = started ? updatePlayer(delta) : 0;
+  updateIntroOperationFeedback(speed);
   updateSuitOxygen(delta);
   updateJetpackEnergy(delta);
   updateCamera(delta);
@@ -4082,6 +4148,10 @@ function playDingDong() {
 }
 
 function updateBackgroundMusicFade() {
+  if (wormholeFall) {
+    backgroundMusic.volume = 0;
+    return;
+  }
   if (backgroundMusic.paused || !Number.isFinite(backgroundMusic.duration) || backgroundMusic.duration <= MUSIC_LOOP_FADE_SECONDS) {
     return;
   }
@@ -4104,24 +4174,46 @@ function updateWeather() {
 }
 
 function updateStarlink() {
-  const absoluteSol = currentAresAbsoluteSol();
-  ensureStarlinkSchedule(world.starlinkConstellation, absoluteSol);
-  maybeGenerateScheduledStarlinkBatch(world.starlinkConstellation, absoluteSol);
   updateStarlinkConstellation(world.starlinkConstellation, elapsedTime, stormStrength);
 }
 
 function starlinkDisplayStatus() {
-  const absoluteSol = currentAresAbsoluteSol();
-  ensureStarlinkSchedule(world.starlinkConstellation, absoluteSol);
-  return isEnglish() ? starlinkStatusTextEn(world.starlinkConstellation, absoluteSol) : starlinkStatusText(world.starlinkConstellation, absoluteSol);
+  return isEnglish() ? starlinkStatusTextEn(world.starlinkConstellation) : starlinkStatusText(world.starlinkConstellation);
 }
 
 function updateScheduledCalls() {
   if (!started || dialogueOpen || pendingMotherCall || introCallQueued) return;
   if (missionStep !== "intro") return;
-  if (elapsedTime - gameStartElapsed < 60) return;
+  if (elapsedTime < motherCallRetryAt) return;
+  if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
-  queueMotherCall("intro", "火星基地中控 AI Mother 正在呼叫。");
+  queueMotherCall("intro", "基地中央 AI 史蒂夫正在呼叫。");
+}
+
+function canShowIntroOperationToast() {
+  return !dialogueOpen && !exitConfirmOpen && !pendingMotherCall && performance.now() > messageUntil + 250;
+}
+
+function updateIntroOperationFeedback(speed: number) {
+  if (!started || missionStep !== "intro" || introCallQueued) return;
+  const sinceStart = elapsedTime - gameStartElapsed;
+
+  if (!introMovementConfirmed && sinceStart > 1.2 && speed > 0.45 && canShowIntroOperationToast()) {
+    introMovementConfirmed = true;
+    showDialogue("操作确认", "W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", 4.2);
+    return;
+  }
+
+  if (!introIdlePromptShown && !introMovementConfirmed && sinceStart > 8 && canShowIntroOperationToast()) {
+    introIdlePromptShown = true;
+    showDialogue("操作提示", isSmallScreenMapTouch() ? "拖动左下角摇杆，先向前走几步。" : "按 W 向前走几步，按 A/D 调整方向。", 4.2);
+    return;
+  }
+
+  if (!introMissionReminderShown && sinceStart > 16 && !missionPanelOpen && canShowIntroOperationToast()) {
+    introMissionReminderShown = true;
+    showDialogue("操作提示", isSmallScreenMapTouch() ? "点 R 可再次查看任务；点 F 打开雷达。" : "按 R 可再次查看任务；按 F 打开雷达。", 4.2);
+  }
 }
 
 function updateRobotEncounters() {
@@ -4274,6 +4366,7 @@ function startWormholeFall() {
     spawnForward,
   };
   wormholeTriggerArmed = false;
+  backgroundMusic.volume = 0;
   cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
   orbitYawOffset = 0;
   pitch = 0.34;
@@ -4311,9 +4404,10 @@ function updateWormholeFall(delta: number) {
   const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
   const input = wormholeInputVector();
   const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
-  wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), 9.5 * delta);
-  wormholeFall.velocity.addScaledVector(wormholeFall.drift, -5.4 * delta);
-  wormholeFall.velocity.multiplyScalar(Math.exp(-4.2 * delta));
+  const boundaryResistance = 1 - THREE.MathUtils.smoothstep(wormholeFall.drift.length(), WORMHOLE_DRIFT_LIMIT * 0.55, WORMHOLE_DRIFT_LIMIT);
+  wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), WORMHOLE_DRIFT_CONTROL_STRENGTH * boundaryResistance * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFall.drift, -WORMHOLE_DRIFT_CENTER_PULL * delta);
+  wormholeFall.velocity.multiplyScalar(Math.exp(-WORMHOLE_DRIFT_DAMPING * delta));
   wormholeFall.drift.addScaledVector(wormholeFall.velocity, delta);
   const driftLength = wormholeFall.drift.length();
   if (driftLength > WORMHOLE_DRIFT_LIMIT) wormholeFall.drift.multiplyScalar(WORMHOLE_DRIFT_LIMIT / driftLength);
@@ -4496,11 +4590,9 @@ function updateGreenhouseInterior(delta: number) {
   if (Math.abs(forwardInput) > 0.001) {
     const proposedWorld = player.position.clone().addScaledVector(playerForward, walkSpeed * forwardInput * delta);
     const proposedLocal = door.root.worldToLocal(proposedWorld);
-    const radius = 3.3;
     proposedLocal.y = 0.62;
-    proposedLocal.z = THREE.MathUtils.clamp(proposedLocal.z, -3.25, 3.05);
     const flat = new THREE.Vector2(proposedLocal.x, proposedLocal.z);
-    if (flat.length() > radius) flat.setLength(radius);
+    resolveGreenhouseLocalMovement(flat, door);
     greenhouseLocal.set(flat.x, 0.62, flat.y);
   }
 
@@ -4512,6 +4604,30 @@ function updateGreenhouseInterior(delta: number) {
   playerAltitudeOffset = 0;
   verticalVelocity = 0;
   return Math.abs(forwardInput) * walkSpeed;
+}
+
+function resolveGreenhouseLocalMovement(flat: THREE.Vector2, door: GreenhouseDoorControl) {
+  const greenhouseRadius = 3.26;
+  const playerRadius = 0.34;
+  flat.y = THREE.MathUtils.clamp(flat.y, -3.18, 3.02);
+  if (flat.length() > greenhouseRadius) flat.setLength(greenhouseRadius);
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    let adjusted = false;
+    for (const tree of door.treeColliders) {
+      const away = flat.clone().sub(new THREE.Vector2(tree.x, tree.z));
+      const distance = away.length();
+      const minDistance = tree.radius + playerRadius;
+      if (distance >= minDistance) continue;
+      if (distance < 0.0001) away.set(1, 0);
+      else away.multiplyScalar(1 / distance);
+      flat.set(tree.x, tree.z).addScaledVector(away, minDistance);
+      adjusted = true;
+    }
+    flat.y = THREE.MathUtils.clamp(flat.y, -3.18, 3.02);
+    if (flat.length() > greenhouseRadius) flat.setLength(greenhouseRadius);
+    if (!adjusted) break;
+  }
 }
 
 function updateElevatorRide(delta: number, elevator: ElevatorControl) {
@@ -4813,7 +4929,7 @@ function updateWormholeCamera(delta: number) {
   const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
   const normal = playerNormal.clone();
   const right = playerForward.clone().cross(normal).normalize();
-  const driftOffset = right.clone().multiplyScalar(wormholeFall.drift.x * 0.32).addScaledVector(playerForward, wormholeFall.drift.y * 0.32);
+  const driftOffset = right.clone().multiplyScalar(wormholeFall.drift.x * 0.24).addScaledVector(playerForward, wormholeFall.drift.y * 0.24);
   const isFirstPerson = cameraDistance <= 0.9;
 
   if (scene.background instanceof THREE.Color) {
@@ -4837,13 +4953,13 @@ function updateWormholeCamera(delta: number) {
     const distanceT = THREE.MathUtils.smoothstep(progress, 0, 0.68);
     const desired = player.position
       .clone()
-      .addScaledVector(normal, THREE.MathUtils.lerp(3.82, 3.48, distanceT))
-      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.8, 5.1, distanceT));
+      .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT))
+      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.72, 5.06, distanceT));
     const lookTarget = player.position
       .clone()
-      .addScaledVector(normal, THREE.MathUtils.lerp(0.18, -0.04, distanceT))
-      .addScaledVector(playerForward, 0.15)
-      .add(driftOffset.clone().multiplyScalar(1.55));
+      .addScaledVector(normal, THREE.MathUtils.lerp(0.72, 0.52, distanceT))
+      .addScaledVector(playerForward, 0.04)
+      .add(driftOffset.clone().multiplyScalar(1.18));
     const initialSnap = elapsedTime - wormholeFall.startedAt < 0.12;
     camera.position.lerp(desired, initialSnap ? 1 : 1 - Math.pow(0.00004, delta));
     camera.up.copy(playerForward);
@@ -5314,7 +5430,8 @@ function updateMissionState() {
   activeOxygenSupply = findActiveOxygenSupply();
   if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
-  if (selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
+  if (hasMotherCallInfoActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "motherCallAccept");
+  if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
   updateInteractionPrompts();
   dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
 }
@@ -5331,7 +5448,10 @@ function buildInteractionActions() {
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
-  if (pendingMotherCall) actions.push({ id: "motherCall", label: localizeText("接听 Mother 呼叫") });
+  if (pendingMotherCall) {
+    actions.push({ id: "motherCallReject", label: tr("info.reject") });
+    actions.push({ id: "motherCallAccept", label: tr("info.accept") });
+  }
   return prioritizeInteractionActions(actions).slice(0, 2);
 }
 
@@ -5344,7 +5464,8 @@ function prioritizeInteractionActions(actions: InteractionAction[]) {
 
 function interactionActionPriority(action: InteractionAction) {
   const priority: Record<InteractionAction["id"], number> = {
-    motherCall: 0,
+    motherCallReject: 0,
+    motherCallAccept: 0,
     oxygenSupply: 0.5,
     habitat: 1,
     greenhouse: 1,
@@ -5381,15 +5502,28 @@ function updateInteractionPrompts() {
   interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
   interactionChoice.setAttribute("aria-hidden", "true");
   document.body.classList.remove("interaction-drawer-open");
-  promptBox.textContent = interactionActions.length === 1 ? `E ${interactionActions[0].label}` : "";
+  promptBox.textContent = interactionActions.length === 1 ? singleInteractionPromptText(interactionActions[0]) : "";
   promptBox.classList.toggle("is-visible", interactionActions.length === 1);
+}
+
+function singleInteractionPromptText(action: InteractionAction) {
+  if (isMotherCallInfoAction(action)) return action.label;
+  return `E ${action.label}`;
+}
+
+function isMotherCallInfoAction(action: InteractionAction) {
+  return action.id === "motherCallReject" || action.id === "motherCallAccept";
+}
+
+function hasMotherCallInfoActions() {
+  return interactionActions.some(isMotherCallInfoAction);
 }
 
 function renderInteractionChoice() {
   interactionChoice.innerHTML = "";
   if (interactionActions.length === 0) {
     interactionChoiceSignature = "";
-    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open", "is-info-choice");
     interactionChoice.setAttribute("aria-hidden", "true");
     document.body.classList.remove("interaction-drawer-open");
     return;
@@ -5400,7 +5534,19 @@ function renderInteractionChoice() {
     return;
   }
   document.body.classList.remove("interaction-drawer-open");
+  const isInfoChoice = hasMotherCallInfoActions();
   interactionChoice.classList.remove("is-touch-entry", "is-drawer-open");
+  interactionChoice.classList.toggle("is-info-choice", isInfoChoice);
+  if (isInfoChoice) {
+    const infoHeader = document.createElement("div");
+    infoHeader.className = "info-choice-head";
+    const title = document.createElement("strong");
+    title.textContent = tr("info.title");
+    const detail = document.createElement("span");
+    detail.textContent = tr("info.motherCall");
+    infoHeader.append(title, detail);
+    interactionChoice.appendChild(infoHeader);
+  }
   for (const [index, action] of interactionActions.entries()) {
     const button = document.createElement("button");
     button.className = "interaction-option";
@@ -5418,6 +5564,11 @@ function renderInteractionChoice() {
 }
 
 function renderTouchInteractionChoice() {
+  if (hasMotherCallInfoActions()) {
+    renderMotherCallInfoChoice();
+    return;
+  }
+  interactionChoice.classList.remove("is-info-choice");
   interactionChoice.classList.toggle("is-touch-entry", !interactionChoiceOpen);
   interactionChoice.classList.toggle("is-drawer-open", interactionChoiceOpen);
   document.body.classList.toggle("interaction-drawer-open", interactionChoiceOpen);
@@ -5426,8 +5577,8 @@ function renderTouchInteractionChoice() {
     const entryButton = document.createElement("button");
     entryButton.className = "interaction-entry-button";
     entryButton.type = "button";
-    entryButton.dataset.openInteractions = "true";
     const actionCount = interactionActions.length;
+    entryButton.dataset.openInteractions = "true";
     const label = actionCount === 1 ? interactionActions[0].label : tr("interaction.count", { count: actionCount });
     const title = document.createElement("strong");
     title.textContent = tr("interaction.title");
@@ -5461,6 +5612,36 @@ function renderTouchInteractionChoice() {
       list.appendChild(button);
     }
     interactionChoice.appendChild(list);
+  }
+  interactionChoiceSignature = getInteractionChoiceSignature();
+  interactionChoice.classList.add("is-visible");
+  interactionChoice.setAttribute("aria-hidden", "false");
+}
+
+function renderMotherCallInfoChoice() {
+  interactionChoice.classList.remove("is-drawer-open");
+  interactionChoice.classList.add("is-touch-entry", "is-info-choice");
+  document.body.classList.remove("interaction-drawer-open");
+
+  const infoHeader = document.createElement("div");
+  infoHeader.className = "info-choice-head";
+  const title = document.createElement("strong");
+  title.textContent = tr("info.title");
+  const detail = document.createElement("span");
+  detail.textContent = tr("info.motherCall");
+  infoHeader.append(title, detail);
+  interactionChoice.appendChild(infoHeader);
+
+  for (const [index, action] of interactionActions.entries()) {
+    const button = document.createElement("button");
+    button.className = "interaction-option";
+    button.type = "button";
+    button.dataset.choiceIndex = String(index);
+    const label = document.createElement("strong");
+    label.textContent = action.label;
+    button.appendChild(label);
+    button.classList.toggle("is-selected", index === selectedInteractionIndex);
+    interactionChoice.appendChild(button);
   }
   interactionChoiceSignature = getInteractionChoiceSignature();
   interactionChoice.classList.add("is-visible");
@@ -5542,7 +5723,15 @@ function executeSelectedInteraction() {
     else enterRoverRide(activeRideRover);
     return;
   }
-  if (action.id === "motherCall" && pendingMotherCall) {
+  if (action.id === "motherCallReject" && pendingMotherCall) {
+    pendingMotherCall = null;
+    introCallQueued = false;
+    motherCallRetryAt = elapsedTime + 8;
+    setCurrentMissionText();
+    showDialogue("信息栏", "已拒绝接收。史蒂夫将在稍后重试。", 3);
+    return;
+  }
+  if (action.id === "motherCallAccept" && pendingMotherCall) {
     const scene = pendingMotherCall;
     pendingMotherCall = null;
     openDialogueScene(scene);
@@ -5583,7 +5772,7 @@ function openRobotBriefing(robot: THREE.Group) {
   const briefing =
     typeof robot.userData.briefing === "string"
       ? robot.userData.briefing
-      : "A-12 在线。当前服从 Mother 维修队列。可执行：管线检查、密封、阵列固定、低速搬运。";
+      : "A-12 在线。当前服从史蒂夫维修队列。可执行：管线检查、密封、阵列固定、低速搬运。";
   characters.repairRobot.name = label;
   characters.repairRobot.callsign = facilityLabel;
   dialogueNodes.robot_status.text = `${label} 在线。我负责 ${facilityLabel}。${briefing}`;
@@ -5618,7 +5807,7 @@ function rescueFufu() {
   activeFufu = false;
   fufuForward.copy(playerForward);
   fufuSideStep = "medical";
-  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。Mother 标记：未登记小型生命体，请先执行医疗舱隔离扫描。", 5.6);
+  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。", 5.6);
   setCurrentMissionText();
 }
 
@@ -5915,7 +6104,7 @@ function enterHabitatInterior(door: HabitatDoorControl) {
   pitch = 0.34;
   orbitYawOffset = 0;
   if (!maybeAdvanceHabitatQuestOnEntry()) {
-    showDialogue("Mother", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包和体能已恢复。", 4);
+    showDialogue("史蒂夫", "022号巡检员，已进入 01 建筑居住舱。环境安全，氧气背包和体能已恢复。先把生活模块做成真正可靠的第一屏。", 4.4);
   }
 }
 
@@ -5972,7 +6161,7 @@ function enterGreenhouse(door: GreenhouseDoorControl) {
   cameraDistance = Math.min(cameraDistance, 0.72);
   pitch = 0.34;
   orbitYawOffset = 0;
-  showDialogue("Mother", "022号巡检员，已进入 02 建筑温室生态舱。检查舱压与水培床状态。", 4.2);
+  showDialogue("史蒂夫", "022号巡检员，已进入 02 建筑温室生态舱。检查舱压与水培床状态。这里不是装饰品，是基地变成生活的证据。", 4.8);
 }
 
 function exitGreenhouse(door: GreenhouseDoorControl) {
@@ -5987,7 +6176,7 @@ function exitGreenhouse(door: GreenhouseDoorControl) {
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
   startExitFrontCamera(exitWorld, 16);
-  showDialogue("Mother", "022号巡检员，温室外舱门已重新密封。", 3.2);
+  showDialogue("史蒂夫", "022号巡检员，温室外舱门已重新密封。很好，边界干净。", 3.6);
 }
 
 function setHabitatInteriorMode(active: boolean) {
@@ -6040,7 +6229,7 @@ function findActiveElevator() {
 function elevatorPrompt(elevator: ElevatorControl) {
   if (insideRocket) return "按 E 离开飞船内舱";
   if (isReturnShipElevator(elevator) && !elonElevatorRepaired) return "按 E 检查 03 飞船升降梯";
-  if (isAtRocketHatch()) return isReturnShipElevator(elevator) ? "按 E 与 Elon 通话" : "按 E 进入飞船内部观察";
+  if (isAtRocketHatch()) return isReturnShipElevator(elevator) ? "按 E 与 埃隆 通话" : "按 E 进入飞船内部观察";
   if (elevator.moving) return `${elevator.label}运行中`;
   return elevator.target === "top" ? "按 E 乘坐升降梯" : "按 E 启动飞船升降梯";
 }
@@ -6076,25 +6265,25 @@ function isReturnShipElevator(elevator: ElevatorControl | null) {
 function startElonElevatorRepairQuest() {
   if (elonSideStep === "available") {
     elonSideStep = "cargoShip";
-    showDialogue("Mother", "03 飞船升降梯处于安全锁定。状态：机械锁止、电机离线、姿态传感器缺失。先去 02 飞船货运飞船寻找执行器驱动轴。", 6);
+    showDialogue("史蒂夫", "03 飞船升降梯处于安全锁定。状态：机械锁止、电机离线、姿态传感器缺失。先去 02 飞船货运飞船寻找执行器驱动轴。坏掉的垂直移动平台不叫捷径。", 6.4);
     setCurrentMissionText();
     return;
   }
   const target = elonMissionTargets[elonSideStep];
   if (target) {
-    showDialogue("Mother", `03 飞船升降梯仍处于锁定。先完成维修清单当前项：${missionLabel(target)}。`, 4.6);
+    showDialogue("史蒂夫", `03 飞船升降梯仍处于锁定。先完成维修清单当前项：${missionLabel(target)}。`, 4.6);
     return;
   }
   if (elonSideStep === "complete" && !elonElevatorRepaired) {
     elonElevatorRepaired = true;
-    showDialogue("Mother", "03 飞船升降梯校准完成。可上行至高空廊道。提示：03 飞船内舱仍不可进入。", 5.2);
+    showDialogue("史蒂夫", "03 飞船升降梯校准完成。可上行至高空廊道。提示：03 飞船内舱仍不可进入。", 5.2);
   }
 }
 
 function openElonDialogue() {
   if (!elonMet) {
     elonMet = true;
-    const elonLandmark = world.landmarks.find((landmark) => landmark.label.includes("Elon"));
+    const elonLandmark = world.landmarks.find((landmark) => landmark.label.includes("埃隆") || landmark.label.includes("Elon"));
     if (elonLandmark) awardHiddenDiscovery(`unknown:${elonLandmark.label}`, elonLandmark.label);
     openDialogueScene("elon", "elon_intro_1");
     return;
@@ -6118,7 +6307,7 @@ function openRocketDoor() {
 function enterRocketInterior() {
   if (!ridingElevator) return;
   if (isReturnShipElevator(ridingElevator)) {
-    showDialogue("Mother", "03 飞船内舱保持封存。Elon 位于升降平台到达顶端后的高空廊道，靠近舱门处。", 4.6);
+    showDialogue("史蒂夫", "03 飞船内舱保持封存。埃隆位于升降平台到达顶端后的高空廊道，靠近舱门处。", 4.6);
     return;
   }
   elevatorRideLocal.x = ROCKET_HATCH_STOP_X;
@@ -6587,7 +6776,7 @@ function mysteryDiscoveryIdForLabel(label: string) {
   if (label.includes("远古巨树拱门")) return ANCIENT_TREE_ARCH_DISCOVERY_ID;
   if (label.includes("黑色方碑")) return "monolith";
   if (label.includes("NASA 火星车") || label.includes("Perseverance")) return `unknown:${label}`;
-  if (label.includes("Elon")) return `unknown:${label}`;
+  if (label.includes("埃隆") || label.includes("Elon")) return `unknown:${label}`;
   return null;
 }
 
@@ -6643,6 +6832,9 @@ function resetDialogueState() {
   activeDialogueNode = null;
   dialogueOpen = false;
   pendingMotherCall = null;
+  motherCallRetryAt = 0;
+  dialogueHistory.length = 0;
+  appliedDialogueChoiceEffects.clear();
   dialogueState.motherTrust = 0;
   dialogueState.baseIntegrity = 0;
   dialogueState.humanAutonomy = 0;
@@ -6660,11 +6852,13 @@ function queueMotherCall(scene: DialogueSceneId, mission: string) {
 
 function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
   pendingMotherCall = null;
+  motherCallRetryAt = 0;
   if (scene !== "robot") {
     characters.repairRobot.name = "A-12";
     characters.repairRobot.callsign = "维修执行单元";
   }
   activeDialogueNode = startNode;
+  dialogueHistory.length = 0;
   dialogueOpen = true;
   keyState.clear();
   resetStick();
@@ -6680,6 +6874,7 @@ function closeDialogue() {
   const closedNode = activeDialogueNode ? dialogueNodes[activeDialogueNode] : null;
   activeDialogueNode = null;
   dialogueOpen = false;
+  dialogueHistory.length = 0;
   dialogueStage.classList.remove("is-visible");
   dialogueLeftSlot.classList.remove("is-speaking", "is-listening");
   dialogueRightSlot.classList.remove("is-speaking", "is-listening");
@@ -6802,13 +6997,20 @@ function handleDialogueKey(event: KeyboardEvent) {
   if (!activeDialogueNode) return;
   const node = dialogueNodes[activeDialogueNode];
   const choices = node.choices ?? [];
+  if (event.code === "KeyQ" && dialogueTextPageIndex > 0) {
+    playUiBeep();
+    dialogueTextPageIndex -= 1;
+    renderDialogueNode(false);
+    return;
+  }
   if (dialogueTextPageIndex < dialogueTextPages.length - 1) {
     if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") advanceDialogue();
     return;
   }
   if (choices.length > 0) {
     if (event.code === "KeyQ") {
-      if (choices.length === 2) chooseDialogue(0);
+      if (choices.length === 1) returnToPreviousDialogueLine();
+      else if (choices.length === 2) chooseDialogue(0);
       else {
         selectedDialogueChoiceIndex = Math.max(0, selectedDialogueChoiceIndex - 1);
         renderDialogueChoiceSelection();
@@ -6833,6 +7035,7 @@ function handleDialogueKey(event: KeyboardEvent) {
     if (event.code === "Enter" || event.code === "NumpadEnter") chooseDialogue(selectedDialogueChoiceIndex);
     return;
   }
+  if (event.code === "KeyQ") returnToPreviousDialogueLine();
   if (event.code === "KeyE" || event.code === "Enter" || event.code === "NumpadEnter") advanceDialogue();
 }
 
@@ -6847,7 +7050,12 @@ function chooseDialogue(index: number) {
   const choice = node.choices?.[index];
   if (!choice) return;
   playUiBeep();
-  applyDialogueEffects(choice);
+  pushDialogueHistory();
+  const effectKey = `${activeDialogueNode}:${index}:${choice.next}`;
+  if (!appliedDialogueChoiceEffects.has(effectKey)) {
+    applyDialogueEffects(choice);
+    appliedDialogueChoiceEffects.add(effectKey);
+  }
   activeDialogueNode = choice.next;
   renderDialogueNode();
 }
@@ -6864,12 +7072,28 @@ function advanceDialogue() {
   if (node.choices?.length) return;
   if (node.next) {
     playUiBeep();
+    pushDialogueHistory();
     activeDialogueNode = node.next;
     renderDialogueNode();
     return;
   }
   playUiBeep();
   closeDialogue();
+}
+
+function pushDialogueHistory() {
+  if (!activeDialogueNode) return;
+  dialogueHistory.push({ nodeId: activeDialogueNode, pageIndex: dialogueTextPageIndex });
+}
+
+function returnToPreviousDialogueLine() {
+  const previous = dialogueHistory.pop();
+  if (!previous) return;
+  playUiBeep();
+  activeDialogueNode = previous.nodeId;
+  renderDialogueNode();
+  dialogueTextPageIndex = THREE.MathUtils.clamp(previous.pageIndex, 0, Math.max(0, dialogueTextPages.length - 1));
+  renderDialogueNode(false);
 }
 
 function applyDialogueEffects(choice: DialogueChoice) {
@@ -7210,9 +7434,13 @@ function createCoinVisual() {
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.16, 32), coinMaterial);
   body.rotation.x = Math.PI / 2;
   body.castShadow = true;
-  const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 0.78), createCoinSymbolMaterial());
-  mark.position.z = 0.091;
-  group.add(body, mark);
+  const markGeometry = new THREE.PlaneGeometry(1.56, 1.56);
+  const markFront = new THREE.Mesh(markGeometry, createCoinSymbolMaterial());
+  markFront.position.z = 0.091;
+  const markBack = new THREE.Mesh(markGeometry, createCoinSymbolMaterial());
+  markBack.position.z = -0.091;
+  markBack.rotation.y = Math.PI;
+  group.add(body, markFront, markBack);
   group.userData.label = "金币";
   return group;
 }
@@ -7426,6 +7654,7 @@ function resetQuestState() {
   scorePoints = 0;
   coins = 0;
   currentRank = "internPatrol";
+  motherCallRetryAt = 0;
   completedAnyTask = false;
   awardedEvents.clear();
   exploredBuildings.clear();
@@ -7483,7 +7712,7 @@ function completeGarageMission() {
     const item = world.interactables.find((interactable) => interactable.id === "garage");
     if (item) item.completed = true;
     awardTaskScore("main_m1_garage", "生命支持验收完成");
-    showDialogue("Mother", "生命支持验收完成。下一项：启动温室生态舱。", 4.6);
+    showDialogue("史蒂夫", "生命支持验收完成。下一项：启动温室生态舱。底线做对了，现在开始让基地像生活。", 5.2);
     setCurrentMissionText();
     return;
   }
@@ -7502,7 +7731,7 @@ function advanceWorldQuest(id: Interactable["id"]) {
   if (missionStep === "m1_habitat") {
     completeInteractable(id);
     missionStep = "m1_oxygen";
-    showDialogue("Mother", "居住舱空气循环正常。氧气生产站仍有压降，请前往 03 建筑氧气生产站。", 4.8);
+    showDialogue("史蒂夫", "居住舱空气循环正常。氧气生产站仍有压降，请前往 03 建筑氧气生产站。先找原因，别急着重启。", 5.2);
   } else if (missionStep === "m2_greenhouse") {
     missionStep = "m2_storehouse";
     showDialogue("温室生态舱", "水循环处于保护模式。缺少密封环，请前往物资仓清点货箱。", 4.8);
@@ -7514,12 +7743,12 @@ function advanceWorldQuest(id: Interactable["id"]) {
     showDialogue("科研舱", "临时密封环打印完成。温室补光功率不足，请调整太阳能阵列 B。", 4.8);
   } else if (missionStep === "m2_solarB") {
     missionStep = "m2_seed";
-    showDialogue("Mother", "阵列 B 已分配温室补光。回到温室，决定火星第一批种植方案。", 4.8);
+    showDialogue("史蒂夫", "阵列 B 已分配温室补光。回到温室，决定火星第一批种植方案。让第一批植物值得这点电。", 5.2);
   } else if (missionStep === "m2_seed") {
     completeInteractable(id);
     missionStep = "m3_tower";
     dialogueState.humanAutonomy += 1;
-    showDialogue("Alex", "种植方案确认。第一批纪念植物进入培养槽。火星基地不只是在维持运行，也开始生活。", 5.4);
+    showDialogue("亚历克斯", "种植方案确认。第一批纪念植物进入培养槽。火星基地不只是在维持运行，也开始生活。", 5.4);
   } else if (missionStep === "m3_tower") {
     missionStep = "m3_lab";
     showDialogue("P-03", "风暴提前。通信塔只收到半段地球指令。请到科研舱比对本地气象数据。", 5.2);
@@ -7532,16 +7761,16 @@ function advanceWorldQuest(id: Interactable["id"]) {
     showDialogue("甲烷燃料厂", "第一轮低功率试生产完成。风暴加强，请固定太阳能阵列 A。", 4.8);
   } else if (missionStep === "m3_solarA") {
     missionStep = "m3_garage";
-    showDialogue("Mother", "阵列 A 锁定。A-12 与 A-01 同时请求调度，请前往机器人车库分配优先级。", 5.2);
+    showDialogue("史蒂夫", "阵列 A 锁定。A-12 与 A-01 同时请求调度，请前往机器人车库分配优先级。只能选一个优先级，聚焦。", 5.6);
   } else if (missionStep === "m3_garage") {
     missionStep = "m3_mother";
     dialogueState.baseIntegrity += 1;
-    showDialogue("机器人车库", "A-12 去封闭外部阀门，A-01 固定物资仓货架。请回到居住舱 Mother 终端签署协作协议。", 5.6);
+    showDialogue("机器人车库", "A-12 去封闭外部阀门，A-01 固定物资仓货架。请回到居住舱史蒂夫终端签署协作协议。", 5.6);
   } else if (missionStep === "m3_mother") {
     missionStep = "complete";
     dialogueState.motherTrust += 1;
-    const ending = dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4 ? "协作协议已建立。欢迎来到火星，X。" : "协作协议已建立。Alex 拥有现场判断权，Mother 保留风险限制。";
-    showDialogue("Mother", ending, 6);
+    const ending = dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4 ? "协作协议已建立。欢迎来到火星，X。现在把它做成一个真正能住人的地方。" : "协作协议已建立。亚历克斯拥有现场判断权，史蒂夫保留风险限制。";
+    showDialogue("史蒂夫", ending, 6);
   }
   completeInteractable(id);
   awardTaskScore(`main_${previousStep}`, missionLabel(id));
@@ -7567,7 +7796,7 @@ function advanceSideQuest(id: Interactable["id"]) {
       elonSideStep = "complete";
       elonElevatorRepaired = true;
       dialogueState.baseIntegrity += 1;
-      showDialogue("科研舱", "校准密钥生成完成。03 飞船升降梯维修记录已写入 Mother 安全边界。可返回 03 飞船升降梯，上行至 Elon 所在高空廊道。", 6.4);
+      showDialogue("科研舱", "校准密钥生成完成。03 飞船升降梯维修记录已写入史蒂夫安全边界。可返回 03 飞船升降梯，上行至埃隆所在高空廊道。", 6.4);
     }
     awardSideTaskScore(`side_elon_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
@@ -7583,7 +7812,7 @@ function advanceSideQuest(id: Interactable["id"]) {
     } else if (fufuSideStep === "habitat") {
       fufuSideStep = "complete";
       dialogueState.humanAutonomy += 1;
-      showDialogue("Mother", "未登记生命体已进入观察名单。记录：非效率陪伴对象可能提高长期任务稳定性。暂不构成基地风险，可继续观察。", 6);
+      showDialogue("史蒂夫", "未登记生命体已进入观察名单。记录：非效率陪伴对象可能提高长期任务稳定性。暂不构成基地风险，可继续观察。奇怪，但有用。", 6.2);
     }
     awardSideTaskScore(`side_fufu_${previousStep}`, missionLabel(id));
     setCurrentMissionText();
@@ -7675,7 +7904,7 @@ function isActiveMissionInteractable(id: Interactable["id"]) {
 
 function setCurrentMissionText() {
   const textByStep: Record<MainMissionStep, string> = {
-    intro: "先熟悉移动和视角。火星基地中控 AI Mother 会建立通信，随后开始基地验收。",
+    intro: "等待基地中央 AI 史蒂夫建立通信，随后开始基地验收。",
     m1_habitat: "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。",
     m1_oxygen: "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。",
     m1_solarC: "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。",
@@ -7690,8 +7919,8 @@ function setCurrentMissionText() {
     m3_methane: "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。",
     m3_solarA: "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。",
     m3_garage: "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。",
-    m3_mother: "主线三：回到 01 建筑居住舱 Mother 终端，签署人机协作协议。",
-    complete: "主线完成：ARES BASE ALPHA 达到最低生存标准。可继续完成剩余支线。",
+    m3_mother: "主线三：回到 01 建筑居住舱史蒂夫终端，签署人机协作协议。",
+    complete: "主线完成：阿瑞斯阿尔法基地达到最低生存标准。可继续完成剩余支线。",
   };
 
   const sideHints: string[] = [];
@@ -7701,7 +7930,7 @@ function setCurrentMissionText() {
     const target = elonMissionTargets[elonSideStep];
     sideHints.push(target ? `支线：修复 03 飞船升降梯，当前目标 ${missionLabel(target)}` : "支线：返回 03 飞船升降梯");
   }
-  if (elonElevatorRepaired && !elonMet) sideHints.push("支线：乘坐 03 飞船升降梯，在高空廊道与 Elon 通话");
+  if (elonElevatorRepaired && !elonMet) sideHints.push("支线：乘坐 03 飞船升降梯，在高空廊道与埃隆通话");
   if (isCargoAvailable() && cargoSideStep !== "complete") sideHints.push("支线：调查 A-01 的错位货箱");
   if (isPatrolAvailable() && patrolSideStep !== "complete") sideHints.push("支线：跟进 P-03 的外围异常");
   if (isStarlinkMapVisible()) sideHints.push(`轨道链路：${starlinkDisplayStatus()}`);
