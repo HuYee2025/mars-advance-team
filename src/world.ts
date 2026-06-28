@@ -440,8 +440,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     label: "02 建筑 温室生态舱",
     prompt: "按 E 启动 02 建筑 温室生态舱",
     object: greenhouse,
-    radius: 13.5,
+    radius: 17,
     completed: false,
+  });
+  colliders.push({
+    ...circle(greenhouseX, greenhouseZ, 15.4, "温室生态舱整体外壳"),
+    enabled: () => !greenhouseDoor.occupied,
   });
   addFootprintColliders(
     colliders,

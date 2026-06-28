@@ -158,6 +158,7 @@ const MUSIC_LOOP_FADE_SECONDS = 5;
 backgroundMusic.loop = true;
 backgroundMusic.preload = "auto";
 backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
+let backgroundMusicEnabled = true;
 
 const scene = new THREE.Scene();
 const clearSkyColor = new THREE.Color(0x030713);
@@ -681,6 +682,7 @@ const exactEnglishTexts: Record<string, string> = {
   "09 建筑 医疗舱": "09 Building Medical Bay",
   "居住舱外壳": "Habitat Hull",
   "温室生态舱外壳": "Greenhouse Hull",
+  "温室生态舱整体外壳": "Greenhouse Whole Hull",
   "氧气生产站外壳": "Oxygen Plant Hull",
   "甲烷燃料厂外壳": "Methane Plant Hull",
   "机器人车库外壳": "Robot Garage Hull",
@@ -1078,6 +1080,7 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["退出确认", "Exit Confirm"],
   ["按住指南", "Hold Guide"],
   ["隐藏界面", "Hide HUD"],
+  ["背景音乐", "Music"],
   ["前进", "Forward"],
   ["左转", "Turn Left"],
   ["后退", "Back"],
@@ -2581,6 +2584,11 @@ function bindInput() {
       toggleMissionPanel();
       return;
     }
+    if (event.code === "KeyB") {
+      event.preventDefault();
+      toggleBackgroundMusic();
+      return;
+    }
     if (event.code === "KeyX") {
       event.preventDefault();
       toggleScaleGunAiming();
@@ -3863,6 +3871,7 @@ function startGame() {
   if (started) return;
   playUiBeep();
   started = true;
+  backgroundMusicEnabled = true;
   resetQuestState();
   resetDialogueState();
   gameStartElapsed = elapsedTime;
@@ -4055,12 +4064,23 @@ function animate() {
 }
 
 function startBackgroundMusic() {
-  if (!started) return;
+  if (!started || !backgroundMusicEnabled || wormholeFall) return;
   if (!backgroundMusic.paused) return;
   backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
   backgroundMusic.play().catch(() => {
     // Browser audio policies can still block playback in unusual cases.
   });
+}
+
+function toggleBackgroundMusic() {
+  if (!started) return;
+  playUiBeep();
+  backgroundMusicEnabled = !backgroundMusicEnabled;
+  if (!backgroundMusicEnabled) {
+    backgroundMusic.pause();
+    return;
+  }
+  startBackgroundMusic();
 }
 
 function updateMonolithSignal() {
@@ -4148,6 +4168,10 @@ function playDingDong() {
 }
 
 function updateBackgroundMusicFade() {
+  if (!backgroundMusicEnabled) {
+    backgroundMusic.volume = 0;
+    return;
+  }
   if (wormholeFall) {
     backgroundMusic.volume = 0;
     return;
