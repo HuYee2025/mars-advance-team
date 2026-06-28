@@ -3564,8 +3564,9 @@ function createPhotoWall() {
     frame.position.set(item.x, item.y, 0.02);
     const photoMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(item.w, item.h),
-      new THREE.MeshBasicMaterial({ map: createPhotoPlaceholderTexture(), transparent: true, toneMapped: false })
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false })
     );
+    photoMesh.visible = false;
     const borderTop = new THREE.Mesh(new THREE.BoxGeometry(item.w + 0.12, 0.045, 0.06), railMat);
     const borderBottom = borderTop.clone();
     const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.045, item.h + 0.12, 0.06), railMat);
@@ -3582,24 +3583,16 @@ function createPhotoWall() {
   return group;
 }
 
-function createPhotoPlaceholderTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 176;
-  const ctx = canvas.getContext("2d");
-  ctx?.clearRect(0, 0, canvas.width, canvas.height);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 function updatePhotoWallFrames() {
   for (const [index, frame] of photoWallFrames.entries()) {
     const material = frame.material;
     if (material.map && !cameraPhotos.some((photo) => photo.texture === material.map)) material.map.dispose();
-    material.map = cameraPhotos[index]?.texture ?? createPhotoPlaceholderTexture();
-    material.transparent = !cameraPhotos[index];
+    const photoTexture = cameraPhotos[index]?.texture ?? null;
+    material.map = photoTexture;
+    material.opacity = photoTexture ? 1 : 0;
+    material.transparent = !photoTexture;
     material.needsUpdate = true;
+    frame.visible = Boolean(photoTexture);
   }
 }
 
@@ -4016,6 +4009,7 @@ function animate() {
   updateElevators(world.elevators, delta);
   updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
   const speed = started ? updatePlayer(delta) : 0;
+  document.body.classList.toggle("is-wormhole", Boolean(wormholeFall));
   updateIntroOperationFeedback(speed);
   updateSuitOxygen(delta);
   updateJetpackEnergy(delta);
@@ -6613,20 +6607,22 @@ function updateMap() {
     coinTarget: false,
   });
 
-  for (const [index, group] of currentCoinGroups.entries()) {
-    if (!group.coins.some((coin) => !coin.collected)) continue;
-    mapItems.push({
-      label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
-      object: null,
-      x: group.centerX,
-      z: group.centerZ,
-      mapRange: PLANET_RADIUS * Math.PI,
-      type: "coin",
-      unknown: false,
-      missionTarget: false,
-      oxygenSupplyTarget: false,
-      coinTarget: true,
-    });
+  if (!wormholeFall) {
+    for (const [index, group] of currentCoinGroups.entries()) {
+      if (!group.coins.some((coin) => !coin.collected)) continue;
+      mapItems.push({
+        label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
+        object: null,
+        x: group.centerX,
+        z: group.centerZ,
+        mapRange: PLANET_RADIUS * Math.PI,
+        type: "coin",
+        unknown: false,
+        missionTarget: false,
+        oxygenSupplyTarget: false,
+        coinTarget: true,
+      });
+    }
   }
 
   if (sunBody) {
@@ -7348,6 +7344,11 @@ function updateHiddenDiscoveries() {
 
 function updateCoinGroup(delta: number) {
   if (!started) return;
+  if (wormholeFall) {
+    setCoinGroupsVisible(false);
+    return;
+  }
+  setCoinGroupsVisible(true);
   if (currentCoinGroups.length === 0) {
     if (elapsedTime >= nextCoinRefreshAt) spawnCoinGroups();
     return;
@@ -7362,6 +7363,14 @@ function updateCoinGroup(delta: number) {
       if (coin.collected) continue;
       coin.group.rotateY(delta * 2.6);
       if (coin.group.position.distanceTo(player.position) <= COIN_COLLECT_RADIUS) collectCoin(coin);
+    }
+  }
+}
+
+function setCoinGroupsVisible(visible: boolean) {
+  for (const group of currentCoinGroups) {
+    for (const coin of group.coins) {
+      if (!coin.collected) coin.group.visible = visible;
     }
   }
 }

@@ -364,6 +364,25 @@ html[lang="zh-CN"] .title-copy h1 {
   transform: translateY(0);
 }
 
+.is-playing.is-wormhole .hud,
+.is-playing.is-wormhole .hud-buttons,
+.is-playing.is-wormhole #mission-banner,
+.is-playing.is-wormhole #labels,
+.is-playing.is-wormhole #map-overlay,
+.is-playing.is-wormhole #interaction-prompt,
+.is-playing.is-wormhole #interaction-choice,
+.is-playing.is-wormhole #scale-gun-overlay,
+.is-playing.is-wormhole #camera-overlay,
+.is-playing.is-wormhole #photo-viewer,
+.is-playing.is-wormhole #dialogue-box,
+.is-playing.is-wormhole #dialogue-stage,
+.is-playing.is-wormhole #exit-confirm,
+.is-playing.is-wormhole #joystick,
+.is-playing.is-wormhole .mobile-actions,
+.is-playing.is-wormhole #controls-guide {
+  display: none !important;
+}
+
 .is-playing .hud-title {
   display: none;
 }
