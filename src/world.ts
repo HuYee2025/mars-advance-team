@@ -1158,10 +1158,10 @@ function addCrashedShipColliders(colliders: CircleCollider[], x: number, z: numb
   const label = "坠毁飞船残骸主体";
   const hullXs = [-12.7, -9.3, -5.2, 5.2, 9.3, 12.4].map((value) => value * scale);
   const hullZs = [-0.92, 0.92].map((value) => value * scale);
-  addFootprintColliders(colliders, x, z, yaw, hullXs, hullZs, 1.72 * scale, label);
+  addFootprintColliders(colliders, x, z, yaw, hullXs, hullZs, 1.52 * scale, label);
 
   for (const localX of [-13.8, 13.0]) {
-    colliders.push(offsetCircle(x, z, yaw, localX * scale, 0, 2.15 * scale, label));
+    colliders.push(offsetCircle(x, z, yaw, localX * scale, 0, 1.85 * scale, label));
   }
 }
 

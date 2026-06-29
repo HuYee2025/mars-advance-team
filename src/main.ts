@@ -2238,11 +2238,9 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
 
   const paused = Boolean(wormholeFall?.paused);
   const fallSeconds = wormholeFall ? wormholeElapsed() : progress * WORMHOLE_FALL_DURATION;
-  const depth = wormholeFall?.depth ?? 0;
   const fallSpeedFactor = paused ? 0 : wormholeFallSpeedFactor(progress);
-  const depthSpeedFactor = wormholeDepthVisualSpeedMultiplier(depth);
-  const perspectiveSpeedFactor = fallSpeedFactor * WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor;
-  const visualTime = elapsedTime * Math.max(0.1, WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor);
+  const perspectiveSpeedFactor = fallSpeedFactor * WORMHOLE_VISUAL_SPEED_MULTIPLIER;
+  const visualTime = elapsedTime * Math.max(0.1, WORMHOLE_VISUAL_SPEED_MULTIPLIER);
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
   const pulse = 0.86 + Math.sin(visualTime * 18.4) * 0.18 + Math.sin(visualTime * 37.7) * 0.11;
   const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
@@ -5048,11 +5046,6 @@ function wormholeFallSpeedFactor(progress: number) {
   const organicRamp = THREE.MathUtils.smoothstep(progress, 0.02, WORMHOLE_ORGANIC_RAMP_END);
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.56, WORMHOLE_ORGANIC_RAMP_END);
   return THREE.MathUtils.lerp(WORMHOLE_INITIAL_SPEED_FACTOR, 2.85, organicRamp) + finalRush * 1.15;
-}
-
-function wormholeDepthVisualSpeedMultiplier(depth: number) {
-  if (depth < 0) return THREE.MathUtils.lerp(1, 1.5, THREE.MathUtils.clamp(-depth, 0, 1));
-  return THREE.MathUtils.lerp(1, 0.5, THREE.MathUtils.clamp(depth, 0, 1));
 }
 
 function setWormholeFallPaused(paused: boolean) {
