@@ -20,6 +20,7 @@
 .hud,
 .hud-buttons,
 #mission-banner,
+#visitor-counter,
 #map-overlay,
 #interaction-prompt,
 #interaction-choice,
@@ -340,6 +341,54 @@ html[lang="zh-CN"] .title-copy h1 {
     0 0 22px rgba(255, 66, 62, 0.22);
 }
 
+#visitor-counter {
+  position: absolute;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 18px);
+  z-index: 23;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(154, 47, 34, 0.82);
+  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#visitor-counter strong {
+  display: flex;
+  gap: 5px;
+}
+
+.visitor-digit {
+  display: grid;
+  width: 19px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  line-height: 1;
+  text-align: center;
+}
+
+#visitor-counter[data-status="unavailable"] {
+  opacity: 0.42;
+}
+
+.is-playing #visitor-counter {
+  z-index: 3;
+  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  opacity: 0.54;
+}
+
 @keyframes language-globe-pan {
   from {
     background-position: 0 0;
@@ -392,7 +441,8 @@ html[lang="zh-CN"] .title-copy h1 {
 .is-playing.is-wormhole #exit-confirm,
 .is-playing.is-wormhole #joystick,
 .is-playing.is-wormhole .mobile-actions,
-.is-playing.is-wormhole #controls-guide {
+.is-playing.is-wormhole #controls-guide,
+.is-playing.is-wormhole #visitor-counter {
   display: none !important;
 }
 
@@ -411,7 +461,8 @@ html[lang="zh-CN"] .title-copy h1 {
 .is-playing.is-wormhole-whiteout #exit-confirm,
 .is-playing.is-wormhole-whiteout #joystick,
 .is-playing.is-wormhole-whiteout .mobile-actions,
-.is-playing.is-wormhole-whiteout #controls-guide {
+.is-playing.is-wormhole-whiteout #controls-guide,
+.is-playing.is-wormhole-whiteout #visitor-counter {
   display: none !important;
 }
 

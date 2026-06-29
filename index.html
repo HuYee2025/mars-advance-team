@@ -82,7 +82,8 @@
       body.is-wormhole #exit-confirm,
       body.is-wormhole #joystick,
       body.is-wormhole .mobile-actions,
-      body.is-wormhole #controls-guide {
+      body.is-wormhole #controls-guide,
+      body.is-wormhole #visitor-counter {
         display: none !important;
       }
     </style>
@@ -276,6 +277,9 @@
         <p id="wormhole-whiteout-caption" data-i18n="wormhole.whiteoutCaption">这是……</p>
       </section>
       <div class="scanline" aria-hidden="true"></div>
+      <div id="visitor-counter" aria-label="visitor counter" aria-live="polite" data-status="loading">
+        <strong id="visitor-count">0000</strong>
+      </div>
       <div id="joystick" aria-hidden="true">
         <div id="joystick-knob"></div>
       </div>

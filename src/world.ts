@@ -278,6 +278,79 @@ function box(w: number, h: number, d: number, material: THREE.Material) {
   return mesh;
 }
 
+function splitGeometryByLocalX(source: THREE.BufferGeometry, upperHalf: boolean) {
+  const geometry = source.index ? source.toNonIndexed() : source.clone();
+  const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const normals = geometry.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  const uvs = geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+  const nextPositions: number[] = [];
+  const nextNormals: number[] = [];
+  const nextUvs: number[] = [];
+  const keepSign = upperHalf ? 1 : -1;
+  type Vertex = { position: THREE.Vector3; normal?: THREE.Vector3; uv?: THREE.Vector2 };
+
+  const interpolate = (a: Vertex, b: Vertex) => {
+    const da = a.position.x * keepSign;
+    const db = b.position.x * keepSign;
+    const t = da / (da - db);
+    const vertex: Vertex = {
+      position: a.position.clone().lerp(b.position, t),
+    };
+    if (a.normal && b.normal) vertex.normal = a.normal.clone().lerp(b.normal, t).normalize();
+    if (a.uv && b.uv) vertex.uv = a.uv.clone().lerp(b.uv, t);
+    return vertex;
+  };
+
+  const clipTriangle = (triangle: Vertex[]) => {
+    const output: Vertex[] = [];
+    for (let i = 0; i < triangle.length; i += 1) {
+      const current = triangle[i];
+      const previous = triangle[(i + triangle.length - 1) % triangle.length];
+      const currentInside = current.position.x * keepSign >= -0.000001;
+      const previousInside = previous.position.x * keepSign >= -0.000001;
+      if (currentInside) {
+        if (!previousInside) output.push(interpolate(previous, current));
+        output.push(current);
+      } else if (previousInside) {
+        output.push(interpolate(previous, current));
+      }
+    }
+    return output;
+  };
+
+  const pushVertex = (vertex: Vertex) => {
+    nextPositions.push(vertex.position.x, vertex.position.y, vertex.position.z);
+    if (vertex.normal) nextNormals.push(vertex.normal.x, vertex.normal.y, vertex.normal.z);
+    if (vertex.uv) nextUvs.push(vertex.uv.x, vertex.uv.y);
+  };
+
+  for (let i = 0; i < positions.count; i += 3) {
+    const triangle: Vertex[] = [];
+    for (let vertexIndex = i; vertexIndex < i + 3; vertexIndex += 1) {
+      triangle.push({
+        position: new THREE.Vector3(positions.getX(vertexIndex), positions.getY(vertexIndex), positions.getZ(vertexIndex)),
+        normal: normals ? new THREE.Vector3(normals.getX(vertexIndex), normals.getY(vertexIndex), normals.getZ(vertexIndex)) : undefined,
+        uv: uvs ? new THREE.Vector2(uvs.getX(vertexIndex), uvs.getY(vertexIndex)) : undefined,
+      });
+    }
+    const clipped = clipTriangle(triangle);
+    if (clipped.length < 3) continue;
+    for (let vertexIndex = 1; vertexIndex < clipped.length - 1; vertexIndex += 1) {
+      pushVertex(clipped[0]);
+      pushVertex(clipped[vertexIndex]);
+      pushVertex(clipped[vertexIndex + 1]);
+    }
+  }
+
+  const result = new THREE.BufferGeometry();
+  result.setAttribute("position", new THREE.Float32BufferAttribute(nextPositions, 3));
+  if (nextNormals.length > 0) result.setAttribute("normal", new THREE.Float32BufferAttribute(nextNormals, 3));
+  if (nextUvs.length > 0) result.setAttribute("uv", new THREE.Float32BufferAttribute(nextUvs, 2));
+  result.computeBoundingBox();
+  result.computeBoundingSphere();
+  return result;
+}
+
 function foundation(w: number, d: number, material = mat(0x6f4530, 0.92, 0.04)) {
   const mesh = box(w, 0.28, d, material);
   mesh.position.y = -0.06;
@@ -1329,10 +1402,11 @@ function createHabitatModule() {
   const sleepGlass = new THREE.MeshPhysicalMaterial({
     color: 0x8ee6ff,
     transparent: true,
-    opacity: 0.46,
+    opacity: 0.3,
     roughness: 0.08,
     metalness: 0.04,
     flatShading: true,
+    depthWrite: false,
   });
   hull.side = THREE.DoubleSide;
   interior.side = THREE.DoubleSide;
@@ -1364,21 +1438,21 @@ function createHabitatModule() {
   centerAisle.position.set(0, -1.27, 0);
   group.add(floor, centerAisle);
 
-  const sealedFloor = box(11.65, 0.12, 4.24, mat(0x272521, 0.84, 0.18));
-  sealedFloor.position.set(0, -1.18, 0);
+  const sealedFloor = box(11.9, 0.16, 4.68, mat(0x272521, 0.84, 0.18));
+  sealedFloor.position.set(0, -1.16, 0);
   const ceilingPanel = box(10.9, 0.12, 3.68, mat(0xd5c9b4, 0.68, 0.12));
   ceilingPanel.position.set(0, 1.46, 0);
-  const rearWall = box(0.18, 2.58, 4.04, interior);
+  const rearWall = box(0.2, 2.58, 4.42, interior);
   rearWall.position.set(5.72, -0.04, 0);
   const leftEndWall = rearWall.clone();
   leftEndWall.position.x = -5.72;
-  const frontLeftWall = box(4.78, 2.5, 0.16, interior);
+  const frontLeftWall = box(4.78, 2.5, 0.2, interior);
   frontLeftWall.position.set(-3.18, -0.1, -2.06);
   const frontRightWall = frontLeftWall.clone();
   frontRightWall.position.x = 3.18;
-  const rearAccent = box(0.08, 1.2, 2.35, mat(0x302a25, 0.72, 0.18));
-  rearAccent.position.set(5.58, -0.1, 0);
-  interiorScene.add(sealedFloor, ceilingPanel, rearWall, leftEndWall, frontLeftWall, frontRightWall, rearAccent);
+  const rearLowerSkirt = box(11.5, 1.0, 0.16, interior);
+  rearLowerSkirt.position.set(0, -0.8, 2.12);
+  interiorScene.add(sealedFloor, ceilingPanel, rearWall, leftEndWall, frontLeftWall, frontRightWall, rearLowerSkirt);
 
   for (const x of [-4.2, 4.2]) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.1, 6, 18), trim);
@@ -1408,8 +1482,15 @@ function createHabitatModule() {
   const doorPanelR = doorPanelL.clone();
   doorPanelR.position.x = 0.27;
   doorPanels.add(doorPanelL, doorPanelR);
-  const interiorDoor = box(1.0, 1.78, 0.08, hull);
-  interiorDoor.position.set(0, -0.3, -2.0);
+  const interiorDoor = new THREE.Group();
+  const interiorDoorPanelMat = mat(0xf5f0e6, 0.52, 0.12);
+  const interiorDoorLeft = box(0.49, 1.78, 0.08, interiorDoorPanelMat);
+  interiorDoorLeft.position.set(-0.26, -0.3, -2.0);
+  const interiorDoorRight = interiorDoorLeft.clone();
+  interiorDoorRight.position.x = 0.26;
+  const interiorDoorSeam = box(0.035, 1.78, 0.09, mat(0xbfc4c7, 0.58, 0.16));
+  interiorDoorSeam.position.set(0, -0.3, -1.995);
+  interiorDoor.add(interiorDoorLeft, interiorDoorRight, interiorDoorSeam);
   interiorDoor.visible = false;
   const step = box(1.35, 0.12, 0.82, mat(0x6a4b38, 0.9, 0.04));
   step.position.set(0, -1.98, -2.82);
@@ -1417,25 +1498,25 @@ function createHabitatModule() {
   group.add(doorFrame, exteriorMask, interiorPortal, doorLight, doorPanels, interiorDoor, step);
 
   const podXs = [-4.45, -2.95, -1.45, 0.05, 1.55, 3.05, 4.55];
+  const sleepPodGeometry = new THREE.CapsuleGeometry(0.34, 1.22, 5, 10);
+  const sleepPodLowerGeometry = splitGeometryByLocalX(sleepPodGeometry, false);
+  const sleepPodUpperGeometry = splitGeometryByLocalX(sleepPodGeometry, true);
   podXs.forEach((x, index) => {
     const z = index % 2 === 0 ? 1.24 : -1.22;
-    const pod = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 1.22, 5, 10), sleepShell);
-    pod.rotation.z = Math.PI / 2;
+    const pod = new THREE.Group();
     pod.position.set(x, -0.94, z);
-    pod.castShadow = true;
-    pod.receiveShadow = true;
-    const lid = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.88, 5, 10), sleepGlass);
-    lid.rotation.z = Math.PI / 2;
-    lid.position.set(x, -0.62, z);
-    lid.scale.set(1, 0.5, 0.72);
-    lid.castShadow = true;
+    const lowerShell = new THREE.Mesh(sleepPodLowerGeometry, sleepShell);
+    const upperGlass = new THREE.Mesh(sleepPodUpperGeometry, sleepGlass);
+    lowerShell.rotation.z = Math.PI / 2;
+    upperGlass.rotation.z = Math.PI / 2;
+    lowerShell.castShadow = true;
+    lowerShell.receiveShadow = true;
+    upperGlass.castShadow = false;
+    upperGlass.receiveShadow = false;
+    pod.add(lowerShell, upperGlass);
     const status = box(0.12, 0.08, 0.08, mat(index === 6 ? 0xffb15d : 0x8cffaa, 0.28, 0.2, index === 6 ? 0xff9d3d : 0x44ff88));
     status.position.set(x + 0.45, -0.72, z - Math.sign(z) * 0.36);
-    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), trim);
-    rail.rotation.z = Math.PI / 2;
-    rail.position.set(x, -0.62, z - Math.sign(z) * 0.42);
-    rail.castShadow = true;
-    group.add(pod, lid, status, rail);
+    group.add(pod, status);
   });
 
   const ceilingLightA = box(0.16, 0.08, 2.0, sleepGlass);

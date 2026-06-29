@@ -2,6 +2,7 @@ node_modules/
 dist/
 .playwright-cli/
 output/
+data/
 docs/articles/
 .DS_Store
 /星际低语_no-watermark (1).mp3

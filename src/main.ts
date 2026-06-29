@@ -85,6 +85,7 @@ type WormholeFallState = {
   drift: THREE.Vector2;
   velocity: THREE.Vector2;
   depth: number;
+  depthVelocity: number;
   spawnNormal: THREE.Vector3;
   spawnForward: THREE.Vector3;
 };
@@ -119,6 +120,8 @@ const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
 const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
+const visitorCounter = must<HTMLDivElement>("#visitor-counter");
+const visitorCountReadout = must<HTMLElement>("#visitor-count");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const titleDateReadout = must<HTMLElement>("[data-i18n='title.eyebrow']");
 const enterButton = must<HTMLButtonElement>("#enter-base");
@@ -256,7 +259,8 @@ const CAMERA_MIN_ZOOM = 1;
 const CAMERA_MAX_ZOOM = 4;
 const cameraPhotos: Array<{ dataUrl: string; texture: THREE.Texture; takenAt: number }> = [];
 let photoWallScreen: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null = null;
-let photoWallScreenPhotoIndex = -1;
+let photoWallScreenPhotoIndex = -2;
+let photoWallStandbyTexture: THREE.CanvasTexture | null = null;
 const world = createMarsWorld(scene);
 const photoWall = createPhotoWall();
 world.habitatDoor.interiorScene.add(photoWall);
@@ -295,11 +299,18 @@ const WORMHOLE_INITIAL_SPEED_FACTOR = 0.42;
 const WORMHOLE_PLAYER_SCALE_MULTIPLIER = 0.43;
 const WORMHOLE_DRIFT_VISUAL_MULTIPLIER = 2;
 const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.36;
-const WORMHOLE_DEPTH_RESPONSE = 5.2;
+const WORMHOLE_DEPTH_CONTROL_STRENGTH = 2.35;
+const WORMHOLE_DEPTH_DAMPING = 2.55;
+const WORMHOLE_DEPTH_MAX_SPEED = 0.72;
+const WORMHOLE_FLOAT_CENTER_RADIUS = 0.18;
+const WORMHOLE_FLOAT_CENTER_FORCE = 0.62;
 const WORMHOLE_VISUAL_SPEED_MULTIPLIER = 2;
 const WORMHOLE_DEPTH_BACK_DOLLY_MULTIPLIER = 1.42;
 const WORMHOLE_WHITEOUT_PARTICLE_COUNT = 190;
 const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
+const ANCIENT_PORTAL_FLIGHT_PROMPT_MAX_HEIGHT = 230;
+const ANCIENT_PORTAL_CORE_HALF_WIDTH = 10.8;
+const ANCIENT_PORTAL_CORE_HALF_DEPTH = 9.5;
 const WORMHOLE_WHITEOUT_SECONDS = 2;
 const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
 const FUFU_SURFACE_ALTITUDE = 0.13;
@@ -582,6 +593,8 @@ const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elo
 
 const LANG_STORAGE_KEY = "mars.language";
 let currentLanguage: LanguageCode = readInitialLanguage();
+let visitorTotal: number | null = null;
+let visitorCounterStatus: "loading" | "ready" | "unavailable" = "loading";
 
 const i18n: Record<LanguageCode, Record<string, string>> = {
   "zh-CN": {
@@ -1220,7 +1233,7 @@ let pitch = 0.34;
 let orbitYawOffset = 0;
 const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE = 10;
 let cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
-let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number } | null = null;
+let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number; lift: number; distance: number } | null = null;
 let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
@@ -1331,6 +1344,7 @@ let introMovementConfirmed = false;
 let introIdlePromptShown = false;
 let introMissionReminderShown = false;
 let introCallQueued = false;
+const shownOperationHelpIds = new Set<string>();
 let interactionActions: InteractionAction[] = [];
 let selectedInteractionIndex = 0;
 let interactionChoiceOpen = false;
@@ -1410,6 +1424,8 @@ if (import.meta.env.DEV) {
       return {
         portalStrength: Number(world.ancientTreePortal.userData.portalStrength ?? 0),
         inDoorway: ancientTreeArchObject ? isInsideAncientTreeDoorway(local) : false,
+        inPaymentZone: ancientTreeArchObject ? isInsideAncientTreePortalPaymentZone() : false,
+        inPortalCore: ancientTreeArchObject ? isInsideAncientTreePortalCore(local) : false,
         local: {
           x: Number(local.x.toFixed(2)),
           y: Number(local.y.toFixed(2)),
@@ -1425,6 +1441,7 @@ if (import.meta.env.DEV) {
 resetPlayerToSpawn();
 resetFufu();
 bindInput();
+reportVisitorStats();
 onResize();
 setMission("点击 ENTER BASE 进入《火星先遣队》。");
 updateTitleDateReadout();
@@ -2318,10 +2335,56 @@ function applyLanguage() {
   updateMissionAfterLanguageChange();
   updateScaleGunOverlay();
   updateMobileFlightButtons();
+  updateVisitorCounter();
   for (const item of labels) item.element.textContent = localizeLabel(item.element.dataset.labelSource ?? item.element.textContent);
   interactionChoiceSignature = "";
   updateInteractionPrompts();
   if (activeDialogueNode) renderDialogueNode();
+}
+
+async function reportVisitorStats() {
+  visitorCounterStatus = "loading";
+  updateVisitorCounter();
+  try {
+    const response = await fetch("/api/visitors", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      keepalive: true,
+    });
+    if (!response.ok) throw new Error(`Visitor stats failed: ${response.status}`);
+    const payload = (await response.json()) as { total?: unknown };
+    if (typeof payload.total !== "number" || !Number.isFinite(payload.total)) throw new Error("Visitor stats returned invalid total");
+    visitorTotal = Math.max(0, Math.floor(payload.total));
+    visitorCounterStatus = "ready";
+  } catch {
+    visitorCounterStatus = "unavailable";
+  }
+  updateVisitorCounter();
+}
+
+function updateVisitorCounter() {
+  visitorCounter.dataset.status = visitorCounterStatus;
+  if (visitorCounterStatus === "ready" && visitorTotal !== null) {
+    renderVisitorDigits(formatVisitorCount(visitorTotal));
+    return;
+  }
+  renderVisitorDigits("0000");
+}
+
+function formatVisitorCount(total: number) {
+  return String(Math.min(Math.max(total, 0), 9999)).padStart(4, "0");
+}
+
+function renderVisitorDigits(value: string) {
+  visitorCountReadout.replaceChildren(
+    ...value.slice(0, 4).split("").map((digit) => {
+      const element = document.createElement("span");
+      element.className = "visitor-digit";
+      element.textContent = digit;
+      return element;
+    })
+  );
 }
 
 function localizeStaticUiText() {
@@ -2729,17 +2792,17 @@ function bindInput() {
       dropFootball();
       return;
     }
-    if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
-      event.preventDefault();
-      keyState.add(event.code);
-      return;
-    }
-	    if ((interactionChoiceOpen || hasInfoChoiceActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
+    if ((interactionChoiceOpen || hasInfoChoiceActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       if (interactionActions.length === 2) {
         selectedInteractionIndex = event.code === "KeyQ" ? 0 : 1;
       }
       executeSelectedInteraction();
+      return;
+    }
+    if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
+      event.preventDefault();
+      keyState.add(event.code);
       return;
     }
     if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "ArrowUp" || event.code === "ArrowDown")) {
@@ -3073,17 +3136,36 @@ function activateEquipmentJetpack() {
 function showJetpackControlsHint(source: JetpackSource) {
   if (!started || !canUseFlightMode()) return;
   const equipmentHint = source === "equipment";
-  showDialogue(
-    "飞行背包",
-    isSmallScreenMapTouch()
-      ? equipmentHint
-        ? "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。"
-        : "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。"
-      : equipmentHint
-        ? "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。"
-        : "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。",
-    5.6
-  );
+  showOneTimeOperationHelp("jetpack.controls", "飞行背包", jetpackControlsHintText(equipmentHint), 5.6);
+}
+
+function showOneTimeOperationHelp(id: string, speaker: string, text: string, seconds: number) {
+  if (shownOperationHelpIds.has(id)) return false;
+  shownOperationHelpIds.add(id);
+  showDialogue(speaker, text, seconds);
+  return true;
+}
+
+function jetpackControlsHintText(equipmentHint: boolean) {
+  const touch = isSmallScreenMapTouch();
+  if (isEnglish()) {
+    if (touch) {
+      return equipmentHint
+        ? "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. After landing, double-tap Jump to take off again."
+        : "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. Landing exits flight.";
+    }
+    return equipmentHint
+      ? "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight. Double-tap Space to take off again."
+      : "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight.";
+  }
+  if (touch) {
+    return equipmentHint
+      ? "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。"
+      : "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。";
+  }
+  return equipmentHint
+    ? "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。"
+    : "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。";
 }
 
 function landFromFlight() {
@@ -3739,14 +3821,20 @@ function captureCameraPhoto() {
 function createPhotoWall() {
   const group = new THREE.Group();
   group.name = "Habitat photo screen";
-  group.position.set(5.62, -0.08, 0);
+  group.position.set(5.58, -0.08, 0);
   group.rotation.y = -Math.PI / 2;
 
-  const screenWidth = 3.58;
-  const screenHeight = 1.86;
+  const screenWidth = 3.06;
+  const screenHeight = 1.54;
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x1e2b31, roughness: 0.46, metalness: 0.52, emissive: 0x07161e, emissiveIntensity: 0.34 });
   const glowMat = new THREE.MeshBasicMaterial({ color: 0x6fe7ff, transparent: true, opacity: 0.42, toneMapped: false });
-  const screenMat = new THREE.MeshBasicMaterial({ color: 0x071017, transparent: true, opacity: 0.86, toneMapped: false });
+  const screenMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    map: getPhotoWallStandbyTexture(),
+    transparent: true,
+    opacity: 1,
+    toneMapped: false,
+  });
 
   const backPanel = new THREE.Mesh(new THREE.BoxGeometry(screenWidth + 0.22, screenHeight + 0.2, 0.08), frameMat);
   backPanel.position.set(0, 0.16, -0.02);
@@ -3775,14 +3863,50 @@ function createPhotoWall() {
 function updatePhotoWallFrames() {
   if (!photoWallScreen) return;
   const nextIndex = cameraPhotos.length === 0 ? -1 : Math.floor(elapsedTime / 4) % cameraPhotos.length;
-  if (nextIndex === photoWallScreenPhotoIndex && photoWallScreen.material.map === (nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture : null)) return;
+  const nextTexture = nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture ?? null : getPhotoWallStandbyTexture();
+  if (nextIndex === photoWallScreenPhotoIndex && photoWallScreen.material.map === nextTexture) return;
   photoWallScreenPhotoIndex = nextIndex;
   const material = photoWallScreen.material;
-  const photoTexture = nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture ?? null : null;
-  material.map = photoTexture;
-  material.color.set(photoTexture ? 0xffffff : 0x071017);
-  material.opacity = photoTexture ? 1 : 0.86;
+  material.map = nextTexture;
+  material.color.set(0xffffff);
+  material.opacity = 1;
   material.needsUpdate = true;
+}
+
+function getPhotoWallStandbyTexture() {
+  if (photoWallStandbyTexture) return photoWallStandbyTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    photoWallStandbyTexture = new THREE.CanvasTexture(canvas);
+    return photoWallStandbyTexture;
+  }
+
+  ctx.fillStyle = "#061014";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "rgba(111,231,255,0.24)";
+  ctx.lineWidth = 5;
+  ctx.strokeRect(34, 34, canvas.width - 68, canvas.height - 68);
+  ctx.fillStyle = "rgba(111,231,255,0.09)";
+  for (let y = 62; y < canvas.height - 54; y += 22) {
+    ctx.fillRect(56, y, canvas.width - 112, 2);
+  }
+  ctx.fillStyle = "rgba(255,103,64,0.92)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "700 42px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("Happy birthday to Mr. Elon Musk! 🎂🥳", canvas.width / 2, 180);
+  ctx.font = "700 30px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("May all your dreams come true", canvas.width / 2, 246);
+  ctx.fillText("and wish you good health and longevity!", canvas.width / 2, 292);
+  ctx.font = "700 34px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("June 29, 2026", canvas.width / 2, 372);
+
+  photoWallStandbyTexture = new THREE.CanvasTexture(canvas);
+  photoWallStandbyTexture.colorSpace = THREE.SRGBColorSpace;
+  return photoWallStandbyTexture;
 }
 
 function openPhotoViewer() {
@@ -4412,8 +4536,12 @@ function starlinkDisplayStatus() {
   return isEnglish() ? starlinkStatusTextEn(world.starlinkConstellation) : starlinkStatusText(world.starlinkConstellation);
 }
 
+function isInsideInteriorSpace() {
+  return world.habitatDoor.occupied || insideGreenhouse || insideRocket;
+}
+
 function updateScheduledCalls() {
-  if (!started || isFocusOverlayActive()) return;
+  if (!started || isFocusOverlayActive() || isInsideInteriorSpace()) return;
   if (pendingMotherCall) {
     updatePendingMotherCallTimeout();
     return;
@@ -4442,19 +4570,19 @@ function updateIntroOperationFeedback(speed: number) {
 
   if (!introMovementConfirmed && sinceStart > 1.2 && speed > 0.45 && canShowIntroOperationToast()) {
     introMovementConfirmed = true;
-    showDialogue("操作确认", "W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", 4.2);
+    showOneTimeOperationHelp("intro.movementConfirmed", "操作确认", "W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", 4.2);
     return;
   }
 
   if (!introIdlePromptShown && !introMovementConfirmed && sinceStart > 8 && canShowIntroOperationToast()) {
     introIdlePromptShown = true;
-    showDialogue("操作提示", isSmallScreenMapTouch() ? "拖动左下角摇杆，先向前走几步。" : "按 W 向前走几步，按 A/D 调整方向。", 4.2);
+    showOneTimeOperationHelp("intro.idleMove", "操作提示", isSmallScreenMapTouch() ? "拖动左下角摇杆，先向前走几步。" : "按 W 向前走几步，按 A/D 调整方向。", 4.2);
     return;
   }
 
   if (!introMissionReminderShown && sinceStart > 16 && !missionPanelOpen && canShowIntroOperationToast()) {
     introMissionReminderShown = true;
-    showDialogue("操作提示", isSmallScreenMapTouch() ? "点 R 可再次查看任务；点 F 打开雷达。" : "按 R 可再次查看任务；按 F 打开雷达。", 4.2);
+    showOneTimeOperationHelp("intro.missionReminder", "操作提示", isSmallScreenMapTouch() ? "点 R 可再次查看任务；点 F 打开雷达。" : "按 R 可再次查看任务；按 F 打开雷达。", 4.2);
   }
 }
 
@@ -4580,8 +4708,8 @@ function maybeTriggerWormholeFall() {
   if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || dialogueOpen || exitConfirmOpen) return;
 
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
-  const inDoorway = isInsideAncientTreeDoorway(local);
-  if (!inDoorway) {
+  const inPortalCore = isInsideAncientTreePortalCore(local);
+  if (!inPortalCore) {
     wormholeTriggerArmed = true;
     return;
   }
@@ -4600,6 +4728,16 @@ function isInsideAncientTreeDoorway(local: THREE.Vector3, scale = 1) {
   const upperDoorWidth = THREE.MathUtils.lerp(24, 19, THREE.MathUtils.smoothstep(local.y, 50, 92));
   const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth) * scale;
   return Math.abs(local.x) < doorwayWidth && local.y > -16 * scale && local.y < 122 * scale && Math.abs(local.z) < 42 * scale;
+}
+
+function isInsideAncientTreePortalCore(local: THREE.Vector3) {
+  const verticalFade = THREE.MathUtils.smoothstep(local.y, 8, 34);
+  const topFade = 1 - THREE.MathUtils.smoothstep(local.y, 62, 92);
+  const coreWidth = THREE.MathUtils.lerp(7.2, ANCIENT_PORTAL_CORE_HALF_WIDTH, Math.min(verticalFade, topFade));
+  return Math.abs(local.x) < coreWidth
+    && local.y > 2
+    && local.y < 96
+    && Math.abs(local.z) < ANCIENT_PORTAL_CORE_HALF_DEPTH;
 }
 
 function startWormholeWhiteout() {
@@ -4687,6 +4825,7 @@ function startWormholeFall() {
     drift: new THREE.Vector2(),
     velocity: new THREE.Vector2(),
     depth: 0,
+    depthVelocity: 0,
     spawnNormal,
     spawnForward,
   };
@@ -4760,11 +4899,26 @@ function updateWormholeFall(delta: number) {
   const progress = wormholeProgress();
   const input = wormholeInputVector();
   const targetDepth = wormholeDepthInput();
-  wormholeFall.depth = THREE.MathUtils.lerp(wormholeFall.depth, targetDepth, 1 - Math.pow(0.0025, WORMHOLE_DEPTH_RESPONSE * delta));
-  const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
+  const depthPull = targetDepth - wormholeFall.depth;
+  const pushingDepthOutward = Math.sign(depthPull) === Math.sign(wormholeFall.depth) && Math.abs(targetDepth) > Math.abs(wormholeFall.depth);
+  const depthResistance = pushingDepthOutward ? 1 - THREE.MathUtils.smoothstep(Math.abs(wormholeFall.depth), 0.55, 1) : 1;
+  wormholeFall.depthVelocity += depthPull * WORMHOLE_DEPTH_CONTROL_STRENGTH * depthResistance * delta;
+  wormholeFall.depthVelocity *= Math.exp(-WORMHOLE_DEPTH_DAMPING * delta);
+  wormholeFall.depthVelocity = THREE.MathUtils.clamp(wormholeFall.depthVelocity, -WORMHOLE_DEPTH_MAX_SPEED, WORMHOLE_DEPTH_MAX_SPEED);
+  wormholeFall.depth = THREE.MathUtils.clamp(wormholeFall.depth + wormholeFall.depthVelocity * delta, -1, 1);
+  if (Math.abs(targetDepth) < 0.001 && Math.abs(wormholeFall.depth) < 0.004 && Math.abs(wormholeFall.depthVelocity) < 0.02) {
+    wormholeFall.depth = 0;
+    wormholeFall.depthVelocity = 0;
+  }
+
+  const floatCenter = wormholeFloatingCenter();
+  const targetDrift = input
+    .multiplyScalar(WORMHOLE_DRIFT_LIMIT)
+    .addScaledVector(floatCenter, WORMHOLE_DRIFT_LIMIT);
   const boundaryResistance = 1 - THREE.MathUtils.smoothstep(wormholeFall.drift.length(), WORMHOLE_DRIFT_LIMIT * 0.55, WORMHOLE_DRIFT_LIMIT);
   wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), WORMHOLE_DRIFT_CONTROL_STRENGTH * boundaryResistance * delta);
-  wormholeFall.velocity.addScaledVector(wormholeFall.drift, -WORMHOLE_DRIFT_CENTER_PULL * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFall.drift.clone().sub(floatCenter.multiplyScalar(WORMHOLE_DRIFT_LIMIT * 0.45)), -WORMHOLE_DRIFT_CENTER_PULL * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFloatingTurbulence(), WORMHOLE_FLOAT_CENTER_FORCE * delta);
   wormholeFall.velocity.multiplyScalar(Math.exp(-WORMHOLE_DRIFT_DAMPING * delta));
   wormholeFall.drift.addScaledVector(wormholeFall.velocity, delta);
   const driftLength = wormholeFall.drift.length();
@@ -4780,6 +4934,24 @@ function updateWormholeFall(delta: number) {
     return 0;
   }
   return THREE.MathUtils.lerp(35, 10, progress);
+}
+
+function wormholeFloatingCenter() {
+  if (!wormholeFall) return new THREE.Vector2();
+  const t = elapsedTime - wormholeFall.startedAt;
+  return new THREE.Vector2(
+    Math.sin(t * 0.74 + 0.8) * WORMHOLE_FLOAT_CENTER_RADIUS + Math.sin(t * 1.31 + 2.2) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.34,
+    Math.cos(t * 0.61 + 1.4) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.82 + Math.sin(t * 1.08 + 3.6) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.28,
+  );
+}
+
+function wormholeFloatingTurbulence() {
+  if (!wormholeFall) return new THREE.Vector2();
+  const t = elapsedTime - wormholeFall.startedAt;
+  return new THREE.Vector2(
+    Math.sin(t * 1.9 + 0.35) + Math.sin(t * 3.7 + 1.8) * 0.34,
+    Math.cos(t * 1.6 + 2.15) + Math.sin(t * 3.2 + 0.4) * 0.28,
+  );
 }
 
 function finishWormholeFall() {
@@ -5465,10 +5637,10 @@ function updateCamera(delta: number) {
     if (exitDistance >= exitFrontCamera.releaseDistance && !holdUntilElevatorLands) {
       exitFrontCamera = null;
     } else {
-      const distance = Math.max(cameraDistance, 8);
+      const distance = Math.max(cameraDistance, exitFrontCamera.distance);
       const target = player.position.clone().addScaledVector(normal, 1.45);
       const frontDirection = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
-      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, 2.2);
+      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, exitFrontCamera.lift);
       camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
       camera.up.copy(normal);
       camera.lookAt(target);
@@ -5542,9 +5714,9 @@ function placePlayerOnPlanet() {
   placeObjectOnPlanetNormal(player, playerNormal, PLAYER_ALTITUDE + playerAltitudeOffset, headingFromForward(playerNormal, playerForward));
 }
 
-function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number) {
-  exitFrontCamera = { origin: origin.clone(), releaseDistance };
-  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
+function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number, lift = 2.2, distance = 8) {
+  exitFrontCamera = { origin: origin.clone(), releaseDistance, lift, distance };
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE, distance);
   orbitYawOffset = 0;
 }
 
@@ -5833,6 +6005,24 @@ function updateMissionState() {
     dialogueBox.classList.remove("is-visible");
     return;
   }
+  if (world.habitatDoor.occupied) {
+    activeInteractable = null;
+    activeExplorable = null;
+    activeElevator = null;
+    activeHabitatDoor = findActiveHabitatDoor();
+    activeGreenhouseDoor = null;
+    activeAncientPortal = false;
+    activeRobot = null;
+    activeFufu = false;
+    activeFootball = false;
+    activeOxygenSupply = null;
+    activeRideRover = null;
+    interactionActions = buildInteractionActions();
+    if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
+    updateInteractionPrompts();
+    dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
+    return;
+  }
   activeInteractable = null;
   activeExplorable = null;
   activeElevator = findActiveElevator();
@@ -5888,7 +6078,7 @@ function buildInteractionActions() {
   }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
-  if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看美好瞬间") });
+  if (world.habitatDoor.occupied && cameraPhotos.length > 0 && isNearHabitatPhotoWall()) actions.push({ id: "photoWall", label: localizeText("查看美好瞬间") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
   if (activeAncientPortal) {
     actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
@@ -5900,7 +6090,7 @@ function buildInteractionActions() {
   if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
-  if (pendingMotherCall) {
+  if (pendingMotherCall && !isInsideInteriorSpace()) {
     actions.push({ id: "motherCallReject", label: tr("info.reject") });
     actions.push({ id: "motherCallAccept", label: tr("info.accept") });
   }
@@ -6304,7 +6494,13 @@ function findActiveAncientPortal() {
 function isInsideAncientTreePortalPaymentZone() {
   if (!ancientTreeArchObject) return false;
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
-  return isInsideAncientTreeDoorway(local, ANCIENT_PORTAL_PROMPT_SCALE);
+  if (isInsideAncientTreeDoorway(local, ANCIENT_PORTAL_PROMPT_SCALE)) return true;
+  if (!isFlightActive()) return false;
+  const doorwayFootprint = Math.max(34, 24) * ANCIENT_PORTAL_PROMPT_SCALE;
+  return Math.abs(local.x) < doorwayFootprint
+    && local.y > -16 * ANCIENT_PORTAL_PROMPT_SCALE
+    && local.y < ANCIENT_PORTAL_FLIGHT_PROMPT_MAX_HEIGHT
+    && Math.abs(local.z) < 42 * ANCIENT_PORTAL_PROMPT_SCALE;
 }
 
 function isInsideAncientTreeArchDiscoveryRange() {
@@ -6494,10 +6690,19 @@ function respawnAfterStaminaDepleted() {
 
 function findActiveHabitatDoor() {
   const door = world.habitatDoor;
-  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, -0.48, door.occupied ? -2.18 : -2.76));
+  if (door.occupied) {
+    const localPlayer = door.root.worldToLocal(player.position.clone());
+    return localPlayer.z < -1.12 && Math.abs(localPlayer.x) < 1.34 ? door : null;
+  }
+  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, -0.48, -2.76));
   const distance = doorWorld.distanceTo(player.position);
-  if (door.occupied) return door;
   return distance < door.promptRadius ? door : null;
+}
+
+function isNearHabitatPhotoWall() {
+  if (!world.habitatDoor.occupied) return false;
+  const localPlayer = world.habitatDoor.root.worldToLocal(player.position.clone());
+  return localPlayer.x > 3.75 && Math.abs(localPlayer.z) < 1.55;
 }
 
 function findActiveRobot() {
@@ -6734,14 +6939,14 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   door.interiorLight.visible = false;
   setHabitatInteriorMode(false);
   resetVitals();
-  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -1.18, -3.15));
+  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -0.18, -6.85));
   playerNormal.copy(exitWorld.normalize());
-  const faceAway = door.root.localToWorld(new THREE.Vector3(0, -1.18, -4.3)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
+  const faceAway = door.root.localToWorld(new THREE.Vector3(0, -0.18, -8.2)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
   if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
   cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
-  startExitFrontCamera(exitWorld, 16);
+  startExitFrontCamera(player.position, 22, 4.8, 11);
   showDialogue("居住舱", "外舱门已打开。氧气背包与体能 100%。", 2.8);
 }
 
