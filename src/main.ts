@@ -6084,7 +6084,7 @@ function buildInteractionActions() {
     actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
     actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
   }
-  if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
+  if (activeInteractable && activeInteractable.id !== "habitatCheck") actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
   if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
@@ -6094,7 +6094,10 @@ function buildInteractionActions() {
     actions.push({ id: "motherCallReject", label: tr("info.reject") });
     actions.push({ id: "motherCallAccept", label: tr("info.accept") });
   }
-  return prioritizeInteractionActions(actions).slice(0, 2);
+  const prioritized = prioritizeInteractionActions(actions);
+  const hasTwoButtonChoice = prioritized.some((action) => action.id === "motherCallReject" || action.id === "motherCallAccept" || action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
+  const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
+  return prioritized.slice(0, visibleActionLimit);
 }
 
 function prioritizeInteractionActions(actions: InteractionAction[]) {
@@ -6720,7 +6723,7 @@ function findActiveRobot() {
       nearestRobot = rover;
     }
   }
-  return nearestRobot && nearestDistance < 4.2 ? nearestRobot : null;
+  return nearestRobot && nearestDistance < 2.35 ? nearestRobot : null;
 }
 
 function robotConversationId(robot: THREE.Group) {

@@ -351,6 +351,30 @@ function splitGeometryByLocalX(source: THREE.BufferGeometry, upperHalf: boolean)
   return result;
 }
 
+function createSleepPodCutCapGeometry(radius: number, length: number, segments = 28) {
+  const yRadius = length * 0.5 + radius;
+  const positions: number[] = [];
+  const normals: number[] = [];
+
+  for (let i = 0; i < segments; i += 1) {
+    const current = (i / segments) * Math.PI * 2;
+    const next = ((i + 1) / segments) * Math.PI * 2;
+    positions.push(
+      0, 0, 0,
+      0, Math.cos(current) * yRadius, Math.sin(current) * radius,
+      0, Math.cos(next) * yRadius, Math.sin(next) * radius,
+    );
+    normals.push(1, 0, 0, 1, 0, 0, 1, 0, 0);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 function foundation(w: number, d: number, material = mat(0x6f4530, 0.92, 0.04)) {
   const mesh = box(w, 0.28, d, material);
   mesh.position.y = -0.06;
@@ -1501,19 +1525,23 @@ function createHabitatModule() {
   const sleepPodGeometry = new THREE.CapsuleGeometry(0.34, 1.22, 5, 10);
   const sleepPodLowerGeometry = splitGeometryByLocalX(sleepPodGeometry, false);
   const sleepPodUpperGeometry = splitGeometryByLocalX(sleepPodGeometry, true);
+  const sleepPodCutCapGeometry = createSleepPodCutCapGeometry(0.34, 1.22);
   podXs.forEach((x, index) => {
     const z = index % 2 === 0 ? 1.24 : -1.22;
     const pod = new THREE.Group();
     pod.position.set(x, -0.94, z);
     const lowerShell = new THREE.Mesh(sleepPodLowerGeometry, sleepShell);
+    const lowerCutCap = new THREE.Mesh(sleepPodCutCapGeometry, sleepShell);
     const upperGlass = new THREE.Mesh(sleepPodUpperGeometry, sleepGlass);
     lowerShell.rotation.z = Math.PI / 2;
+    lowerCutCap.rotation.z = Math.PI / 2;
     upperGlass.rotation.z = Math.PI / 2;
     lowerShell.castShadow = true;
     lowerShell.receiveShadow = true;
+    lowerCutCap.receiveShadow = true;
     upperGlass.castShadow = false;
     upperGlass.receiveShadow = false;
-    pod.add(lowerShell, upperGlass);
+    pod.add(lowerShell, lowerCutCap, upperGlass);
     const status = box(0.12, 0.08, 0.08, mat(index === 6 ? 0xffb15d : 0x8cffaa, 0.28, 0.2, index === 6 ? 0xff9d3d : 0x44ff88));
     status.position.set(x + 0.45, -0.72, z - Math.sign(z) * 0.36);
     group.add(pod, status);
@@ -1537,7 +1565,7 @@ function createHabitatModule() {
     interiorLight,
     open: false,
     occupied: false,
-    promptRadius: 10.5,
+    promptRadius: 3.15,
     label: "居住舱舱门",
   } satisfies HabitatDoorControl;
   return group;
