@@ -72,6 +72,7 @@ export type MarsWorld = {
   unnumberedObjects: UnnumberedObject[];
   colliders: CircleCollider[];
   rovers: THREE.Group[];
+  darkSpiders: DarkSpider[];
   meteors: Meteor[];
   starlinkConstellation: StarlinkConstellation;
   solarArrays: THREE.Group[];
@@ -84,6 +85,7 @@ export type MarsWorld = {
   ancientTreePortal: THREE.Group;
   fufuRescueSite: FufuRescueSite;
   monolith: MonolithSite;
+  spiderNest: SpiderNestSite;
 };
 
 export type FufuRescueSite = {
@@ -98,6 +100,34 @@ export type MonolithSite = {
   x: number;
   z: number;
   radius: number;
+};
+
+export type SpiderNestSite = {
+  object: THREE.Object3D;
+  normal: THREE.Vector3;
+  x: number;
+  z: number;
+  radius: number;
+};
+
+export type DarkSpider = {
+  group: THREE.Group;
+  visual: THREE.Group;
+  legs: THREE.Group[];
+  normal: THREE.Vector3;
+  homeNormal: THREE.Vector3;
+  forward: THREE.Vector3;
+  tangentA: THREE.Vector3;
+  tangentB: THREE.Vector3;
+  phase: number;
+  radius: number;
+  speed: number;
+};
+
+export type SpiderLightThreat = {
+  position: THREE.Vector3;
+  radius: number;
+  strength?: number;
 };
 
 export type ElevatorControl = {
@@ -221,11 +251,20 @@ const VEHICLE_LOOP_SPEED = 0.052;
 const VEHICLE_LOOP_HEADING = THREE.MathUtils.degToRad(50);
 const VEHICLE_ROUTE_STOP_SECONDS = 30;
 const VEHICLE_STOP_ANGLE_THRESHOLD = 0.02;
+const VEHICLE_ROUTE_TERRAIN_SAFE_RADIUS = 15;
+const VEHICLE_ROUTE_ROCK_CLEARANCE = 12;
 const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
 const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
 export const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
+const ANCIENT_TREE_ARCH_NORMAL = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
+const SPIDER_NEST_NORMAL = ANCIENT_TREE_ARCH_NORMAL.clone().lerp(CRASHED_SHIP_SITE_NORMAL, 0.56).normalize();
+const SPIDER_NEST_DISCOVERY_RADIUS = 18;
+const SPIDER_PATROL_RADIUS = 34;
+const SPIDER_BODY_RADIUS = 1.65;
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const VEHICLE_LOOP_DIRECTION = new THREE.Vector3(Math.cos(VEHICLE_LOOP_HEADING), 0, Math.sin(VEHICLE_LOOP_HEADING)).normalize();
+const VEHICLE_LOOP_PLANE_NORMAL = VEHICLE_LOOP_DIRECTION.clone().cross(WORLD_UP).normalize();
 const scratchNormal = new THREE.Vector3();
 const scratchTrackNormal = new THREE.Vector3();
 const scratchTrackSide = new THREE.Vector3();
@@ -389,7 +428,36 @@ function sphereHeightFromNormal(normal: THREE.Vector3) {
   const duneA = Math.sin(normal.x * 11.2 + normal.z * 6.4) * 0.74;
   const duneB = Math.cos(normal.z * 13.8 - normal.y * 5.1) * 0.46;
   const duneC = Math.sin((normal.x + normal.y - normal.z) * 22.0) * 0.16;
-  return duneA + duneB + duneC;
+  const baseElevation = duneA + duneB + duneC;
+  const darkSide = THREE.MathUtils.smoothstep(-normal.y, 0.18, 0.82);
+  const nestDot = THREE.MathUtils.clamp(normal.dot(SPIDER_NEST_NORMAL), -1, 1);
+  const nestDistance = Math.acos(nestDot) * PLANET_RADIUS;
+  const nestFocus = THREE.MathUtils.smoothstep(nestDot, 0.88, 0.985);
+  const darkRidges =
+    (Math.sin(normal.x * 25.0 - normal.z * 13.0) * 0.62 + Math.cos((normal.x + normal.z) * 31.0 + normal.y * 6.0) * 0.42) *
+    darkSide;
+  const nestRim = Math.sin((1 - nestDot) * 84.0) * 0.16 * nestFocus;
+  const nestBowl = -2.35 * (1 - THREE.MathUtils.smoothstep(nestDistance, 1.2, 9.2));
+  const nestFloor = -0.55 * (1 - THREE.MathUtils.smoothstep(nestDistance, 0, 2.7));
+  const nestHollow = nestBowl + nestFloor;
+  const roughElevation = baseElevation + darkRidges + nestRim + nestHollow;
+  const nestRouteExclusion = 1 - THREE.MathUtils.smoothstep(nestDistance, 8, 16);
+  const routeSmooth = vehicleRouteTerrainSmoothFactor(normal) * (1 - nestRouteExclusion);
+  return THREE.MathUtils.lerp(roughElevation, baseElevation * 0.35, routeSmooth);
+}
+
+function vehicleLoopSurfaceDistance(normal: THREE.Vector3) {
+  const planeDot = THREE.MathUtils.clamp(normal.dot(VEHICLE_LOOP_PLANE_NORMAL), -1, 1);
+  return Math.asin(Math.abs(planeDot)) * PLANET_RADIUS;
+}
+
+function vehicleRouteTerrainSmoothFactor(normal: THREE.Vector3) {
+  const distance = vehicleLoopSurfaceDistance(normal);
+  return 1 - THREE.MathUtils.smoothstep(distance, 5, VEHICLE_ROUTE_TERRAIN_SAFE_RADIUS);
+}
+
+function isInsideVehicleRouteRockClearance(normal: THREE.Vector3) {
+  return vehicleLoopSurfaceDistance(normal) < VEHICLE_ROUTE_ROCK_CLEARANCE;
 }
 
 export function planetSurfacePointFromNormal(normal: THREE.Vector3, altitude = 0, target = new THREE.Vector3()) {
@@ -427,6 +495,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const unnumberedObjects: UnnumberedObject[] = [];
   const colliders: CircleCollider[] = [];
   const rovers: THREE.Group[] = [];
+  const darkSpiders: DarkSpider[] = [];
   const maintenanceBots: MaintenanceBotConfig[] = [];
   const solarArrays: THREE.Group[] = [];
   const elevators: ElevatorControl[] = [];
@@ -444,6 +513,24 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   base.name = "ARES Base Alpha";
   root.add(base);
   addNasaPerseveranceRover(base, colliders, landmarks);
+
+  const spiderNest = createSpiderNest();
+  const spiderNestCoords = mapCoordinatesFromNormal(SPIDER_NEST_NORMAL);
+  placeObjectOnPlanetNormal(spiderNest, SPIDER_NEST_NORMAL, -0.07, 0.4);
+  root.add(spiderNest);
+  addSpiderNestColliders(colliders);
+  addDarkSideRockField(root, colliders);
+  for (let i = 0; i < 3; i += 1) {
+    const spider = createDarkSpider(i);
+    darkSpiders.push(spider);
+    root.add(spider.group);
+    colliders.push({
+      center: new THREE.Vector2(),
+      radius: 1.55,
+      label: "暗面蜘蛛",
+      dynamicObject: spider.group,
+    });
+  }
 
   addLanderSite("01 飞船 登陆飞船", spread(132), spread(78), 0.18, true);
   addLanderSite("02 飞船 货运飞船", spread(142), spread(18), -0.55, true);
@@ -495,12 +582,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   placeObjectOnPlanetNormal(crashedShip, wreckNormal, -1.72, wreckYaw);
   base.add(crashedShip);
   unnumberedObjects.push({ object: crashedShip, x: wreckX, z: wreckZ, mapRange: 340 });
-  colliders.push({
-    center: new THREE.Vector2(wreckX, wreckZ),
-    normal: wreckNormal.clone(),
-    radius: 13.8,
-    label: "坠毁飞船残骸主体",
-  });
+  addCrashedShipColliders(colliders, wreckX, wreckZ, wreckYaw);
 
   const habitat = createHabitatModule();
   habitat.scale.setScalar(HABITAT_SCALE);
@@ -759,6 +841,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     unnumberedObjects,
     colliders,
     rovers,
+    darkSpiders,
     meteors,
     starlinkConstellation,
     solarArrays,
@@ -780,6 +863,13 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       x: monolithX,
       z: monolithZ,
       radius: 24,
+    },
+    spiderNest: {
+      object: spiderNest,
+      normal: SPIDER_NEST_NORMAL.clone(),
+      x: spiderNestCoords.x,
+      z: spiderNestCoords.z,
+      radius: SPIDER_NEST_DISCOVERY_RADIUS,
     },
   };
 
@@ -1063,6 +1153,18 @@ function addFootprintColliders(
   }
 }
 
+function addCrashedShipColliders(colliders: CircleCollider[], x: number, z: number, yaw: number) {
+  const scale = LANDER_SCALE;
+  const label = "坠毁飞船残骸主体";
+  const hullXs = [-12.7, -9.3, -5.2, 5.2, 9.3, 12.4].map((value) => value * scale);
+  const hullZs = [-0.92, 0.92].map((value) => value * scale);
+  addFootprintColliders(colliders, x, z, yaw, hullXs, hullZs, 1.72 * scale, label);
+
+  for (const localX of [-13.8, 13.0]) {
+    colliders.push(offsetCircle(x, z, yaw, localX * scale, 0, 2.15 * scale, label));
+  }
+}
+
 function ancientTreeArchLocalNormal(localX: number, localZ: number, yaw: number) {
   const centerNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
   const right = new THREE.Vector3(0, 1, 0).cross(centerNormal).normalize();
@@ -1088,12 +1190,20 @@ function addAncientTreeArchColliders(colliders: CircleCollider[], yaw: number) {
   }
 
   const rows = [
+    { z: -38, halfWidth: 48, radius: 7.8 },
     { z: -31, halfWidth: 39, radius: 8.4 },
+    { z: -24, halfWidth: 37, radius: 8.2 },
     { z: -18, halfWidth: 35, radius: 8.1 },
+    { z: -11, halfWidth: 33, radius: 8.0 },
     { z: -4, halfWidth: 31, radius: 7.8 },
+    { z: 3, halfWidth: 30, radius: 7.7 },
     { z: 10, halfWidth: 29, radius: 7.5 },
+    { z: 17, halfWidth: 28.5, radius: 7.3 },
     { z: 24, halfWidth: 28, radius: 7.1 },
+    { z: 31, halfWidth: 27.5, radius: 6.9 },
     { z: 38, halfWidth: 27, radius: 6.7 },
+    { z: 48, halfWidth: 25, radius: 6.2 },
+    { z: 58, halfWidth: 22, radius: 5.8 },
   ];
 
   for (const row of rows) {
@@ -1102,8 +1212,8 @@ function addAncientTreeArchColliders(colliders: CircleCollider[], yaw: number) {
     }
   }
 
-  for (const localX of [-41, -24, 24, 41]) {
-    colliders.push(colliderAt(localX, -41, 6.2, "远古巨树拱门根部"));
+  for (const localX of [-50, -41, -32, 32, 41, 50]) {
+    colliders.push(colliderAt(localX, -43, 6.4, "远古巨树拱门根部"));
   }
 }
 
@@ -3003,6 +3113,78 @@ function seededNoise(seed: number, salt: number) {
   return THREE.MathUtils.clamp(Math.sin(seed * 12.9898 + salt) * 43758.5453 % 1, -1, 1) * 0.5 + 0.5;
 }
 
+function mapCoordinatesFromNormal(normal: THREE.Vector3) {
+  const projectedY = Math.max(Math.abs(normal.y), 0.001);
+  return {
+    x: (normal.x / projectedY) * PLANET_RADIUS,
+    z: (normal.z / projectedY) * PLANET_RADIUS,
+  };
+}
+
+function normalOffset(base: THREE.Vector3, tangentA: THREE.Vector3, tangentB: THREE.Vector3, offsetA: number, offsetB: number) {
+  return base
+    .clone()
+    .addScaledVector(tangentA, offsetA / PLANET_RADIUS)
+    .addScaledVector(tangentB, offsetB / PLANET_RADIUS)
+    .normalize();
+}
+
+function tangentBasis(normal: THREE.Vector3) {
+  const tangentA = new THREE.Vector3(0, 1, 0).cross(normal);
+  if (tangentA.lengthSq() < 0.000001) tangentA.set(1, 0, 0).cross(normal);
+  tangentA.normalize();
+  const tangentB = normal.clone().cross(tangentA).normalize();
+  return { tangentA, tangentB };
+}
+
+function headingFromForward(normal: THREE.Vector3, forward: THREE.Vector3) {
+  const base = new THREE.Quaternion().setFromUnitVectors(WORLD_UP, normal.clone().normalize());
+  const localForward = forward.clone().normalize().applyQuaternion(base.invert());
+  return Math.atan2(-localForward.x, -localForward.z);
+}
+
+function createSpiderNest() {
+  const group = new THREE.Group();
+  group.name = "Dark-side spider nest";
+
+  const scorched = mat(0x09080a, 0.98, 0.02);
+  const edgeMat = mat(0x3b130e, 0.9, 0.04, 0x120403);
+
+  const mouth = new THREE.Mesh(new THREE.CylinderGeometry(2.35, 2.7, 0.08, 32), scorched);
+  mouth.position.y = -0.12;
+  mouth.scale.z = 0.66;
+  mouth.castShadow = false;
+  mouth.receiveShadow = true;
+  group.add(mouth);
+
+  const throat = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 10), scorched);
+  throat.position.set(0, -0.04, -0.22);
+  throat.scale.set(1.72, 0.2, 0.8);
+  throat.castShadow = false;
+  group.add(throat);
+
+  const stoneAngles = [0.46, 2.38, 3.78, 5.42];
+  stoneAngles.forEach((angle, index) => {
+    const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18 + (index % 2) * 0.05, 0), edgeMat);
+    stone.position.set(Math.cos(angle) * 3.05, 0.03, Math.sin(angle) * 2.05);
+    stone.rotation.set(index * 0.7, angle, index * 0.43);
+    stone.scale.y = 0.36 + (index % 2) * 0.12;
+    stone.castShadow = true;
+    stone.receiveShadow = true;
+    group.add(stone);
+  });
+  return group;
+}
+
+function addSpiderNestColliders(colliders: CircleCollider[]) {
+  colliders.push({
+    center: new THREE.Vector2(),
+    normal: SPIDER_NEST_NORMAL.clone(),
+    radius: 3.25,
+    label: "暗面蜘蛛巢穴洞口",
+  });
+}
+
 function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
   const rockMat = mat(0x8d4228, 1);
   for (let i = 0; i < 95; i += 1) {
@@ -3010,6 +3192,7 @@ function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
     const angle = Math.random() * Math.PI * 2;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
+    if (isInsideVehicleRouteRockClearance(planetNormal(x, z, scratchNormal))) continue;
     if (Math.abs(x) < spread(30) && Math.abs(z) < spread(24) && Math.random() < 0.72) continue;
     const rockRadius = 0.35 + Math.random() * 1.15;
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rockRadius, 0), rockMat);
@@ -3022,6 +3205,277 @@ function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
     scene.add(rock);
     colliders.push(circle(x, z, Math.max(0.42, rockRadius * 0.86), "红色岩石"));
   }
+}
+
+function addRockAtNormal(scene: THREE.Object3D, colliders: CircleCollider[], normal: THREE.Vector3, radius: number, label: string, dark = false) {
+  void dark;
+  if (isInsideVehicleRouteRockClearance(normal)) return;
+  const rockMat = mat(0x8d4228, 1);
+  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(radius, 0), rockMat);
+  placeObjectOnPlanetNormal(rock, normal, 0.12, Math.random() * Math.PI * 2);
+  rock.rotateX(Math.random() * Math.PI);
+  rock.rotateZ(Math.random() * Math.PI);
+  rock.scale.y = 0.48 + Math.random() * 1.15;
+  rock.castShadow = true;
+  rock.receiveShadow = true;
+  scene.add(rock);
+  colliders.push({
+    center: new THREE.Vector2(),
+    normal: normal.clone(),
+    radius: Math.max(0.42, radius * 0.86),
+    label,
+  });
+}
+
+function addDarkSideRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
+  const { tangentA, tangentB } = tangentBasis(SPIDER_NEST_NORMAL);
+  for (let i = 0; i < 44; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 13 + Math.random() * 56;
+    const normal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
+    addRockAtNormal(scene, colliders, normal, 0.42 + Math.random() * 1.55, "红色岩石");
+  }
+  for (let i = 0; i < 58; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 28 + Math.random() * 88;
+    const normal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
+    addRockAtNormal(scene, colliders, normal, 0.32 + Math.random() * 1.15, "红色岩石");
+  }
+}
+
+function createDarkSpider(index: number): DarkSpider {
+  const group = new THREE.Group();
+  group.name = `Dark-side spider ${index + 1}`;
+  const visual = new THREE.Group();
+  group.add(visual);
+
+  const shell = mat(0x111317, 0.76, 0.12, 0x05050a);
+  const abdomenMat = mat(0x1f1726, 0.68, 0.08, 0x120a22);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x8cff66, toneMapped: false });
+  const glowDotMat = new THREE.MeshBasicMaterial({ color: 0x6eff5f, toneMapped: false });
+  const legMat = mat(0x17191d, 0.82, 0.08);
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7), shell);
+  body.position.y = 0.92;
+  body.scale.set(0.9, 0.46, 1.25);
+  body.castShadow = true;
+  visual.add(body);
+
+  const abdomen = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7), abdomenMat);
+  abdomen.position.set(0, 0.84, 0.92);
+  abdomen.scale.set(1.04, 0.56, 1.34);
+  abdomen.castShadow = true;
+  visual.add(abdomen);
+
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i += 1) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.076, 8, 5), eyeMat);
+      eye.position.set(side * (0.16 + i * 0.1), 1.075 + i * 0.015, -1.07);
+      visual.add(eye);
+    }
+  }
+
+  const abdomenDots = [
+    [0, 1.25, 1.18, 0.072],
+    [-0.24, 1.18, 1.04, 0.058],
+    [0.24, 1.18, 1.04, 0.058],
+    [-0.34, 1.08, 1.32, 0.052],
+    [0.34, 1.08, 1.32, 0.052],
+    [-0.15, 1.1, 1.54, 0.05],
+    [0.15, 1.1, 1.54, 0.05],
+  ] as const;
+  abdomenDots.forEach(([x, y, z, radius]) => {
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 5), glowDotMat);
+    dot.position.set(x, y, z);
+    visual.add(dot);
+  });
+
+  const legs: THREE.Group[] = [];
+  const zSlots = [-0.78, -0.28, 0.28, 0.78];
+  for (const side of [-1, 1]) {
+    for (const z of zSlots) {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.54, 0.78, z);
+      const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 1.1, 6), legMat);
+      upper.rotation.z = side * 1.08;
+      upper.position.set(side * 0.38, -0.16, 0);
+      const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.044, 1.05, 6), legMat);
+      lower.rotation.z = side * 0.72;
+      lower.position.set(side * 0.94, -0.53, 0);
+      const foot = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), legMat);
+      foot.position.set(side * 1.42, -0.95, 0);
+      leg.add(upper, lower, foot);
+      visual.add(leg);
+      legs.push(leg);
+    }
+  }
+
+  const { tangentA, tangentB } = tangentBasis(SPIDER_NEST_NORMAL);
+  const angle = (index / 3) * Math.PI * 2 + 0.45;
+  const homeNormal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * (10 + index * 3), Math.sin(angle) * (8 + index * 2));
+  const forward = tangentA.clone().applyAxisAngle(homeNormal, angle).projectOnPlane(homeNormal).normalize();
+  group.scale.setScalar(1.15);
+  return {
+    group,
+    visual,
+    legs,
+    normal: homeNormal.clone(),
+    homeNormal,
+    forward,
+    tangentA: tangentA.clone(),
+    tangentB: tangentB.clone(),
+    phase: index * 1.9,
+    radius: 16 + index * 3,
+    speed: 1.3 + index * 0.18,
+  };
+}
+
+export function updateDarkSpiders(
+  spiders: DarkSpider[],
+  elapsed: number,
+  delta: number,
+  colliders: CircleCollider[] = [],
+  sunPosition?: THREE.Vector3 | null,
+  lightThreat?: SpiderLightThreat | null,
+) {
+  const sunDirection = sunPosition && sunPosition.lengthSq() > 0.000001 ? sunPosition.clone().normalize() : null;
+  const lightThreatNormal = lightThreat && lightThreat.radius > 0 ? lightThreat.position.clone().normalize() : null;
+  for (const spider of spiders) {
+    const lit = sunDirection ? spider.normal.dot(sunDirection) > 0.08 : false;
+    const orbitA = Math.cos(elapsed * 0.16 + spider.phase) * spider.radius + Math.sin(elapsed * 0.43 + spider.phase) * 4.5;
+    const orbitB = Math.sin(elapsed * 0.19 + spider.phase * 0.7) * spider.radius * 0.72 + Math.cos(elapsed * 0.37 + spider.phase * 1.3) * 3.5;
+    const patrolNormal = normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, orbitA, orbitB);
+    let desiredNormal = lit ? spider.homeNormal : patrolNormal;
+    let avoidingLaser = false;
+    if (lightThreat && lightThreatNormal) {
+      const lightDot = THREE.MathUtils.clamp(spider.normal.dot(lightThreatNormal), -1, 1);
+      const lightDistance = Math.acos(lightDot) * PLANET_RADIUS;
+      if (lightDistance < lightThreat.radius) {
+        avoidingLaser = true;
+        const urgency = 1 - THREE.MathUtils.smoothstep(lightDistance, 0, lightThreat.radius);
+        let away = spider.normal.clone().addScaledVector(lightThreatNormal, -lightDot);
+        if (away.lengthSq() < 0.000001) {
+          away = spider.normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -spider.normal.dot(SPIDER_NEST_NORMAL));
+        }
+        if (away.lengthSq() > 0.000001) {
+          away.normalize();
+          const retreatMeters = (10 + (lightThreat.strength ?? 1) * 10) * (0.35 + urgency);
+          desiredNormal = spider.normal.clone().addScaledVector(away, retreatMeters / PLANET_RADIUS).normalize();
+          desiredNormal.lerp(spider.homeNormal, 0.32 + urgency * 0.28).normalize();
+        } else {
+          desiredNormal = spider.homeNormal;
+        }
+      }
+    }
+    const targetNormal = avoidSpiderObstacles(constrainSpiderTerritory(desiredNormal), colliders, SPIDER_BODY_RADIUS + 0.35);
+    const dot = THREE.MathUtils.clamp(spider.normal.dot(targetNormal), -1, 1);
+    const tangent = targetNormal.clone().addScaledVector(spider.normal, -dot);
+    const distance = Math.acos(dot);
+    if (tangent.lengthSq() > 0.000001 && distance > 0.00002) {
+      tangent.normalize();
+      const speedScale = avoidingLaser ? 2.05 : lit ? 1.45 : 1;
+      const step = Math.min((spider.speed * speedScale * delta) / PLANET_RADIUS, distance);
+      spider.normal.multiplyScalar(Math.cos(step)).addScaledVector(tangent, Math.sin(step)).normalize();
+      spider.forward.lerp(tangent, 0.08).projectOnPlane(spider.normal).normalize();
+    }
+    const collisionState = resolveSpiderObstacleContact(spider.normal, colliders, SPIDER_BODY_RADIUS);
+    spider.normal.copy(collisionState.normal);
+    spider.forward.projectOnPlane(spider.normal).normalize();
+
+    const legWave = elapsed * (avoidingLaser ? 9.8 : lit ? 8.4 : 5.8) + spider.phase;
+    const climbLift = collisionState.climbHeight;
+    for (let i = 0; i < spider.legs.length; i += 1) {
+      const leg = spider.legs[i];
+      const side = i < 4 ? -1 : 1;
+      const alternating = i % 2 === 0 ? 0 : Math.PI;
+      const phase = legWave + i * 0.42 + alternating;
+      const lift = Math.max(0, Math.sin(phase)) * (0.12 + climbLift * 0.08);
+      leg.rotation.x = Math.sin(phase) * (0.2 + climbLift * 0.07);
+      leg.rotation.y = side * lift;
+      leg.rotation.z = side * (0.1 + Math.cos(phase) * (0.12 + climbLift * 0.05));
+    }
+    spider.visual.position.y = Math.abs(Math.sin(legWave)) * 0.055 + climbLift * 0.16;
+    spider.visual.rotation.x = Math.sin(legWave * 0.5 + spider.phase) * (0.025 + climbLift * 0.02);
+    spider.visual.rotation.z = Math.sin(elapsed * 1.8 + spider.phase) * (0.04 + climbLift * 0.015);
+    placeObjectOnPlanetNormal(spider.group, spider.normal, 0.34 + climbLift, headingFromForward(spider.normal, spider.forward));
+  }
+}
+
+function constrainSpiderTerritory(normal: THREE.Vector3) {
+  const dot = THREE.MathUtils.clamp(SPIDER_NEST_NORMAL.dot(normal), -1, 1);
+  const distance = Math.acos(dot) * PLANET_RADIUS;
+  if (distance <= SPIDER_PATROL_RADIUS) return normal.clone();
+  const tangent = normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -dot);
+  if (tangent.lengthSq() < 0.000001) return SPIDER_NEST_NORMAL.clone();
+  tangent.normalize();
+  return SPIDER_NEST_NORMAL.clone().multiplyScalar(Math.cos(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).addScaledVector(tangent, Math.sin(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).normalize();
+}
+
+function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
+  const adjusted = normal.clone();
+  for (const collider of colliders) {
+    if (collider.dynamicObject || isSpiderClimbableCollider(collider)) continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = colliderSurfaceNormal(collider);
+    const dot = THREE.MathUtils.clamp(adjusted.dot(colliderNormal), -1, 1);
+    const distance = Math.acos(dot) * PLANET_RADIUS;
+    const steerDistance = collider.radius + spiderRadius + 8;
+    if (distance >= steerDistance) continue;
+    const away = adjusted.clone().addScaledVector(colliderNormal, -dot);
+    if (away.lengthSq() < 0.000001) continue;
+    away.normalize();
+    const urgency = 1 - THREE.MathUtils.smoothstep(distance, collider.radius + spiderRadius, steerDistance);
+    adjusted.addScaledVector(away, ((steerDistance - distance) / PLANET_RADIUS) * urgency * 0.85).normalize();
+  }
+  return constrainSpiderTerritory(adjusted);
+}
+
+function resolveSpiderObstacleContact(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
+  const adjusted = normal.clone();
+  let climbHeight = 0;
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const collider of colliders) {
+      if (collider.dynamicObject) continue;
+      if (collider.enabled && !collider.enabled()) continue;
+      const colliderNormal = colliderSurfaceNormal(collider);
+      const dot = THREE.MathUtils.clamp(adjusted.dot(colliderNormal), -1, 1);
+      const distance = Math.acos(dot) * PLANET_RADIUS;
+      const minDistance = collider.radius + spiderRadius;
+      if (isSpiderClimbableCollider(collider)) {
+        const climbDistance = collider.radius + spiderRadius * 0.85;
+        if (distance < climbDistance) {
+          const climb = 1 - THREE.MathUtils.smoothstep(distance, 0, climbDistance);
+          climbHeight = Math.max(climbHeight, Math.min(1.25, collider.radius * 0.36) * climb);
+        }
+        continue;
+      }
+      if (distance >= minDistance) continue;
+      let away = adjusted.clone().addScaledVector(colliderNormal, -dot);
+      if (away.lengthSq() < 0.000001) {
+        away = spiderTangentAwayFromNest(colliderNormal);
+      }
+      away.normalize();
+      adjusted.copy(colliderNormal).multiplyScalar(Math.cos(minDistance / PLANET_RADIUS)).addScaledVector(away, Math.sin(minDistance / PLANET_RADIUS)).normalize();
+    }
+  }
+  return { normal: constrainSpiderTerritory(adjusted), climbHeight };
+}
+
+function colliderSurfaceNormal(collider: CircleCollider) {
+  if (collider.normal) return collider.normal.clone().normalize();
+  return planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+}
+
+function isSpiderClimbableCollider(collider: CircleCollider) {
+  return collider.label.includes("岩石") || collider.label.includes("玄武岩") || collider.label.includes("散落");
+}
+
+function spiderTangentAwayFromNest(normal: THREE.Vector3) {
+  const away = normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -normal.dot(SPIDER_NEST_NORMAL));
+  if (away.lengthSq() > 0.000001) return away;
+  const fallback = new THREE.Vector3(1, 0, 0).projectOnPlane(normal);
+  if (fallback.lengthSq() > 0.000001) return fallback;
+  return new THREE.Vector3(0, 0, 1).projectOnPlane(normal);
 }
 
 export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: CircleCollider[] = []) {
@@ -3306,6 +3760,7 @@ function vehicleAncientTreeStopNormal() {
 function avoidFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[], vehicleRadius: number) {
   const adjusted = normal.clone();
   for (const collider of colliders) {
+    if (isVehicleRouteIgnoredCollider(collider)) continue;
     if (collider.dynamicObject || collider.radius < 2.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
     const colliderNormal = collider.normal?.clone() ?? planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
@@ -3327,6 +3782,7 @@ function keepVehicleNormalOutsideFixedColliders(normal: THREE.Vector3, colliders
   const adjusted = normal.clone();
   for (let pass = 0; pass < 3; pass += 1) {
     for (const collider of colliders) {
+      if (isVehicleRouteIgnoredCollider(collider)) continue;
       if (collider.dynamicObject || collider.radius < 2.4) continue;
       if (collider.enabled && !collider.enabled()) continue;
       const colliderNormal = collider.normal?.clone() ?? planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
@@ -3344,6 +3800,10 @@ function keepVehicleNormalOutsideFixedColliders(normal: THREE.Vector3, colliders
     }
   }
   return adjusted;
+}
+
+function isVehicleRouteIgnoredCollider(collider: CircleCollider) {
+  return collider.label.startsWith("远古巨树拱门");
 }
 
 function setDynamicObjectPlanetCoordinate(object: THREE.Object3D, normal: THREE.Vector3) {

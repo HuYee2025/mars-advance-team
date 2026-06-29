@@ -30,6 +30,7 @@ import {
   planetNormal,
   updateElevators,
   updateAncientTreePortal,
+  updateDarkSpiders,
   updateMeteors,
   updateRovers,
   updateSolarArrays,
@@ -172,7 +173,6 @@ const exitConfirmButtons = [exitResumeButton, exitTitleButton] as const;
 const controlsGuide = must<HTMLElement>("#controls-guide");
 const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
-const mapCompass = must<HTMLDivElement>("#map-compass");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
 const mapHeading = must<HTMLDivElement>("#map-heading");
 const fpsValue = must<HTMLElement>("#fps-value");
@@ -398,6 +398,15 @@ const SCALE_GUN_AIM_YAW_SPEED = 1.75;
 const SCALE_GUN_AIM_PITCH_SPEED = 1.18;
 const SCALE_GUN_AIM_PITCH_MIN = -1.05;
 const SCALE_GUN_AIM_PITCH_MAX = 1.18;
+const LASER_SWORD_LIGHT_INTENSITY = 6.76;
+const LASER_SWORD_LIGHT_DISTANCE = 20;
+const LASER_SWORD_RAISED_LIGHT_INTENSITY = LASER_SWORD_LIGHT_INTENSITY * 2;
+const LASER_SWORD_RAISED_LIGHT_DISTANCE = LASER_SWORD_LIGHT_DISTANCE * 2;
+const laserSwordWorldLight = new THREE.PointLight(0xbfeaff, 0, LASER_SWORD_RAISED_LIGHT_DISTANCE, 1.65);
+laserSwordWorldLight.visible = false;
+scene.add(laserSwordWorldLight);
+const laserSwordLightWorldPosition = new THREE.Vector3();
+const laserSwordViewDirection = new THREE.Vector3();
 const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 0 };
 
 type ScaleGunTarget = {
@@ -681,10 +690,12 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "rank.firstResident": "第一位居民",
     "rank.promoted": "职位晋升：{rank}",
     "map.unknownLife": "未知生命迹象",
+    "map.unknownLocation": "未知地点",
     "map.unknownObject": "未知物体",
     "map.unknownMegaStructure": "未知巨型结构",
     "map.coin": "金币",
     "map.sun": "太阳",
+    "map.positionLabel": "坐标",
     "map.headingLabel": "方位",
     "perf.fpsAria": "信号延迟",
     "perf.fpsLabel": "信号延迟",
@@ -754,10 +765,12 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "rank.firstResident": "First Resident",
     "rank.promoted": "Rank Up: {rank}",
     "map.unknownLife": "Unknown life sign",
+    "map.unknownLocation": "Unknown location",
     "map.unknownObject": "Unknown object",
     "map.unknownMegaStructure": "Unknown megastructure",
     "map.coin": "Coin",
     "map.sun": "Sun",
+    "map.positionLabel": "Position",
     "map.headingLabel": "HDG",
     "perf.fpsAria": "Signal lag",
     "perf.fpsLabel": "Signal Lag",
@@ -807,6 +820,14 @@ const exactEnglishTexts: Record<string, string> = {
   "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
   "坠毁飞船残骸": "Crashed ship wreckage",
   "坠毁飞船残骸主体": "Crashed ship wreckage body",
+  "暗面蜘蛛巢穴": "Dark-side Spider Nest",
+  "暗面蜘蛛巢穴洞口": "Dark-side Spider Nest Mouth",
+  "暗面巢穴岩石": "Dark-side Nest Rock",
+  "暗面玄武岩": "Dark-side Basalt",
+  "暗面散落岩石": "Dark-side Scattered Rock",
+  "暗面蜘蛛": "Dark-side Spider",
+  "装备解锁": "Gear Unlocked",
+  "你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。": "You obtained the laser sword. Press I to draw or holster it; hold J to raise it, release to lower it. It lights dark areas, and spiders avoid the light.",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
   "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
@@ -1232,6 +1253,8 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["全屏地图", "Full Map"],
   ["第一 / 第三人称", "First / Third Person"],
   ["开 / 收缩放枪", "Draw / Holster Scale Gun"],
+  ["开 / 收激光剑", "Draw / Holster Laser Sword"],
+  ["举起激光剑", "Raise Laser Sword"],
   ["枪瞄准", "Gun Aim"],
   ["枪放大 / 缩小", "Gun Enlarge / Shrink"],
   ["备用缩放", "Backup Zoom"],
@@ -1339,6 +1362,9 @@ let hasScaleGun = false;
 let scaleGunAiming = false;
 let scaleGunTarget: ScaleGunTarget | null = null;
 let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+let hasLaserSword = false;
+let laserSwordActive = false;
+let laserSwordRaised = false;
 let hasCamera = false;
 let cameraMode = false;
 let cameraZoom = 1;
@@ -2870,6 +2896,16 @@ function bindInput() {
       toggleScaleGunAiming();
       return;
     }
+    if (event.code === "KeyI") {
+      event.preventDefault();
+      toggleLaserSword();
+      return;
+    }
+    if (event.code === "KeyJ" && laserSwordActive) {
+      event.preventDefault();
+      laserSwordRaised = true;
+      return;
+    }
     if (event.code === "KeyG") {
       event.preventDefault();
       toggleCameraMode();
@@ -2935,10 +2971,16 @@ function bindInput() {
       handleMapKeyUp(event);
       return;
     }
+    if (event.code === "KeyJ") {
+      laserSwordRaised = false;
+      event.preventDefault();
+      return;
+    }
     keyState.delete(event.code);
   });
   window.addEventListener("blur", () => {
     keyState.clear();
+    laserSwordRaised = false;
     clearMapHoldTimer();
     if (mapHoldTriggered && !mapHoldPreviousOpen) closeMapUi();
     setMapExpanded(false);
@@ -3476,6 +3518,10 @@ function toggleHud() {
 
 function toggleMissionPanel() {
   if (!started) return;
+  if (pendingMotherCall) {
+    acceptPendingMotherCall();
+    return;
+  }
   setMissionPanelOpen(!missionPanelOpen, true);
 }
 
@@ -3487,8 +3533,19 @@ function setMissionPanelOpen(open: boolean, userInitiated = false) {
   missionToggle.setAttribute("aria-label", missionPanelOpen ? tr("missionToggle.hide") : tr("missionToggle.show"));
   if (missionPanelOpen || userInitiated) {
     missionUnread = false;
-    missionToggle.classList.remove("has-mission-update");
+    if (!pendingMotherCall) missionToggle.classList.remove("has-mission-update");
   }
+}
+
+function acceptPendingMotherCall() {
+  if (!pendingMotherCall) return;
+  const scene = pendingMotherCall;
+  pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
+  missionUnread = false;
+  missionToggle.classList.remove("has-mission-update");
+  setMissionPanelOpen(false);
+  openDialogueScene(scene);
 }
 
 function clearMissionIntroTimer() {
@@ -3622,6 +3679,7 @@ function toggleScaleGunAiming(force?: boolean) {
   }
   const next = force ?? !scaleGunAiming;
   if (next === scaleGunAiming) return;
+  if (next && laserSwordActive) toggleLaserSword(false);
   scaleGunAiming = next;
   if (scaleGunAiming) {
     suppressTransientInfoWindows();
@@ -3644,7 +3702,85 @@ function toggleScaleGunAiming(force?: boolean) {
     scaleGunTarget = null;
   }
   camera.updateProjectionMatrix();
+  updateLaserSwordVisual();
   updateScaleGunOverlay();
+}
+
+function toggleLaserSword(force?: boolean) {
+  if (!started || !hasLaserSword) return;
+  if (dialogueOpen || exitConfirmOpen || photoViewerOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  const next = force ?? !laserSwordActive;
+  if (next === laserSwordActive) return;
+  if (next && scaleGunAiming) toggleScaleGunAiming(false);
+  laserSwordActive = next;
+  if (!laserSwordActive) laserSwordRaised = false;
+  updateLaserSwordVisual();
+}
+
+function canUseLaserSword() {
+  return hasLaserSword && started && !dialogueOpen && !exitConfirmOpen && !photoViewerOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !wormholeFall && !isWormholeWhiteoutActive();
+}
+
+function updateLaserSwordVisual() {
+  if (laserSwordActive && !canUseLaserSword()) {
+    laserSwordActive = false;
+    laserSwordRaised = false;
+  }
+  if (!laserSwordActive) laserSwordRaised = false;
+  playerRig.laserSword.visible = laserSwordActive;
+  playerRig.laserSwordLight.visible = false;
+  playerRig.laserSwordLight.intensity = 0;
+  playerRig.laserSwordLight.distance = laserSwordActive && laserSwordRaised ? LASER_SWORD_RAISED_LIGHT_DISTANCE : LASER_SWORD_LIGHT_DISTANCE;
+  playerRig.scaleGun.visible = hasScaleGun && scaleGunAiming && !laserSwordActive;
+}
+
+function laserSwordLightDistance() {
+  return laserSwordRaised ? LASER_SWORD_RAISED_LIGHT_DISTANCE : LASER_SWORD_LIGHT_DISTANCE;
+}
+
+function laserSwordLightIntensity() {
+  return laserSwordRaised ? LASER_SWORD_RAISED_LIGHT_INTENSITY : LASER_SWORD_LIGHT_INTENSITY;
+}
+
+function currentLaserSwordLightPosition(target: THREE.Vector3) {
+  if (cameraDistance <= 0.9) {
+    camera.getWorldDirection(laserSwordViewDirection);
+    return target
+      .copy(camera.position)
+      .addScaledVector(laserSwordViewDirection, laserSwordRaised ? 1.45 : 0.95)
+      .addScaledVector(playerNormal, -0.12);
+  }
+  playerRig.laserSwordLight.getWorldPosition(target);
+  return target;
+}
+
+function updateLaserSwordWorldLight() {
+  if (!laserSwordActive || !canUseLaserSword()) {
+    laserSwordWorldLight.visible = false;
+    laserSwordWorldLight.intensity = 0;
+    return;
+  }
+  currentLaserSwordLightPosition(laserSwordWorldLight.position);
+  laserSwordWorldLight.visible = true;
+  laserSwordWorldLight.intensity = laserSwordLightIntensity();
+  laserSwordWorldLight.distance = laserSwordLightDistance();
+}
+
+function currentLaserSwordThreat() {
+  if (!laserSwordActive || !laserSwordWorldLight.visible) return null;
+  return {
+    position: laserSwordWorldLight.position,
+    radius: laserSwordLightDistance() * (laserSwordRaised ? 1.35 : 1.15),
+    strength: laserSwordRaised ? 1.8 : 1,
+  };
+}
+
+function updateHeldGearPose() {
+  updateLaserSwordVisual();
+  if (!laserSwordActive) return;
+  const normalArmX = -0.78 + Math.sin(elapsedTime * 2.1) * 0.025;
+  playerRig.rightArm.rotation.x = laserSwordRaised ? Math.PI / 2 : normalArmX;
+  playerRig.rightArm.rotation.z = laserSwordRaised ? 0.22 : 0.34;
 }
 
 function canUseScaleGun() {
@@ -4380,12 +4516,16 @@ function animate() {
   updateHiddenDiscoveries();
   updateHabitatOccupancy();
   updateLabels();
+  updateNavigationReadout();
   updateMap();
   updateMissionState();
   updateReadouts();
   updateMobileFlightButtons();
   const playerFlying = isFlightActive();
   updateMarsEngineer(playerRig, wormholeFall ? 0 : speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
+  updateHeldGearPose();
+  updateLaserSwordWorldLight();
+  updateDarkSpiders(world.darkSpiders, elapsedTime, delta, world.colliders, sunLight?.position ?? null, currentLaserSwordThreat());
   updateWormholePlayerPose(delta);
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
   if (started) {
@@ -4574,7 +4714,6 @@ function isInsideInteriorSpace() {
 function updateScheduledCalls() {
   if (!started || isFocusOverlayActive() || isInsideInteriorSpace()) return;
   if (pendingMotherCall) {
-    updatePendingMotherCallTimeout();
     return;
   }
   if (introCallQueued) return;
@@ -4582,7 +4721,7 @@ function updateScheduledCalls() {
   if (elapsedTime < motherCallRetryAt) return;
   if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
-  queueMotherCall("intro", "基地中央 AI 史蒂夫正在呼叫。");
+  queueMotherCall("intro", "收到史蒂夫的一条信息。");
 }
 
 function updatePendingMotherCallTimeout() {
@@ -5007,7 +5146,8 @@ function finishWormholeFall() {
   camera.updateProjectionMatrix();
   awardRepeatableScore(SCORE_WORMHOLE_TRAVERSAL, localizeText("穿越时空之门"));
   messageUntil = Math.max(messageUntil, performance.now() + 2200);
-  showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
+  const laserSwordUnlocked = awardLaserSwordAfterWormhole();
+  if (!laserSwordUnlocked) showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
   window.setTimeout(() => {
     if (elapsedTime > lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) wormholeTriggerArmed = true;
   }, WORMHOLE_TRIGGER_COOLDOWN * 1000);
@@ -6124,10 +6264,6 @@ function buildInteractionActions() {
   if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
-  if (pendingMotherCall && !isInsideInteriorSpace()) {
-    actions.push({ id: "motherCallReject", label: tr("info.reject") });
-    actions.push({ id: "motherCallAccept", label: tr("info.accept") });
-  }
   const prioritized = prioritizeInteractionActions(actions);
   const hasTwoButtonChoice = prioritized.some((action) => action.id === "motherCallReject" || action.id === "motherCallAccept" || action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
   const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
@@ -7337,13 +7473,9 @@ function updateLabels() {
 function updateMap() {
   if (!mapOpen || !started) return;
 
-  const { x: playerMapX, z: playerMapZ } = playerMapCoordinate();
-  mapCoordinates.textContent = `X ${formatMapCoordinate(playerMapX)} / Z ${formatMapCoordinate(playerMapZ)}`;
-
   mapRadar.querySelectorAll(".map-marker").forEach((node) => node.remove());
   const radarSize = mapRadar.clientWidth || 280;
   const radarRadius = radarSize * 0.42;
-  updateMapCompass(radarSize);
   const right = playerForward.clone().cross(playerNormal).normalize();
   const showOxygenSupplyTargets = suitOxygen <= OXYGEN_SUPPLY_RADAR_THRESHOLD;
 
@@ -7461,6 +7593,22 @@ function updateMap() {
     });
   }
 
+  {
+    const spiderDiscovered = hiddenDiscoveries.has("unknown:dark_spider");
+    mapItems.push({
+      label: mysteryMapLabel("unknown:dark_spider", "暗面蜘蛛巢穴", "map.unknownLocation"),
+      object: world.spiderNest.object,
+      x: world.spiderNest.x,
+      z: world.spiderNest.z,
+      mapRange: PLANET_RADIUS * Math.PI,
+      type: spiderDiscovered ? "robot" : "spider-nest",
+      unknown: !spiderDiscovered,
+      missionTarget: false,
+      oxygenSupplyTarget: false,
+      coinTarget: false,
+    });
+  }
+
   if (isStarlinkMapVisible()) {
     mapItems.push({
       label: starlinkDisplayStatus(),
@@ -7570,18 +7718,13 @@ function formatMapCoordinate(value: number) {
   return `${sign}${Math.abs(rounded).toString().padStart(3, "0")}`;
 }
 
-function updateMapCompass(radarSize: number) {
+function updateNavigationReadout() {
+  if (!started) return;
+  const { x: playerMapX, z: playerMapZ } = playerMapCoordinate();
+  mapCoordinates.textContent = `${tr("map.positionLabel")} ${formatMapCoordinate(playerMapX)} / ${formatMapCoordinate(playerMapZ)}`;
   const heading = normalizedHeadingDegrees();
   const roundedHeading = Math.round(heading) % 360;
   mapHeading.textContent = `${tr("map.headingLabel")} ${roundedHeading.toString().padStart(3, "0")}°`;
-  const radius = radarSize * 0.405;
-  mapCompass.querySelectorAll<HTMLElement>("[data-bearing]").forEach((tick) => {
-    const bearing = Number(tick.dataset.bearing ?? 0);
-    const angle = THREE.MathUtils.degToRad(bearing - heading);
-    const x = Math.sin(angle) * radius;
-    const y = -Math.cos(angle) * radius;
-    tick.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px))`;
-  });
 }
 
 function normalizedHeadingDegrees() {
@@ -7674,7 +7817,7 @@ function resetDialogueState() {
 function queueMotherCall(scene: DialogueSceneId, mission: string) {
   pendingMotherCall = scene;
   pendingMotherCallQueuedAt = elapsedTime;
-  setMission(mission);
+  setMission(`${mission} 按 R 查看。`);
 }
 
 function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
@@ -7683,7 +7826,10 @@ function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
   introCallQueued = false;
   motherCallRetryAt = elapsedTime + retrySeconds;
   setCurrentMissionText();
-  if (feedback) showDialogue("信息栏", feedback, 3);
+  missionUnread = false;
+  missionToggle.classList.remove("has-mission-update");
+  if (missionPanelOpen) setMissionPanelOpen(false);
+  void feedback;
 }
 
 function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
@@ -8179,6 +8325,7 @@ function updateHiddenDiscoveries() {
   }
   targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });
   if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "福福", object: fufu, radius: 13 });
+  targets.push({ id: "unknown:dark_spider", label: "暗面蜘蛛巢穴", object: world.spiderNest.object, radius: world.spiderNest.radius, points: 100 });
 
   for (const target of targets) {
     if (hiddenDiscoveries.has(target.id)) continue;
@@ -8545,6 +8692,8 @@ function resetQuestState() {
   exploredBuildings.clear();
   hiddenDiscoveries.clear();
   talkedRobotIds.clear();
+  shownOperationHelpIds.delete("laserSword.unlock");
+  setLaserSwordOwned(false);
   clearCoinGroups();
   nextCoinRefreshAt = elapsedTime;
   updateRewardReadouts();
@@ -8556,7 +8705,7 @@ function resetQuestState() {
 
 function setScaleGunOwned(owned: boolean) {
   hasScaleGun = owned;
-  playerRig.scaleGun.visible = owned;
+  playerRig.scaleGun.visible = owned && scaleGunAiming && !laserSwordActive;
   if (!owned && scaleGunAiming) {
     scaleGunAiming = false;
     scaleGunTarget = null;
@@ -8566,6 +8715,29 @@ function setScaleGunOwned(owned: boolean) {
   }
   const item = world.interactables.find((interactable) => interactable.id === "monolith");
   if (item) item.completed = owned;
+}
+
+function setLaserSwordOwned(owned: boolean) {
+  hasLaserSword = owned;
+  if (!owned) {
+    laserSwordActive = false;
+    laserSwordRaised = false;
+    laserSwordWorldLight.visible = false;
+    laserSwordWorldLight.intensity = 0;
+  }
+  updateLaserSwordVisual();
+}
+
+function awardLaserSwordAfterWormhole() {
+  if (hasLaserSword) return false;
+  setLaserSwordOwned(true);
+  showOneTimeOperationHelp(
+    "laserSword.unlock",
+    localizeText("装备解锁"),
+    localizeText("你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。"),
+    7.2
+  );
+  return true;
 }
 
 function startOxygenMission() {
