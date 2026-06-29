@@ -8,9 +8,9 @@
 - 运行技术：TypeScript + Three.js
 - 构建产物：`dist/`
 - 单人体验不需要后端、不需要数据库
-- 多人 v1 需要额外运行一个常驻 Node WebSocket 服务
+- 多人 v1 和独立访客统计需要额外运行一个常驻 Node 服务
 
-因此如果只上线单人版，只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。如果要启用多人可见，需要同时部署 WebSocket 服务，并把 `/ws` 代理到该服务。
+因此如果只上线无统计的单人版，只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。如果要启用多人可见或底部“累计访客”统计，需要同时部署 Node 服务，并把 `/ws` 和 `/api/` 代理到该服务。
 
 后续如果接入 DeepSeek 对话，不能在前端直接放 API Key，需要新增后端接口，例如 `/api/dialogue`。
 
@@ -42,6 +42,7 @@
 ```txt
 前端：http://127.0.0.1:5173/
 WebSocket：ws://127.0.0.1:8787/ws
+访客统计：http://127.0.0.1:8787/api/visitors
 ```
 
 构建成功后会生成：
@@ -113,6 +114,15 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
+    location /api/ {
+        proxy_pass http://127.0.0.1:8787/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location /ws {
         proxy_pass http://127.0.0.1:8787/ws;
         proxy_http_version 1.1;
@@ -166,6 +176,26 @@ sudo rsync -av --delete dist/ /var/www/mars-advance-team/
 sudo systemctl reload nginx
 ```
 
+## 访客统计部署说明
+
+底部“累计访客”通过 `/api/visitors` 统计独立 IP。服务器端不会保存明文 IP，只保存带盐 hash；同一 IP 多次访问只增加访问次数，不重复增加累计人数。
+
+默认统计文件位置：
+
+```txt
+data/visitor-stats.json
+```
+
+如果要自定义存储位置或 hash 盐，可以在启动 Node 服务时设置：
+
+```bash
+VISITOR_STATS_PATH=/var/lib/mars-advance-team/visitor-stats.json \
+VISITOR_HASH_SALT=换成一段只有服务器知道的随机字符串 \
+pnpm dev:server
+```
+
+如果只上传 `dist/`，但没有运行 Node 服务或没有配置 `/api/` 代理，网页底部四位数字会保持 `0000`，不会影响游戏本体。
+
 ## 每次更新上线
 
 最简单流程：
@@ -174,6 +204,8 @@ sudo systemctl reload nginx
 /Users/huyi/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pnpm build
 rsync -avz --delete dist/ root@你的服务器IP:/var/www/mars-advance-team/
 ```
+
+若本次更新包含 `server/` 代码，也需要同步服务器上的项目代码并重启 Node 服务。
 
 ## 上线前检查
 

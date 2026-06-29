@@ -208,6 +208,7 @@ const ANCIENT_TREE_ARCH_HEIGHT = 118;
 const ANCIENT_TREE_ARCH_WIDTH = 92;
 const ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS = 58;
 const ANCIENT_TREE_ARCH_SETTLE = -10.2;
+const ANCIENT_TREE_ARCH_YAW = 0.16;
 const LANDER_SCALE = 2.65;
 const LANDER_SURFACE_SETTLE = -0.42;
 const HABITAT_SCALE = 1.78;
@@ -218,6 +219,11 @@ const TOWER_SCALE = 1.55;
 const NUMBERED_FACILITY_SCALE = 1.55;
 const VEHICLE_LOOP_SPEED = 0.052;
 const VEHICLE_LOOP_HEADING = THREE.MathUtils.degToRad(50);
+const VEHICLE_ROUTE_STOP_SECONDS = 30;
+const VEHICLE_STOP_ANGLE_THRESHOLD = 0.02;
+const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
+const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
+const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
@@ -270,6 +276,103 @@ function box(w: number, h: number, d: number, material: THREE.Material) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+function splitGeometryByLocalX(source: THREE.BufferGeometry, upperHalf: boolean) {
+  const geometry = source.index ? source.toNonIndexed() : source.clone();
+  const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const normals = geometry.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  const uvs = geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+  const nextPositions: number[] = [];
+  const nextNormals: number[] = [];
+  const nextUvs: number[] = [];
+  const keepSign = upperHalf ? 1 : -1;
+  type Vertex = { position: THREE.Vector3; normal?: THREE.Vector3; uv?: THREE.Vector2 };
+
+  const interpolate = (a: Vertex, b: Vertex) => {
+    const da = a.position.x * keepSign;
+    const db = b.position.x * keepSign;
+    const t = da / (da - db);
+    const vertex: Vertex = {
+      position: a.position.clone().lerp(b.position, t),
+    };
+    if (a.normal && b.normal) vertex.normal = a.normal.clone().lerp(b.normal, t).normalize();
+    if (a.uv && b.uv) vertex.uv = a.uv.clone().lerp(b.uv, t);
+    return vertex;
+  };
+
+  const clipTriangle = (triangle: Vertex[]) => {
+    const output: Vertex[] = [];
+    for (let i = 0; i < triangle.length; i += 1) {
+      const current = triangle[i];
+      const previous = triangle[(i + triangle.length - 1) % triangle.length];
+      const currentInside = current.position.x * keepSign >= -0.000001;
+      const previousInside = previous.position.x * keepSign >= -0.000001;
+      if (currentInside) {
+        if (!previousInside) output.push(interpolate(previous, current));
+        output.push(current);
+      } else if (previousInside) {
+        output.push(interpolate(previous, current));
+      }
+    }
+    return output;
+  };
+
+  const pushVertex = (vertex: Vertex) => {
+    nextPositions.push(vertex.position.x, vertex.position.y, vertex.position.z);
+    if (vertex.normal) nextNormals.push(vertex.normal.x, vertex.normal.y, vertex.normal.z);
+    if (vertex.uv) nextUvs.push(vertex.uv.x, vertex.uv.y);
+  };
+
+  for (let i = 0; i < positions.count; i += 3) {
+    const triangle: Vertex[] = [];
+    for (let vertexIndex = i; vertexIndex < i + 3; vertexIndex += 1) {
+      triangle.push({
+        position: new THREE.Vector3(positions.getX(vertexIndex), positions.getY(vertexIndex), positions.getZ(vertexIndex)),
+        normal: normals ? new THREE.Vector3(normals.getX(vertexIndex), normals.getY(vertexIndex), normals.getZ(vertexIndex)) : undefined,
+        uv: uvs ? new THREE.Vector2(uvs.getX(vertexIndex), uvs.getY(vertexIndex)) : undefined,
+      });
+    }
+    const clipped = clipTriangle(triangle);
+    if (clipped.length < 3) continue;
+    for (let vertexIndex = 1; vertexIndex < clipped.length - 1; vertexIndex += 1) {
+      pushVertex(clipped[0]);
+      pushVertex(clipped[vertexIndex]);
+      pushVertex(clipped[vertexIndex + 1]);
+    }
+  }
+
+  const result = new THREE.BufferGeometry();
+  result.setAttribute("position", new THREE.Float32BufferAttribute(nextPositions, 3));
+  if (nextNormals.length > 0) result.setAttribute("normal", new THREE.Float32BufferAttribute(nextNormals, 3));
+  if (nextUvs.length > 0) result.setAttribute("uv", new THREE.Float32BufferAttribute(nextUvs, 2));
+  result.computeBoundingBox();
+  result.computeBoundingSphere();
+  return result;
+}
+
+function createSleepPodCutCapGeometry(radius: number, length: number, segments = 28) {
+  const yRadius = length * 0.5 + radius;
+  const positions: number[] = [];
+  const normals: number[] = [];
+
+  for (let i = 0; i < segments; i += 1) {
+    const current = (i / segments) * Math.PI * 2;
+    const next = ((i + 1) / segments) * Math.PI * 2;
+    positions.push(
+      0, 0, 0,
+      0, Math.cos(current) * yRadius, Math.sin(current) * radius,
+      0, Math.cos(next) * yRadius, Math.sin(next) * radius,
+    );
+    normals.push(1, 0, 0, 1, 0, 0, 1, 0, 0);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
 }
 
 function foundation(w: number, d: number, material = mat(0x6f4530, 0.92, 0.04)) {
@@ -349,7 +452,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   const ancientTreeArchNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
   const ancientTreeArchX = (ancientTreeArchNormal.x / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
   const ancientTreeArchZ = (ancientTreeArchNormal.z / Math.abs(ancientTreeArchNormal.y)) * PLANET_RADIUS;
-  const ancientTreeArchYaw = 0.16;
+  const ancientTreeArchYaw = ANCIENT_TREE_ARCH_YAW;
   const ancientTreeArch = createAncientTreeArch();
   const ancientTreePortal = createAncientTreePortal();
   ancientTreeArch.add(ancientTreePortal);
@@ -376,7 +479,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     completed: false,
   });
 
-  const wreckNormal = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
+  const wreckNormal = CRASHED_SHIP_SITE_NORMAL.clone();
   const wreckX = (wreckNormal.x / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
   const wreckZ = (wreckNormal.z / Math.abs(wreckNormal.y)) * PLANET_RADIUS;
   const wreckYaw = 0.52;
@@ -440,8 +543,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     label: "02 建筑 温室生态舱",
     prompt: "按 E 启动 02 建筑 温室生态舱",
     object: greenhouse,
-    radius: 13.5,
+    radius: 17,
     completed: false,
+  });
+  colliders.push({
+    ...circle(greenhouseX, greenhouseZ, 15.4, "温室生态舱整体外壳"),
+    enabled: () => !greenhouseDoor.occupied,
   });
   addFootprintColliders(
     colliders,
@@ -1319,10 +1426,11 @@ function createHabitatModule() {
   const sleepGlass = new THREE.MeshPhysicalMaterial({
     color: 0x8ee6ff,
     transparent: true,
-    opacity: 0.46,
+    opacity: 0.3,
     roughness: 0.08,
     metalness: 0.04,
     flatShading: true,
+    depthWrite: false,
   });
   hull.side = THREE.DoubleSide;
   interior.side = THREE.DoubleSide;
@@ -1354,21 +1462,21 @@ function createHabitatModule() {
   centerAisle.position.set(0, -1.27, 0);
   group.add(floor, centerAisle);
 
-  const sealedFloor = box(11.65, 0.12, 4.24, mat(0x272521, 0.84, 0.18));
-  sealedFloor.position.set(0, -1.18, 0);
+  const sealedFloor = box(11.9, 0.16, 4.68, mat(0x272521, 0.84, 0.18));
+  sealedFloor.position.set(0, -1.16, 0);
   const ceilingPanel = box(10.9, 0.12, 3.68, mat(0xd5c9b4, 0.68, 0.12));
   ceilingPanel.position.set(0, 1.46, 0);
-  const rearWall = box(0.18, 2.58, 4.04, interior);
+  const rearWall = box(0.2, 2.58, 4.42, interior);
   rearWall.position.set(5.72, -0.04, 0);
   const leftEndWall = rearWall.clone();
   leftEndWall.position.x = -5.72;
-  const frontLeftWall = box(4.78, 2.5, 0.16, interior);
+  const frontLeftWall = box(4.78, 2.5, 0.2, interior);
   frontLeftWall.position.set(-3.18, -0.1, -2.06);
   const frontRightWall = frontLeftWall.clone();
   frontRightWall.position.x = 3.18;
-  const rearAccent = box(0.08, 1.2, 2.35, mat(0x302a25, 0.72, 0.18));
-  rearAccent.position.set(5.58, -0.1, 0);
-  interiorScene.add(sealedFloor, ceilingPanel, rearWall, leftEndWall, frontLeftWall, frontRightWall, rearAccent);
+  const rearLowerSkirt = box(11.5, 1.0, 0.16, interior);
+  rearLowerSkirt.position.set(0, -0.8, 2.12);
+  interiorScene.add(sealedFloor, ceilingPanel, rearWall, leftEndWall, frontLeftWall, frontRightWall, rearLowerSkirt);
 
   for (const x of [-4.2, 4.2]) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.1, 6, 18), trim);
@@ -1398,8 +1506,15 @@ function createHabitatModule() {
   const doorPanelR = doorPanelL.clone();
   doorPanelR.position.x = 0.27;
   doorPanels.add(doorPanelL, doorPanelR);
-  const interiorDoor = box(1.0, 1.78, 0.08, hull);
-  interiorDoor.position.set(0, -0.3, -2.0);
+  const interiorDoor = new THREE.Group();
+  const interiorDoorPanelMat = mat(0xf5f0e6, 0.52, 0.12);
+  const interiorDoorLeft = box(0.49, 1.78, 0.08, interiorDoorPanelMat);
+  interiorDoorLeft.position.set(-0.26, -0.3, -2.0);
+  const interiorDoorRight = interiorDoorLeft.clone();
+  interiorDoorRight.position.x = 0.26;
+  const interiorDoorSeam = box(0.035, 1.78, 0.09, mat(0xbfc4c7, 0.58, 0.16));
+  interiorDoorSeam.position.set(0, -0.3, -1.995);
+  interiorDoor.add(interiorDoorLeft, interiorDoorRight, interiorDoorSeam);
   interiorDoor.visible = false;
   const step = box(1.35, 0.12, 0.82, mat(0x6a4b38, 0.9, 0.04));
   step.position.set(0, -1.98, -2.82);
@@ -1407,25 +1522,29 @@ function createHabitatModule() {
   group.add(doorFrame, exteriorMask, interiorPortal, doorLight, doorPanels, interiorDoor, step);
 
   const podXs = [-4.45, -2.95, -1.45, 0.05, 1.55, 3.05, 4.55];
+  const sleepPodGeometry = new THREE.CapsuleGeometry(0.34, 1.22, 5, 10);
+  const sleepPodLowerGeometry = splitGeometryByLocalX(sleepPodGeometry, false);
+  const sleepPodUpperGeometry = splitGeometryByLocalX(sleepPodGeometry, true);
+  const sleepPodCutCapGeometry = createSleepPodCutCapGeometry(0.34, 1.22);
   podXs.forEach((x, index) => {
     const z = index % 2 === 0 ? 1.24 : -1.22;
-    const pod = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 1.22, 5, 10), sleepShell);
-    pod.rotation.z = Math.PI / 2;
+    const pod = new THREE.Group();
     pod.position.set(x, -0.94, z);
-    pod.castShadow = true;
-    pod.receiveShadow = true;
-    const lid = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.88, 5, 10), sleepGlass);
-    lid.rotation.z = Math.PI / 2;
-    lid.position.set(x, -0.62, z);
-    lid.scale.set(1, 0.5, 0.72);
-    lid.castShadow = true;
+    const lowerShell = new THREE.Mesh(sleepPodLowerGeometry, sleepShell);
+    const lowerCutCap = new THREE.Mesh(sleepPodCutCapGeometry, sleepShell);
+    const upperGlass = new THREE.Mesh(sleepPodUpperGeometry, sleepGlass);
+    lowerShell.rotation.z = Math.PI / 2;
+    lowerCutCap.rotation.z = Math.PI / 2;
+    upperGlass.rotation.z = Math.PI / 2;
+    lowerShell.castShadow = true;
+    lowerShell.receiveShadow = true;
+    lowerCutCap.receiveShadow = true;
+    upperGlass.castShadow = false;
+    upperGlass.receiveShadow = false;
+    pod.add(lowerShell, lowerCutCap, upperGlass);
     const status = box(0.12, 0.08, 0.08, mat(index === 6 ? 0xffb15d : 0x8cffaa, 0.28, 0.2, index === 6 ? 0xff9d3d : 0x44ff88));
     status.position.set(x + 0.45, -0.72, z - Math.sign(z) * 0.36);
-    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 6), trim);
-    rail.rotation.z = Math.PI / 2;
-    rail.position.set(x, -0.62, z - Math.sign(z) * 0.42);
-    rail.castShadow = true;
-    group.add(pod, lid, status, rail);
+    group.add(pod, status);
   });
 
   const ceilingLightA = box(0.16, 0.08, 2.0, sleepGlass);
@@ -1446,7 +1565,7 @@ function createHabitatModule() {
     interiorLight,
     open: false,
     occupied: false,
-    promptRadius: 10.5,
+    promptRadius: 3.15,
     label: "居住舱舱门",
   } satisfies HabitatDoorControl;
   return group;
@@ -1982,12 +2101,12 @@ function getAncientTreePortalTexture() {
 }
 
 export function updateAncientTreePortal(portal: THREE.Group, elapsed: number) {
-  const cycleDuration = 180;
   const activeDuration = 28.5;
-  const cycle = elapsed % cycleDuration;
-  const active = cycle < activeDuration;
-  const fadeIn = THREE.MathUtils.smoothstep(cycle, 1.0, 5.4);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, activeDuration - 6.6, activeDuration);
+  const openedAt = Number(portal.userData.openedAt ?? -Infinity);
+  const activeAge = elapsed - openedAt;
+  const active = activeAge >= 0 && activeAge < activeDuration;
+  const fadeIn = THREE.MathUtils.smoothstep(activeAge, 0.2, 1.2);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(activeAge, activeDuration - 4.8, activeDuration);
   const strength = active ? Math.max(0, Math.min(fadeIn, fadeOut)) : 0;
   portal.userData.portalStrength = strength;
   portal.visible = strength > 0.01;
@@ -2330,7 +2449,7 @@ function createRovers(
 ) {
   const configs = [
     { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 0.25, size: 1.08, kind: "rover", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "01 车辆 电动巡检车" },
-    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 1.25, size: 1.08, kind: "cargo", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "02 车辆 运输车" },
+    { centerX: 0, centerZ: 0, patrolRadius: 0, speed: VEHICLE_LOOP_SPEED, offset: 0.25 + Math.PI, size: 1.08, kind: "cargo", route: "greatCircleLoop", routeHeading: VEHICLE_LOOP_HEADING, label: "02 车辆 运输车" },
     ...maintenanceBots,
   ];
   configs.forEach((config) => {
@@ -2356,17 +2475,17 @@ function createRovers(
 }
 
 function addNasaPerseveranceRover(parent: THREE.Group, colliders: CircleCollider[], landmarks: Landmark[]) {
-  const x = spread(78);
-  const z = spread(56);
-  const yaw = -0.64;
+  const x = expandWorldCoordinate(-200);
+  const z = expandWorldCoordinate(0);
+  const yaw = 1.08;
   const rover = createPerseveranceRover(0.82);
   rover.userData.dynamicMap = true;
   rover.userData.planetX = x;
   rover.userData.planetZ = z;
-  placeObjectOnPlanet(rover, x, z, 0.1, yaw);
+  placeObjectOnPlanet(rover, x, z, -0.16, yaw);
   parent.add(rover);
-  landmarks.push(landmark("NASA 火星车 Perseverance / Jezero Crater", rover, x, z, 30, 190));
-  colliders.push(circle(x, z, 2.2, "NASA 火星车 Perseverance"));
+  landmarks.push(landmark("NASA 机遇号火星车遗迹 / Meridiani Planum", rover, x, z, 30, 190));
+  colliders.push(circle(x, z, 2.2, "NASA 机遇号火星车遗迹"));
 }
 
 function createRover(size: number) {
@@ -2910,7 +3029,9 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       updateMaintenanceBotPatrol(rover, elapsed, delta, colliders);
       return;
     }
-    const angle = elapsed * speed + offset;
+    const angle = route === "greatCircleLoop" && kind !== "bot"
+      ? updateVehicleLoopAngle(rover, elapsed, delta, speed, offset, routeHeading ?? 0)
+      : elapsed * speed + offset;
     if (route === "meridianLoop" || route === "latitudeLoop" || route === "greatCircleLoop") {
       const directionSign = speed >= 0 ? 1 : -1;
       const vehicleRadius = kind === "cargo" ? 3.6 : 3.2;
@@ -2932,8 +3053,9 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       const yaw = yawFromForward(normal, forward);
       placeObjectOnPlanetNormal(rover, normal, 0.08, yaw);
       setDynamicObjectPlanetCoordinate(rover, normal);
-      updateRoverWheelSpin(rover, elapsed, speed);
-      updateRoverSurfaceEffects(rover, elapsed, delta, speed);
+      const parked = route === "greatCircleLoop" && (rover.userData.stationPauseUntil ?? -Infinity) > elapsed;
+      updateRoverWheelSpin(rover, elapsed, parked ? 0 : speed);
+      updateRoverSurfaceEffects(rover, elapsed, delta, parked ? 0 : speed);
       return;
     }
 
@@ -3093,6 +3215,76 @@ function vehicleRouteNormal(route: string, angle: number, routeHeading = 0) {
     return new THREE.Vector3(Math.sin(angle) * 0.92, Math.cos(angle), Math.sin(angle) * 0.38).normalize();
   }
   return new THREE.Vector3(Math.cos(angle), 0.34, Math.sin(angle)).normalize();
+}
+
+function updateVehicleLoopAngle(rover: THREE.Group, elapsed: number, delta: number, speed: number, offset: number, routeHeading: number) {
+  if (typeof rover.userData.routeAngle !== "number") {
+    rover.userData.routeAngle = normalizeRouteAngle(elapsed * speed + offset);
+    rover.userData.lastStationStopIndex = null;
+  }
+  if ((rover.userData.stationPauseUntil ?? -Infinity) > elapsed) {
+    return Number(rover.userData.routeAngle);
+  }
+
+  let angle = Number(rover.userData.routeAngle);
+  angle = normalizeRouteAngle(angle + speed * delta);
+  const stopAngles = vehicleStopAnglesForGreatCircle(routeHeading);
+  const stopIndex = vehicleStopIndexForAngle(angle, stopAngles);
+  if (stopIndex !== null && rover.userData.lastStationStopIndex !== stopIndex) {
+    angle = stopAngles[stopIndex];
+    rover.userData.stationPauseUntil = elapsed + VEHICLE_ROUTE_STOP_SECONDS;
+    rover.userData.lastStationStopIndex = stopIndex;
+  }
+  if (stopIndex === null) rover.userData.lastStationStopIndex = null;
+  rover.userData.routeAngle = angle;
+  return angle;
+}
+
+function vehicleStopIndexForAngle(angle: number, stopAngles: number[]) {
+  const normalized = normalizeRouteAngle(angle);
+  for (let index = 0; index < stopAngles.length; index += 1) {
+    if (routeAngleDistance(normalized, stopAngles[index]) < VEHICLE_STOP_ANGLE_THRESHOLD) return index;
+  }
+  return null;
+}
+
+function vehicleStopAnglesForGreatCircle(routeHeading: number) {
+  return [
+    nearestGreatCircleLoopAngle(vehicleAncientTreeStopNormal(), routeHeading),
+    nearestGreatCircleLoopAngle(vehicleBaseTargetNormal(), routeHeading),
+    nearestGreatCircleLoopAngle(vehicleCrashedShipTargetNormal(), routeHeading),
+  ];
+}
+
+function nearestGreatCircleLoopAngle(targetNormal: THREE.Vector3, routeHeading = 0) {
+  const direction = new THREE.Vector3(Math.cos(routeHeading), 0, Math.sin(routeHeading));
+  return normalizeRouteAngle(Math.atan2(targetNormal.dot(direction), targetNormal.dot(WORLD_UP)));
+}
+
+function normalizeRouteAngle(angle: number) {
+  return ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+}
+
+function routeAngleDistance(a: number, b: number) {
+  const distance = Math.abs(normalizeRouteAngle(a) - normalizeRouteAngle(b));
+  return Math.min(distance, Math.PI * 2 - distance);
+}
+
+function vehicleBaseTargetNormal() {
+  return planetNormal(VEHICLE_BASE_TARGET_X, VEHICLE_BASE_TARGET_Z, new THREE.Vector3());
+}
+
+function vehicleCrashedShipTargetNormal() {
+  return CRASHED_SHIP_SITE_NORMAL.clone();
+}
+
+function vehicleAncientTreeStopNormal() {
+  const centerNormal = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
+  const archForward = new THREE.Vector3(0, 0, -1).applyAxisAngle(centerNormal, ANCIENT_TREE_ARCH_YAW).projectOnPlane(centerNormal);
+  if (archForward.lengthSq() < 0.000001) {
+    return centerNormal.clone().addScaledVector(WORLD_UP, -centerNormal.dot(WORLD_UP)).normalize();
+  }
+  return centerNormal.clone().addScaledVector(archForward.normalize(), (ANCIENT_TREE_ARCH_FOOTPRINT_RADIUS + 11) / PLANET_RADIUS).normalize();
 }
 
 function avoidFixedColliders(normal: THREE.Vector3, colliders: CircleCollider[], vehicleRadius: number) {

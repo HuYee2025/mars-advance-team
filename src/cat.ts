@@ -159,7 +159,7 @@ export function createFufuCat(): FufuCatRig {
   backPack.position.set(0, 0.48, 0.46);
   visual.add(backPack);
 
-  group.scale.setScalar(1.38);
+  group.scale.setScalar(0.69);
   return { group, visual, head, tail, frontLeftLeg, frontRightLeg, rearLeftLeg, rearRightLeg };
 }
 

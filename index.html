@@ -66,6 +66,26 @@
       body:not(.is-playing) #controls-guide {
         display: none;
       }
+
+      body.is-wormhole .hud,
+      body.is-wormhole .hud-buttons,
+      body.is-wormhole #mission-banner,
+      body.is-wormhole #labels,
+      body.is-wormhole #map-overlay,
+      body.is-wormhole #interaction-prompt,
+      body.is-wormhole #interaction-choice,
+      body.is-wormhole #scale-gun-overlay,
+      body.is-wormhole #camera-overlay,
+      body.is-wormhole #photo-viewer,
+      body.is-wormhole #dialogue-box,
+      body.is-wormhole #dialogue-stage,
+      body.is-wormhole #exit-confirm,
+      body.is-wormhole #joystick,
+      body.is-wormhole .mobile-actions,
+      body.is-wormhole #controls-guide,
+      body.is-wormhole #visitor-counter {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
@@ -127,6 +147,10 @@
               <div>
                 <dt data-i18n="hud.stamina">体能</dt>
                 <dd id="stamina-readout">100%</dd>
+              </div>
+              <div>
+                <dt data-i18n="perf.fpsLabel">信号延迟</dt>
+                <dd id="fps-value">--</dd>
               </div>
               <div id="jetpack-status-row" hidden>
                 <dt data-i18n="hud.jetpack">飞行背包</dt>
@@ -198,10 +222,10 @@
           <span data-i18n="camera.instructions">A/D 转向 / W/S 缩放 / E 或 Enter 拍照 / G 收起</span>
         </div>
       </section>
-      <section id="photo-viewer" aria-label="照片墙查看器" aria-hidden="true">
+      <section id="photo-viewer" aria-label="照片电子屏查看器" aria-hidden="true">
         <div class="photo-viewer-panel" role="dialog" aria-modal="true">
           <div class="photo-viewer-head">
-            <strong id="photo-viewer-title">PHOTO 01 / 07</strong>
+            <strong id="photo-viewer-title">PHOTO 01 / 36</strong>
             <span data-i18n="photoViewer.instructions">A/D 切换 / W 放大 / S 恢复 / E 下载 / Q 退出</span>
           </div>
           <div class="photo-viewer-stage">
@@ -248,7 +272,14 @@
           </div>
         </div>
       </section>
+      <section id="wormhole-whiteout" aria-hidden="true">
+        <div id="wormhole-whiteout-particles" aria-hidden="true"></div>
+        <p id="wormhole-whiteout-caption" data-i18n="wormhole.whiteoutCaption">这是……</p>
+      </section>
       <div class="scanline" aria-hidden="true"></div>
+      <div id="visitor-counter" aria-label="visitor counter" aria-live="polite" data-status="loading">
+        <strong id="visitor-count">0000</strong>
+      </div>
       <div id="joystick" aria-hidden="true">
         <div id="joystick-knob"></div>
       </div>
@@ -268,6 +299,7 @@
               <div class="guide-key wide"><b>· / ~</b><span>按住指南</span></div>
               <div class="guide-key wide"><b>V</b><span>隐藏界面</span></div>
               <div class="guide-key wide"><b>R</b><span>任务</span></div>
+              <div class="guide-key wide"><b>B</b><span>背景音乐</span></div>
             </div>
             <div class="guide-row">
               <div class="guide-key"><b>W</b><span>前进</span></div>

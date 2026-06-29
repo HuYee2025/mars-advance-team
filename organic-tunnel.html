@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="有机循环虫洞 Three.js 视觉原型。" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>有机循环虫洞原型</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #050504;
+        color: #f5efe0;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #app {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body {
+        min-width: 320px;
+        background: #050504;
+      }
+
+      #app {
+        position: relative;
+        isolation: isolate;
+      }
+
+      #scene-root {
+        position: absolute;
+        inset: 0;
+      }
+
+      .demo-hud {
+        position: absolute;
+        left: 18px;
+        right: 18px;
+        bottom: 16px;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        pointer-events: none;
+      }
+
+      .demo-title {
+        margin: 0;
+        color: rgba(245, 239, 224, 0.86);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.8);
+      }
+
+      .demo-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        pointer-events: auto;
+      }
+
+      button {
+        height: 34px;
+        min-width: 68px;
+        border: 1px solid rgba(245, 239, 224, 0.32);
+        border-radius: 7px;
+        background: rgba(10, 10, 8, 0.58);
+        color: rgba(245, 239, 224, 0.92);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+      }
+
+      button:hover,
+      button:focus-visible {
+        border-color: rgba(245, 239, 224, 0.74);
+        background: rgba(44, 42, 34, 0.72);
+        outline: none;
+      }
+
+      .vignette {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 50% 50%, transparent 0 32%, rgba(0, 0, 0, 0.22) 58%, rgba(0, 0, 0, 0.7) 100%),
+          radial-gradient(circle at 50% 50%, rgba(245, 239, 224, 0.08), transparent 35%);
+        mix-blend-mode: normal;
+      }
+
+      @media (max-width: 680px) {
+        .demo-hud {
+          align-items: flex-end;
+        }
+
+        .demo-title {
+          max-width: 170px;
+          font-size: 11px;
+          line-height: 1.35;
+        }
+
+        .demo-controls {
+          gap: 6px;
+        }
+
+        button {
+          min-width: 52px;
+          height: 32px;
+          padding: 0 9px;
+          font-size: 11px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app" aria-label="有机循环虫洞原型">
+      <div id="scene-root"></div>
+      <div class="vignette"></div>
+      <div class="demo-hud">
+        <p class="demo-title">ORGANIC LOOP TUNNEL</p>
+        <div class="demo-controls" aria-label="Animation controls">
+          <button id="speed-toggle" type="button">FAST</button>
+          <button id="twist-toggle" type="button">TWIST</button>
+          <button id="pause-toggle" type="button">PAUSE</button>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/organic-tunnel-demo.ts"></script>
+  </body>
+</html>

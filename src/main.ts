@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
-import wormholeSwirlGeneratedUrl from "./assets/wormhole-swirl-generated.webp?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
@@ -53,7 +52,10 @@ type InteractionAction = {
     | "elevator"
     | "habitat"
     | "greenhouse"
+    | "ancientPortalConsider"
+    | "ancientPortalPay"
     | "fufu"
+    | "footballPickup"
     | "robot"
     | "oxygenSupply"
     | "motherCallReject"
@@ -77,21 +79,49 @@ type OxygenSupplyPoint = {
 
 type WormholeFallState = {
   startedAt: number;
+  elapsed: number;
+  paused: boolean;
   lastTriggerAt: number;
   drift: THREE.Vector2;
   velocity: THREE.Vector2;
+  depth: number;
+  depthVelocity: number;
   spawnNormal: THREE.Vector3;
   spawnForward: THREE.Vector3;
+};
+
+type WormholeOrganicSegment = {
+  group: THREE.Group;
+  z: number;
+  seed: number;
+  baseRotation: number;
+  twist: number;
+};
+
+type WormholeWhiteoutParticle = {
+  element: HTMLSpanElement;
+  startX: number;
+  startY: number;
+  driftX: number;
+  driftY: number;
+  size: number;
+  opacity: number;
+  shrink: number;
 };
 
 type JetpackSource = "temporary" | "equipment" | null;
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
 const labelsRoot = must<HTMLDivElement>("#labels");
+const wormholeWhiteoutOverlay = must<HTMLElement>("#wormhole-whiteout");
+const wormholeWhiteoutParticlesRoot = must<HTMLDivElement>("#wormhole-whiteout-particles");
+const wormholeWhiteoutCaption = must<HTMLElement>("#wormhole-whiteout-caption");
 const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
 const mobileJumpButton = must<HTMLButtonElement>("#mobile-jump");
+const visitorCounter = must<HTMLDivElement>("#visitor-counter");
+const visitorCountReadout = must<HTMLElement>("#visitor-count");
 const titleScreen = must<HTMLDivElement>("#title-screen");
 const titleDateReadout = must<HTMLElement>("[data-i18n='title.eyebrow']");
 const enterButton = must<HTMLButtonElement>("#enter-base");
@@ -144,6 +174,7 @@ const mapRadar = must<HTMLDivElement>("#map-radar");
 const mapCompass = must<HTMLDivElement>("#map-compass");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
 const mapHeading = must<HTMLDivElement>("#map-heading");
+const fpsValue = must<HTMLElement>("#fps-value");
 const mapList = must<HTMLDivElement>("#map-list");
 const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
 const suitOxygenReadout = document.querySelector<HTMLDivElement>("#suit-oxygen-readout");
@@ -158,6 +189,7 @@ const MUSIC_LOOP_FADE_SECONDS = 5;
 backgroundMusic.loop = true;
 backgroundMusic.preload = "auto";
 backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
+let backgroundMusicEnabled = true;
 
 const scene = new THREE.Scene();
 const clearSkyColor = new THREE.Color(0x030713);
@@ -190,9 +222,15 @@ const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
 const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
+const RENDER_PIXEL_RATIO_LIMIT = 1.25;
+const WORMHOLE_ORGANIC_SEGMENT_COUNT = 42;
+const WORMHOLE_ORGANIC_SEGMENT_SPACING = 2.15;
+const WORMHOLE_ORGANIC_FRONT_Z = -8.8;
+const WORMHOLE_ORGANIC_LOOP_LENGTH = WORMHOLE_ORGANIC_SEGMENT_COUNT * WORMHOLE_ORGANIC_SEGMENT_SPACING;
+const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP_LENGTH;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+renderer.setPixelRatio(renderPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -216,11 +254,13 @@ scene.add(playerContactShadow);
 const wormholeVisual = createWormholeFallVisual();
 scene.add(wormholeVisual.group);
 
-const PHOTO_WALL_CAPACITY = 7;
+const PHOTO_WALL_CAPACITY = 36;
 const CAMERA_MIN_ZOOM = 1;
 const CAMERA_MAX_ZOOM = 4;
 const cameraPhotos: Array<{ dataUrl: string; texture: THREE.Texture; takenAt: number }> = [];
-const photoWallFrames: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
+let photoWallScreen: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null = null;
+let photoWallScreenPhotoIndex = -2;
+let photoWallStandbyTexture: THREE.CanvasTexture | null = null;
 const world = createMarsWorld(scene);
 const photoWall = createPhotoWall();
 world.habitatDoor.interiorScene.add(photoWall);
@@ -254,10 +294,31 @@ const WORMHOLE_DRIFT_CENTER_PULL = 8.2;
 const WORMHOLE_DRIFT_DAMPING = 7.4;
 const WORMHOLE_TRIGGER_COOLDOWN = 6;
 const WORMHOLE_TRIGGER_STRENGTH = 0.12;
+const WORMHOLE_ORGANIC_RAMP_END = 0.66;
+const WORMHOLE_INITIAL_SPEED_FACTOR = 0.42;
+const WORMHOLE_PLAYER_SCALE_MULTIPLIER = 0.43;
+const WORMHOLE_DRIFT_VISUAL_MULTIPLIER = 2;
+const WORMHOLE_PLAYER_SCREEN_UP_OFFSET = 0.36;
+const WORMHOLE_DEPTH_CONTROL_STRENGTH = 2.35;
+const WORMHOLE_DEPTH_DAMPING = 2.55;
+const WORMHOLE_DEPTH_MAX_SPEED = 0.72;
+const WORMHOLE_FLOAT_CENTER_RADIUS = 0.18;
+const WORMHOLE_FLOAT_CENTER_FORCE = 0.62;
+const WORMHOLE_VISUAL_SPEED_MULTIPLIER = 2;
+const WORMHOLE_DEPTH_BACK_DOLLY_MULTIPLIER = 1.42;
+const WORMHOLE_WHITEOUT_PARTICLE_COUNT = 190;
+const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
+const ANCIENT_PORTAL_FLIGHT_PROMPT_MAX_HEIGHT = 230;
+const ANCIENT_PORTAL_CORE_HALF_WIDTH = 10.8;
+const ANCIENT_PORTAL_CORE_HALF_DEPTH = 9.5;
+const WORMHOLE_WHITEOUT_SECONDS = 2;
+const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
+const FUFU_SURFACE_ALTITUDE = 0.13;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
 const SUIT_OXYGEN_MAX = 100;
 const SUIT_OXYGEN_WALK_DRAIN_PER_SECOND = 0.294;
 const SUIT_OXYGEN_SPRINT_MULTIPLIER = 1.5;
+const FUFU_OXYGEN_DRAIN_MULTIPLIER = 0.75;
 const JETPACK_MAX_ENERGY = 100;
 const JETPACK_DRAIN_PER_SECOND = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * 1.25;
 const JETPACK_RECOVERY_SECONDS = 10;
@@ -279,6 +340,12 @@ const SCORE_HIDDEN_DISCOVERY = 30;
 const SCORE_ALL_BUILDINGS_EXPLORED = 100;
 const SCORE_FUNNY_DEFAULT = 10;
 const SCORE_FUNNY_PENALTY = -10;
+const SCORE_FUFU_RESCUE = SCORE_SIDE_TASK;
+const ROVER_RIDE_COST_COINS = 10;
+const SCORE_ROVER_RIDE = 10;
+const ANCIENT_PORTAL_COST_COINS = 50;
+const SCORE_WORMHOLE_TRAVERSAL = 200;
+const ANCIENT_PORTAL_ACTIVE_SECONDS = 28.5;
 const ELEVATOR_FOOT_CLEARANCE = 0.045;
 const CAMERA_OBSTRUCTION_MARGIN = 0.9;
 const CAMERA_OBSTRUCTION_MAX_LIFT = 7.4;
@@ -300,6 +367,9 @@ const FOOTBALL_GOAL_HEIGHT = 2.25;
 const FOOTBALL_GOAL_DEPTH = 1.35;
 const FOOTBALL_GOAL_SAFE_MARGIN = 5.4;
 const FOOTBALL_GOAL_COOLDOWN_SECONDS = 1.2;
+const FOOTBALL_PICKUP_RADIUS = 2.4;
+const FOOTBALL_CARRY_FORWARD_DISTANCE = 1.35;
+const FOOTBALL_CARRY_ALTITUDE = FOOTBALL_REST_ALTITUDE + 1.05;
 const SCORE_FOOTBALL_GOAL = 100;
 const COIN_GROUP_COUNT = 3;
 const COIN_GROUP_SIZE = 10;
@@ -312,6 +382,7 @@ const ROVER_RIDE_PROMPT_RADIUS = 5.4;
 const ROVER_RIDE_SEAT_HEIGHT = 2.28;
 const ROVER_RIDE_EXIT_DISTANCE = 4.7;
 const MYSTERY_CODE = "HUYEE";
+const MONEY_CODE = "MONEY";
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
@@ -522,6 +593,8 @@ const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elo
 
 const LANG_STORAGE_KEY = "mars.language";
 let currentLanguage: LanguageCode = readInitialLanguage();
+let visitorTotal: number | null = null;
+let visitorCounterStatus: "loading" | "ready" | "unavailable" = "loading";
 
 const i18n: Record<LanguageCode, Record<string, string>> = {
   "zh-CN": {
@@ -584,15 +657,18 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.coin": "金币",
     "map.sun": "太阳",
     "map.headingLabel": "方位",
+    "perf.fpsAria": "信号延迟",
+    "perf.fpsLabel": "信号延迟",
     "interaction.title": "互动",
     "interaction.choose": "选择互动",
     "interaction.close": "收起",
     "interaction.count": "{count} 个可互动项",
     "info.title": "信息栏",
     "info.motherCall": "收到史蒂夫的一条信息，是否接收？",
-    "info.reject": "拒绝",
+    "info.reject": "稍后接收",
     "info.accept": "接收",
     "language.button": "English",
+    "wormhole.whiteoutCaption": "这是……",
   },
   "en-US": {
     "app.aria": "Mars Advance Team 3D Demo",
@@ -654,15 +730,18 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.coin": "Coin",
     "map.sun": "Sun",
     "map.headingLabel": "HDG",
+    "perf.fpsAria": "Signal lag",
+    "perf.fpsLabel": "Signal Lag",
     "interaction.title": "Interact",
     "interaction.choose": "Choose Interaction",
     "interaction.close": "Close",
     "interaction.count": "{count} actions",
     "info.title": "Info",
     "info.motherCall": "Message from Steve. Receive it?",
-    "info.reject": "Reject",
+    "info.reject": "Receive Later",
     "info.accept": "Receive",
     "language.button": "简体中文",
+    "wormhole.whiteoutCaption": "This is...",
   },
 };
 
@@ -681,6 +760,7 @@ const exactEnglishTexts: Record<string, string> = {
   "09 建筑 医疗舱": "09 Building Medical Bay",
   "居住舱外壳": "Habitat Hull",
   "温室生态舱外壳": "Greenhouse Hull",
+  "温室生态舱整体外壳": "Greenhouse Whole Hull",
   "氧气生产站外壳": "Oxygen Plant Hull",
   "甲烷燃料厂外壳": "Methane Plant Hull",
   "机器人车库外壳": "Robot Garage Hull",
@@ -693,8 +773,8 @@ const exactEnglishTexts: Record<string, string> = {
   "太阳": "Sun",
   "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
   "02 车辆 运输车": "02 Vehicle Cargo Rover",
-  "NASA 火星车 Perseverance / Jezero Crater": "NASA Rover Perseverance / Jezero Crater",
-  "NASA 火星车 Perseverance": "NASA Rover Perseverance",
+  "NASA 机遇号火星车遗迹 / Meridiani Planum": "NASA Opportunity Rover Site / Meridiani Planum",
+  "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
   "坠毁飞船残骸": "Crashed ship wreckage",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
@@ -936,6 +1016,12 @@ const runtimeEnglishTexts: Record<string, string> = {
   "居住舱舱门": "Habitat Hatch",
   "点击 ENTER BASE 进入《火星先遣队》。": "Click ENTER BASE to enter Mars Advance Team.",
   "火星足球进球": "Mars football goal",
+  "搭便车": "Hitch ride",
+  "找到福福": "Found Fufu",
+  "考虑一下": "Think it over",
+  "支付": "Pay",
+  "你是否愿意为穿越时空之门支付50个火星币？": "Are you willing to pay 50 Mars coins to cross the time gate?",
+  "拾取足球": "Pick up football",
   "近火流星": "Near-Mars Meteor",
   "安抚 福福": "Comfort Fufu",
   "尚未获得。去黑色方碑处取得它。": "Not acquired yet. Retrieve it from the Black Monolith.",
@@ -957,16 +1043,18 @@ const runtimeEnglishTexts: Record<string, string> = {
   "退出游戏确认": "Exit Game Confirm",
   "移动端操作": "Mobile Controls",
   "相机取景框": "Camera Viewfinder",
-  "照片墙查看器": "Photo Wall Viewer",
+  "照片电子屏查看器": "Photo Screen Viewer",
   "火星照片": "Mars photo",
   "相机": "Camera",
   "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上": "Congratulations! You received a camera\nPress G anytime to use the camera\nPhotos will appear on the habitat wall",
   "相机已解锁": "Camera unlocked",
   "尚未获得相机。把足球踢进球门可以获得它。": "Camera not acquired yet. Kick the football into the goal to earn it.",
   "当前空间太窄，无法使用相机。": "This space is too tight to use the camera.",
-  "照片已保存到居住舱照片墙": "Photo saved to the habitat photo wall",
-  "照片墙暂无照片": "The photo wall has no photos yet",
-  "查看照片墙": "View photo wall",
+  "照片已保存到居住舱电子屏": "Photo saved to the habitat screen",
+  "照片电子屏暂无照片": "The photo screen has no photos yet",
+  "查看照片电子屏": "View photo screen",
+  "查看美好瞬间": "View captured moments",
+  "这里保存着你拍下的火星瞬间，按 E 查看。": "Your captured Mars moments are saved here. Press E to view.",
   "已触发当前照片下载": "Current photo download started",
 };
 
@@ -977,7 +1065,7 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
   ["基地中央 AI 史蒂夫正在呼叫。", "Base central AI Steve is calling."],
   ["史蒂夫：巡航员亚历克斯！收到请回话", "Steve: Patrol Officer Alex! Respond if you copy."],
-  ["已拒绝接收。史蒂夫将在稍后重试。", "Reception rejected. Steve will retry shortly."],
+  ["已设为稍后接收。史蒂夫将在2分钟后重试。", "Set to receive later. Steve will retry in 2 minutes."],
   ["居住舱补给柜", "Habitat supply locker"],
   ["氧气生产站", "Oxygen Plant"],
   ["登陆飞船补给舱", "Lander supply bay"],
@@ -986,21 +1074,40 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["未知物体", "Unknown object"],
   ["未知智能体", "Unknown intelligence"],
   ["福福", "Fufu"],
+  ["找到福福", "Found Fufu"],
+  ["喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。生命支持系统同步福福体征后，氧气消耗降低25%。", "Meow. It crawls out from beside the wreck insulation and circles your boots. Steve marks it: unregistered small lifeform. Run an isolation scan in the medical bay first. After syncing Fufu's vitals, life support reduces oxygen consumption by 25%."],
   ["火星足球", "Mars Football"],
+  ["门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", "The endless structure inside the arch swallows you. Mars becomes a red point in the distance."],
+  ["黑洞下落暂停。按 Q 继续。", "Black-hole descent paused. Press Q to continue."],
+  ["黑洞继续下落。", "Black-hole descent resumed."],
+  ["考虑一下", "Think it over"],
+  ["支付", "Pay"],
+  ["你是否愿意为穿越时空之门支付50个火星币？", "Are you willing to pay 50 Mars coins to cross the time gate?"],
+  ["已取消。离开门洞区域后可再次选择。", "Canceled. Leave the doorway area and return to choose again."],
+  ["已支付 50 金币。时空之门已开启。", "Paid 50 coins. The time gate is open."],
+  ["穿越时空之门", "Time-gate traversal"],
+  ["搭便车", "Hitch ride"],
+  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
+  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
+  ["拾取足球", "Pick up football"],
+  ["已拾取。按 Q 放下。", "Picked up. Press Q to put it down."],
+  ["已放下。", "Put down."],
   ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
   ["火星足球进球", "Mars football goal"],
   ["远古巨树拱门实体", "Ancient Tree Arch body"],
   ["远古巨树拱门根部", "Ancient Tree Arch roots"],
   ["远古巨树拱门", "Ancient Tree Arch"],
-  ["照片墙", "Photo Wall"],
-  ["查看照片墙", "View Photo Wall"],
+  ["照片电子屏", "Photo Screen"],
+  ["查看照片电子屏", "View Photo Screen"],
+  ["查看美好瞬间", "View Captured Moments"],
+  ["这里保存着你拍下的火星瞬间，按 E 查看。", "Your captured Mars moments are saved here. Press E to view."],
   ["照片", "Photo"],
   ["相机", "Camera"],
   ["恭喜！你获得了一台相机", "Congratulations! You received a camera"],
   ["随时按 G 键可以使用相机", "Press G anytime to use the camera"],
   ["照片会展示在居住舱的墙上", "Photos will appear on the habitat wall"],
   ["相机已解锁", "Camera unlocked"],
-  ["照片已保存到居住舱照片墙", "Photo saved to the habitat photo wall"],
+  ["照片已保存到居住舱电子屏", "Photo saved to the habitat screen"],
   ["已触发当前照片下载", "Current photo download started"],
   ["轨道链路", "Orbital Link"],
   ["星链卫星命中", "Starlink satellite hit"],
@@ -1078,6 +1185,7 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["退出确认", "Exit Confirm"],
   ["按住指南", "Hold Guide"],
   ["隐藏界面", "Hide HUD"],
+  ["背景音乐", "Music"],
   ["前进", "Forward"],
   ["左转", "Turn Left"],
   ["后退", "Back"],
@@ -1100,7 +1208,9 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["跳", "Jump"],
   ["要不要搭便车？", "Need a ride?"],
   ["下车", "Get off"],
-  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press E anytime to get off."],
+  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
+  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
+  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
   ["已下车。", "You got off."],
   ["主体", "Main Body"],
   ["升降梯塔", "Elevator Tower"],
@@ -1123,11 +1233,15 @@ let pitch = 0.34;
 let orbitYawOffset = 0;
 const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE = 10;
 let cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
-let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number } | null = null;
+let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number; lift: number; distance: number } | null = null;
 let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
+const PERFORMANCE_SAMPLE_INTERVAL_MS = 500;
 let lastFrameTime = performance.now();
+let performanceSampleStartedAt = lastFrameTime;
+let performanceSampleFrames = 0;
+let performanceSampleFrameMsTotal = 0;
 let elapsedTime = 0;
 let started = false;
 let activeInteractable: Interactable | null = null;
@@ -1163,15 +1277,21 @@ let rocketDoorOpen = false;
 let insideRocket = false;
 let stormStrength = 0;
 let activeGreenhouseDoor: GreenhouseDoorControl | null = null;
+let activeAncientPortal = false;
 let activeRobot: THREE.Group | null = null;
 let activeFufu = false;
+let activeFootball = false;
 let activeOxygenSupply: string | null = null;
 let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
 let staminaWarningShown = false;
 let fufuRescued = false;
+let footballCarried = false;
 let mysteryCodeProgress = "";
+let moneyCodeProgress = "";
+let moneyCheatCoinsRemaining = 0;
+let moneyCheatTimer: ReturnType<typeof window.setInterval> | null = null;
 let mobileFlightCodeProgress = "";
 let flightModeEnabled = false;
 let jetpackUnlocked = false;
@@ -1214,12 +1334,17 @@ let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
 let dialogueOpen = false;
 let pendingMotherCall: DialogueSceneId | null = null;
+const MOTHER_CALL_IDLE_DISMISS_SECONDS = 30;
+const MOTHER_CALL_IDLE_RETRY_SECONDS = 60;
+const MOTHER_CALL_DELAY_RETRY_SECONDS = 120;
 let motherCallRetryAt = 0;
+let pendingMotherCallQueuedAt = -Infinity;
 let gameStartElapsed = 0;
 let introMovementConfirmed = false;
 let introIdlePromptShown = false;
 let introMissionReminderShown = false;
 let introCallQueued = false;
+const shownOperationHelpIds = new Set<string>();
 let interactionActions: InteractionAction[] = [];
 let selectedInteractionIndex = 0;
 let interactionChoiceOpen = false;
@@ -1233,8 +1358,12 @@ const currentCoinGroups: CoinGroup[] = [];
 let nextCoinRefreshAt = 0;
 let coinSymbolMaterial: THREE.MeshBasicMaterial | null = null;
 let wormholeFall: WormholeFallState | null = null;
+let wormholeWhiteoutUntil = -Infinity;
+let wormholeWhiteoutStartedAt = -Infinity;
 let wormholeTriggerArmed = true;
 let lastWormholeTriggerAt = -Infinity;
+let ancientPortalPromptDismissedInZone = false;
+const wormholeWhiteoutParticles: WormholeWhiteoutParticle[] = [];
 const awardedEvents = new Set<string>();
 const exploredBuildings = new Set<Interactable["id"]>();
 const hiddenDiscoveries = new Set<string>();
@@ -1295,6 +1424,8 @@ if (import.meta.env.DEV) {
       return {
         portalStrength: Number(world.ancientTreePortal.userData.portalStrength ?? 0),
         inDoorway: ancientTreeArchObject ? isInsideAncientTreeDoorway(local) : false,
+        inPaymentZone: ancientTreeArchObject ? isInsideAncientTreePortalPaymentZone() : false,
+        inPortalCore: ancientTreeArchObject ? isInsideAncientTreePortalCore(local) : false,
         local: {
           x: Number(local.x.toFixed(2)),
           y: Number(local.y.toFixed(2)),
@@ -1310,6 +1441,7 @@ if (import.meta.env.DEV) {
 resetPlayerToSpawn();
 resetFufu();
 bindInput();
+reportVisitorStats();
 onResize();
 setMission("点击 ENTER BASE 进入《火星先遣队》。");
 updateTitleDateReadout();
@@ -1607,6 +1739,38 @@ function seededNoise(seed: number, salt: number) {
   return THREE.MathUtils.clamp(Math.sin(seed * 12.9898 + salt) * 43758.5453 % 1, -1, 1) * 0.5 + 0.5;
 }
 
+function createWormholeWhiteoutParticles() {
+  if (wormholeWhiteoutParticles.length > 0) return;
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < WORMHOLE_WHITEOUT_PARTICLE_COUNT; i += 1) {
+    const angle = seededNoise(i, 2.7) * Math.PI * 2;
+    const radius = Math.pow(seededNoise(i, 5.4), 1.8);
+    const startX = Math.cos(angle) * radius * 56;
+    const startY = Math.sin(angle) * radius * 42;
+    const driftRadius = 34 + seededNoise(i, 9.8) * 92;
+    const driftAngle = angle + (seededNoise(i, 12.3) - 0.5) * 0.9;
+    const element = document.createElement("span");
+    element.className = "wormhole-whiteout-particle";
+    const size = 9 + Math.pow(seededNoise(i, 15.2), 0.62) * 28;
+    element.style.width = `${size.toFixed(1)}px`;
+    element.style.height = `${size.toFixed(1)}px`;
+    fragment.appendChild(element);
+    wormholeWhiteoutParticles.push({
+      element,
+      startX,
+      startY,
+      driftX: Math.cos(driftAngle) * driftRadius,
+      driftY: Math.sin(driftAngle) * driftRadius,
+      size,
+      opacity: 0.72 + seededNoise(i, 18.6) * 0.28,
+      shrink: 0.58 + seededNoise(i, 21.9) * 0.34,
+    });
+  }
+  wormholeWhiteoutParticlesRoot.appendChild(fragment);
+}
+
+createWormholeWhiteoutParticles();
+
 function createWormholeFallVisual() {
   const group = new THREE.Group();
   group.name = "Wormhole fall visual";
@@ -1676,7 +1840,7 @@ function createWormholeFallVisual() {
 
   const veilMaterial = new THREE.SpriteMaterial({
     map: createWormholeVeilTexture(),
-    color: 0x0a1c46,
+    color: 0xf1e4c8,
     transparent: true,
     opacity: 0,
     depthWrite: false,
@@ -1689,39 +1853,9 @@ function createWormholeFallVisual() {
   veil.renderOrder = 29;
   group.add(veil);
 
-  const swirlMaterial = new THREE.SpriteMaterial({
-    map: createWormholeGeneratedTexture(),
-    color: 0x82e8ff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
-  const swirl = new THREE.Sprite(swirlMaterial);
-  swirl.position.set(0, 0, -82);
-  swirl.scale.set(190, 132, 1);
-  swirl.renderOrder = 29;
-  group.add(swirl);
-
-  const tunnelRingMaterials = [0x7cf8ff, 0x2f8cff, 0xff4fd8].map((color, index) => new THREE.SpriteMaterial({
-    map: createWormholeRingTexture(),
-    color,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-    rotation: index * 0.7,
-  }));
-  const tunnelRings = tunnelRingMaterials.map((material, index) => {
-    const ring = new THREE.Sprite(material);
-    ring.position.set(0, 0, -58 - index * 42);
-    ring.scale.setScalar(46 + index * 34);
-    ring.renderOrder = 30;
-    group.add(ring);
-    return ring;
-  });
+  const organicTunnel = createWormholeOrganicTunnel();
+  organicTunnel.group.renderOrder = 30;
+  group.add(organicTunnel.group);
 
   return {
     group,
@@ -1733,11 +1867,176 @@ function createWormholeFallVisual() {
     mars,
     marsMaterial,
     veilMaterial,
-    swirl,
-    swirlMaterial,
-    tunnelRings,
-    tunnelRingMaterials,
+    organicTunnel: organicTunnel.group,
+    organicSegments: organicTunnel.segments,
+    organicMaterials: organicTunnel.materials,
   };
+}
+
+function createWormholeOrganicTunnel() {
+  const group = new THREE.Group();
+  group.name = "Organic loop tunnel";
+  group.visible = false;
+
+  const materials = [
+    createOrganicTunnelMaterial(0xe8dfca, 0.68, 0.04, 1),
+    createOrganicTunnelMaterial(0xb9b29d, 0.84, 0.02, 0.92),
+    createOrganicTunnelMaterial(0x151511, 0.9, 0.12, 0.94),
+    createOrganicTunnelMaterial(0x2f3028, 0.78, 0.18, 0.78),
+    createOrganicTunnelMaterial(0xf8f2df, 0.42, 0.08, 1),
+  ];
+  materials[4].emissive.set(0x342d20);
+
+  const geometries = {
+    rib: new THREE.TorusGeometry(6.85, 0.085, 7, 128),
+    innerRib: new THREE.TorusGeometry(4.05, 0.052, 6, 96),
+    panel: new THREE.BoxGeometry(1, 1, 1),
+    inset: new THREE.BoxGeometry(1, 1, 1),
+    strut: new THREE.BoxGeometry(1, 1, 1),
+    tooth: new THREE.BoxGeometry(1, 1, 1),
+  };
+
+  const segments = Array.from({ length: WORMHOLE_ORGANIC_SEGMENT_COUNT }, (_, index) => {
+    const segment = createWormholeOrganicSegment(index, geometries, materials);
+    group.add(segment.group);
+    return segment;
+  });
+
+  return { group, segments, materials };
+}
+
+function createOrganicTunnelMaterial(color: number, roughness: number, metalness: number, baseOpacity: number) {
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness,
+    transparent: true,
+    opacity: 0,
+    depthWrite: true,
+  });
+  material.userData.baseOpacity = baseOpacity;
+  return material;
+}
+
+function createWormholeOrganicSegment(
+  index: number,
+  geometries: {
+    rib: THREE.BufferGeometry;
+    innerRib: THREE.BufferGeometry;
+    panel: THREE.BufferGeometry;
+    inset: THREE.BufferGeometry;
+    strut: THREE.BufferGeometry;
+    tooth: THREE.BufferGeometry;
+  },
+  materials: THREE.MeshStandardMaterial[],
+): WormholeOrganicSegment {
+  const group = new THREE.Group();
+  const seed = index * 19.73 + 3.1;
+  const z = WORMHOLE_ORGANIC_FRONT_Z - index * WORMHOLE_ORGANIC_SEGMENT_SPACING;
+  const baseRotation = seededNoise(seed, 0.37) * Math.PI * 2;
+  const radiusPulse = 0.72 + seededNoise(seed, 0.4) * 0.7;
+  const ovalX = 1 + (seededNoise(seed, 1.2) - 0.5) * 0.16;
+  const ovalY = 1 + (seededNoise(seed, 2.2) - 0.5) * 0.18;
+
+  const rib = new THREE.Mesh(geometries.rib, index % 4 === 0 ? materials[4] : materials[1]);
+  rib.scale.set(ovalX * (1 + radiusPulse * 0.025), ovalY, 1);
+  rib.rotation.z = baseRotation * 0.35;
+  group.add(rib);
+
+  if (index % 2 === 0) {
+    const innerRib = new THREE.Mesh(geometries.innerRib, materials[2]);
+    innerRib.position.z = -0.18;
+    innerRib.scale.set(ovalY * 1.06, ovalX * 0.96, 1);
+    innerRib.rotation.z = baseRotation * -0.52;
+    group.add(innerRib);
+  }
+
+  const panelCount = 10 + Math.floor(seededNoise(seed, 3.6) * 6);
+  for (let i = 0; i < panelCount; i += 1) {
+    const localSeed = seed + i * 5.217;
+    const angle = baseRotation + (i / panelCount) * Math.PI * 2 + (seededNoise(localSeed, 0.1) - 0.5) * 0.08;
+    const radial = 5.9 + seededNoise(localSeed, 1) * 2.05;
+    const tangential = 0.54 + seededNoise(localSeed, 2) * 1.2;
+    const depth = 0.32 + seededNoise(localSeed, 3) * 0.94;
+    const height = 0.16 + seededNoise(localSeed, 4) * 0.54;
+    const x = Math.cos(angle) * radial * ovalX;
+    const y = Math.sin(angle) * radial * ovalY;
+    const material = seededNoise(localSeed, 5) > 0.42 ? materials[0] : materials[2];
+
+    const panel = createWormholeOrganicBlock(
+      geometries.panel,
+      material,
+      new THREE.Vector3(x, y, (seededNoise(localSeed, 6) - 0.5) * 0.44),
+      angle,
+      new THREE.Vector3(height, tangential, depth),
+    );
+    panel.rotation.x = (seededNoise(localSeed, 7) - 0.5) * 0.15;
+    panel.rotation.y = (seededNoise(localSeed, 8) - 0.5) * 0.18;
+    group.add(panel);
+
+    if (seededNoise(localSeed, 9) > 0.36) {
+      const insetRadius = radial - 0.32 - seededNoise(localSeed, 10) * 0.55;
+      group.add(createWormholeOrganicBlock(
+        geometries.inset,
+        seededNoise(localSeed, 11) > 0.58 ? materials[3] : materials[2],
+        new THREE.Vector3(Math.cos(angle) * insetRadius * ovalX, Math.sin(angle) * insetRadius * ovalY, 0.27),
+        angle,
+        new THREE.Vector3(0.05, tangential * 0.54, 0.08),
+      ));
+    }
+
+    if (i % 3 === 0) {
+      const strutRadius = 4.78 + seededNoise(localSeed, 12) * 0.65;
+      const strut = createWormholeOrganicBlock(
+        geometries.strut,
+        materials[3],
+        new THREE.Vector3(Math.cos(angle) * strutRadius * ovalX, Math.sin(angle) * strutRadius * ovalY, -0.18),
+        angle + Math.PI * 0.5,
+        new THREE.Vector3(0.035, 0.96 + seededNoise(localSeed, 13) * 1.52, 0.04),
+      );
+      strut.rotation.y = 0.2 + seededNoise(localSeed, 14) * 0.38;
+      group.add(strut);
+    }
+  }
+
+  const toothCount = 7 + Math.floor(seededNoise(seed, 20.4) * 5);
+  for (let i = 0; i < toothCount; i += 1) {
+    const localSeed = seed + i * 9.33;
+    const angle = baseRotation * 1.7 + (i / toothCount) * Math.PI * 2;
+    const radius = 3.12 + seededNoise(localSeed, 1) * 0.84;
+    const tooth = createWormholeOrganicBlock(
+      geometries.tooth,
+      seededNoise(localSeed, 2) > 0.52 ? materials[0] : materials[2],
+      new THREE.Vector3(Math.cos(angle) * radius * ovalX, Math.sin(angle) * radius * ovalY, 0.08),
+      angle,
+      new THREE.Vector3(0.22 + seededNoise(localSeed, 3) * 0.48, 0.1, 0.48 + seededNoise(localSeed, 4) * 0.48),
+    );
+    tooth.rotation.x = Math.PI * 0.5 + (seededNoise(localSeed, 5) - 0.5) * 0.14;
+    group.add(tooth);
+  }
+
+  group.position.z = z;
+  return {
+    group,
+    z,
+    seed,
+    baseRotation,
+    twist: (seededNoise(seed, 40.1) - 0.5) * 1.8,
+  };
+}
+
+function createWormholeOrganicBlock(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  position: THREE.Vector3,
+  rotationZ: number,
+  scale: THREE.Vector3,
+) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.copy(position);
+  mesh.rotation.z = rotationZ;
+  mesh.scale.copy(scale);
+  return mesh;
 }
 
 function createWormholeVoidTexture() {
@@ -1875,135 +2174,20 @@ function createWormholeVeilTexture() {
   return texture;
 }
 
-function createWormholeGeneratedTexture() {
-  const texture = new THREE.TextureLoader().load(wormholeSwirlGeneratedUrl);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function createWormholeSwirlTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 1024;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.clearRect(0, 0, 1024, 1024);
-    const center = 512;
-    const bg = ctx.createRadialGradient(center, center, 34, center, center, 504);
-    bg.addColorStop(0, "rgba(0,0,0,1)");
-    bg.addColorStop(0.18, "rgba(0,6,18,0.98)");
-    bg.addColorStop(0.46, "rgba(10,80,130,0.54)");
-    bg.addColorStop(0.76, "rgba(18,118,170,0.36)");
-    bg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, 1024, 1024);
-
-    ctx.globalCompositeOperation = "lighter";
-    for (let i = 0; i < 860; i += 1) {
-      const seed = seededNoise(i, 11.2);
-      const angle = seededNoise(i, 8.7) * Math.PI * 2;
-      const radius = 70 + Math.pow(seededNoise(i, 3.3), 0.7) * 430;
-      const x = center + Math.cos(angle) * radius;
-      const y = center + Math.sin(angle) * radius * 0.86;
-      const size = 0.8 + seed * 3.2;
-      ctx.fillStyle = `rgba(180,238,255,${0.18 + seed * 0.42})`;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    for (let i = 0; i < 360; i += 1) {
-      const seed = seededNoise(i, 31.7);
-      const arm = i % 6;
-      const t = i / 360;
-      const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 6.6 + seed * 0.55;
-      const radius = 58 + t * 418;
-      const x = center + Math.cos(angle) * radius;
-      const y = center + Math.sin(angle) * radius * 0.82;
-      const size = 3 + seed * 17 + t * 14;
-      const dot = ctx.createRadialGradient(x, y, 0, x, y, size);
-      dot.addColorStop(0, `rgba(160,235,255,${0.14 + seed * 0.26})`);
-      dot.addColorStop(0.46, `rgba(45,150,220,${0.08 + seed * 0.16})`);
-      dot.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = dot;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    for (let arm = 0; arm < 6; arm += 1) {
-      ctx.strokeStyle = arm % 2 === 0 ? "rgba(105,220,255,0.34)" : "rgba(85,120,255,0.22)";
-      ctx.lineWidth = arm % 2 === 0 ? 15 : 8;
-      ctx.beginPath();
-      for (let step = 0; step < 150; step += 1) {
-        const t = step / 149;
-        const angle = arm * (Math.PI * 2 / 6) + t * Math.PI * 5.4;
-        const radius = 46 + t * 424;
-        const x = center + Math.cos(angle) * radius;
-        const y = center + Math.sin(angle) * radius * 0.84;
-        if (step === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-
-    ctx.globalCompositeOperation = "source-over";
-    const core = ctx.createRadialGradient(center, center, 22, center, center, 210);
-    core.addColorStop(0, "rgba(0,0,0,1)");
-    core.addColorStop(0.58, "rgba(0,0,0,0.72)");
-    core.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, 1024, 1024);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function createWormholeRingTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.clearRect(0, 0, 512, 512);
-    const center = 256;
-    const rings = [
-      { radius: 138, alpha: 0.9, width: 10 },
-      { radius: 162, alpha: 0.48, width: 6 },
-      { radius: 198, alpha: 0.34, width: 4 },
-    ];
-    for (const ring of rings) {
-      const gradient = ctx.createRadialGradient(center, center, ring.radius - ring.width * 2, center, center, ring.radius + ring.width * 2);
-      gradient.addColorStop(0, "rgba(255,255,255,0)");
-      gradient.addColorStop(0.42, `rgba(255,255,255,${ring.alpha})`);
-      gradient.addColorStop(0.58, `rgba(255,255,255,${ring.alpha * 0.82})`);
-      gradient.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(center, center, ring.radius + ring.width * 3, 0, Math.PI * 2);
-      ctx.arc(center, center, ring.radius - ring.width * 3, 0, Math.PI * 2, true);
-      ctx.fill();
-    }
-    const core = ctx.createRadialGradient(center, center, 4, center, center, 96);
-    core.addColorStop(0, "rgba(0,0,0,0.94)");
-    core.addColorStop(0.38, "rgba(0,0,0,0.64)");
-    core.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, 512, 512);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta: number) {
   wormholeVisual.group.visible = true;
   wormholeVisual.group.position.copy(camera.position);
   wormholeVisual.group.quaternion.copy(camera.quaternion);
 
-  const fallSeconds = wormholeFall ? elapsedTime - wormholeFall.startedAt : progress * WORMHOLE_FALL_DURATION;
+  const paused = Boolean(wormholeFall?.paused);
+  const fallSeconds = wormholeFall ? wormholeElapsed() : progress * WORMHOLE_FALL_DURATION;
+  const depth = wormholeFall?.depth ?? 0;
+  const fallSpeedFactor = paused ? 0 : wormholeFallSpeedFactor(progress);
+  const depthSpeedFactor = wormholeDepthVisualSpeedMultiplier(depth);
+  const perspectiveSpeedFactor = fallSpeedFactor * WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor;
+  const visualTime = elapsedTime * Math.max(0.1, WORMHOLE_VISUAL_SPEED_MULTIPLIER * depthSpeedFactor);
   const marsPhase = THREE.MathUtils.smoothstep(progress, 0.66, 1);
-  const pulse = 0.86 + Math.sin(elapsedTime * 18.4) * 0.18 + Math.sin(elapsedTime * 37.7) * 0.11;
+  const pulse = 0.86 + Math.sin(visualTime * 18.4) * 0.18 + Math.sin(visualTime * 37.7) * 0.11;
   const particleFade = 1 - THREE.MathUtils.smoothstep(progress, 0.88, 1);
   const particleOpacity = THREE.MathUtils.lerp(0.7, 0.42, marsPhase) * particleFade;
   wormholeVisual.particleMaterial.opacity = particleOpacity;
@@ -2017,10 +2201,10 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
     const baseY = wormholeVisual.particleSeeds[seedIndex + 1];
     const seedZ = wormholeVisual.particleSeeds[seedIndex + 2];
     const speed = wormholeVisual.particleSeeds[seedIndex + 3];
-    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2)) % wrapDistance + wrapDistance) % wrapDistance;
+    const zTravel = ((seedZ * wrapDistance - fallSeconds * (4.6 + speed * 3.2) * Math.max(0.22, perspectiveSpeedFactor)) % wrapDistance + wrapDistance) % wrapDistance;
     const z = -10 - zTravel;
     const depthT = 1 - zTravel / wrapDistance;
-    const floatPhase = elapsedTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
+    const floatPhase = visualTime * (0.62 + speed * 0.32) + seedZ * Math.PI * 2;
     const tunnelScale = THREE.MathUtils.lerp(0.26, 1.16, depthT);
     const sway = THREE.MathUtils.lerp(0.16, 1.05, depthT);
     wormholeVisual.particlePositions[positionIndex] = baseX * tunnelScale + Math.sin(floatPhase + baseY * 0.03) * sway + drift.x * 0.04;
@@ -2031,28 +2215,29 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   particlePosition.needsUpdate = true;
 
   wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
-  wormholeVisual.swirl.position.set(drift.x * 0.035, drift.y * 0.035, -92);
-  wormholeVisual.swirl.scale.set(
-    THREE.MathUtils.lerp(190, 236, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
-    THREE.MathUtils.lerp(132, 164, Math.sin(fallSeconds * 0.38) * 0.5 + 0.5),
-    1,
-  );
-  wormholeVisual.swirlMaterial.rotation = elapsedTime * 0.18;
-  wormholeVisual.swirlMaterial.opacity = THREE.MathUtils.lerp(0.84, 0.2, marsPhase) * (1 - THREE.MathUtils.smoothstep(progress, 0.84, 1));
 
-  wormholeVisual.tunnelRings.forEach((ring, index) => {
-    const ringPhase = (fallSeconds * (0.34 + index * 0.08) + index * 0.24) % 1;
-    const z = THREE.MathUtils.lerp(-34, -170, ringPhase);
-    const scale = THREE.MathUtils.lerp(38 + index * 8, 148 + index * 28, ringPhase);
-    ring.position.set(
-      Math.sin(fallSeconds * 0.52 + index) * 2.8 + drift.x * 0.03,
-      Math.cos(fallSeconds * 0.44 + index * 1.7) * 2.2 + drift.y * 0.03,
-      z,
-    );
-    ring.scale.setScalar(scale);
-    ring.material.rotation = elapsedTime * (0.08 + index * 0.035) + index * 0.9;
-    ring.material.opacity = (0.012 + index * 0.006 + pulse * 0.006) * (1 - THREE.MathUtils.smoothstep(progress, 0.82, 1));
+  const organicOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.04) * (1 - THREE.MathUtils.smoothstep(progress, 0.62, 0.74));
+  wormholeVisual.organicTunnel.visible = organicOpacity > 0.01;
+  wormholeVisual.organicTunnel.position.set(drift.x * 0.035, drift.y * 0.035, 0);
+  wormholeVisual.organicMaterials.forEach((material) => {
+    material.opacity = Number(material.userData.baseOpacity ?? 1) * organicOpacity;
   });
+  for (const segment of wormholeVisual.organicSegments) {
+    segment.z += (3.2 + Math.sin(segment.seed) * 0.24) * perspectiveSpeedFactor * delta;
+    if (segment.z > WORMHOLE_ORGANIC_FRONT_Z) {
+      segment.z -= WORMHOLE_ORGANIC_LOOP_LENGTH;
+      segment.baseRotation += Math.PI * 0.618;
+    }
+    segment.group.position.z = segment.z;
+    const depthFactor = THREE.MathUtils.clamp((segment.z - WORMHOLE_ORGANIC_BACK_Z) / WORMHOLE_ORGANIC_LOOP_LENGTH, 0, 1);
+    const segmentPulse = 1 + Math.sin(visualTime * 1.4 + segment.seed) * 0.016;
+    const nearScale = THREE.MathUtils.lerp(0.72, 1.18, depthFactor);
+    segment.group.scale.setScalar(nearScale * segmentPulse);
+    segment.group.rotation.z =
+      segment.baseRotation * 0.08 +
+      visualTime * 0.16 +
+      segment.twist * Math.sin(visualTime * 0.4 + segment.seed);
+  }
 
   const finalRush = THREE.MathUtils.smoothstep(progress, 0.94, 1);
   const marsScale = THREE.MathUtils.lerp(0.12, 24, Math.pow(marsPhase, 1.7)) + finalRush * 134;
@@ -2150,10 +2335,56 @@ function applyLanguage() {
   updateMissionAfterLanguageChange();
   updateScaleGunOverlay();
   updateMobileFlightButtons();
+  updateVisitorCounter();
   for (const item of labels) item.element.textContent = localizeLabel(item.element.dataset.labelSource ?? item.element.textContent);
   interactionChoiceSignature = "";
   updateInteractionPrompts();
   if (activeDialogueNode) renderDialogueNode();
+}
+
+async function reportVisitorStats() {
+  visitorCounterStatus = "loading";
+  updateVisitorCounter();
+  try {
+    const response = await fetch("/api/visitors", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      keepalive: true,
+    });
+    if (!response.ok) throw new Error(`Visitor stats failed: ${response.status}`);
+    const payload = (await response.json()) as { total?: unknown };
+    if (typeof payload.total !== "number" || !Number.isFinite(payload.total)) throw new Error("Visitor stats returned invalid total");
+    visitorTotal = Math.max(0, Math.floor(payload.total));
+    visitorCounterStatus = "ready";
+  } catch {
+    visitorCounterStatus = "unavailable";
+  }
+  updateVisitorCounter();
+}
+
+function updateVisitorCounter() {
+  visitorCounter.dataset.status = visitorCounterStatus;
+  if (visitorCounterStatus === "ready" && visitorTotal !== null) {
+    renderVisitorDigits(formatVisitorCount(visitorTotal));
+    return;
+  }
+  renderVisitorDigits("0000");
+}
+
+function formatVisitorCount(total: number) {
+  return String(Math.min(Math.max(total, 0), 9999)).padStart(4, "0");
+}
+
+function renderVisitorDigits(value: string) {
+  visitorCountReadout.replaceChildren(
+    ...value.slice(0, 4).split("").map((digit) => {
+      const element = document.createElement("span");
+      element.className = "visitor-digit";
+      element.textContent = digit;
+      return element;
+    })
+  );
 }
 
 function localizeStaticUiText() {
@@ -2496,13 +2727,25 @@ function bindInput() {
   });
   scaleGunShrinkButton.addEventListener("click", () => fireScaleGun("shrink"));
   scaleGunGrowButton.addEventListener("click", () => fireScaleGun("grow"));
-  window.addEventListener("keydown", (event) => {
-    if (!started && handleTitleScreenKey(event)) return;
-    if (!started) return;
-    if (wormholeFall) {
+	  window.addEventListener("keydown", (event) => {
+	    if (!started && handleTitleScreenKey(event)) return;
+	    if (!started) return;
+	    if (isWormholeWhiteoutActive()) {
+	      event.preventDefault();
+	      return;
+	    }
+	    if (wormholeFall) {
       event.preventDefault();
       if (event.code === "KeyC") {
         toggleFirstThirdPersonCamera();
+        return;
+      }
+      if (event.code === "KeyE") {
+        setWormholeFallPaused(true);
+        return;
+      }
+      if (event.code === "KeyQ") {
+        setWormholeFallPaused(false);
         return;
       }
       if (isWormholeControlKey(event.code)) keyState.add(event.code);
@@ -2529,11 +2772,6 @@ function bindInput() {
     }
     if (handleExpandedMapKey(event)) return;
     if (cameraMode && handleCameraModeKey(event)) return;
-    if (ridingRover && event.code === "KeyE") {
-      event.preventDefault();
-      exitRoverRide();
-      return;
-    }
     if (scaleGunAiming && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       fireScaleGun(event.code === "KeyE" ? "grow" : "shrink");
@@ -2544,17 +2782,27 @@ function bindInput() {
       keyState.add(event.code);
       return;
     }
-    if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
+    if (ridingRover && event.code === "KeyQ") {
       event.preventDefault();
-      keyState.add(event.code);
+      exitRoverRide();
       return;
     }
-    if ((interactionChoiceOpen || hasMotherCallInfoActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
+    if (!ridingRover && footballCarried && event.code === "KeyQ") {
+      event.preventDefault();
+      dropFootball();
+      return;
+    }
+    if ((interactionChoiceOpen || hasInfoChoiceActions()) && interactionActions.length > 1 && (event.code === "KeyQ" || event.code === "KeyE")) {
       event.preventDefault();
       if (interactionActions.length === 2) {
         selectedInteractionIndex = event.code === "KeyQ" ? 0 : 1;
       }
       executeSelectedInteraction();
+      return;
+    }
+    if (isFlightActive() && (event.code === "KeyE" || event.code === "KeyQ")) {
+      event.preventDefault();
+      keyState.add(event.code);
       return;
     }
     if (interactionChoiceOpen && interactionActions.length > 1 && (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "ArrowUp" || event.code === "ArrowDown")) {
@@ -2579,6 +2827,11 @@ function bindInput() {
     if (event.code === "KeyR") {
       event.preventDefault();
       toggleMissionPanel();
+      return;
+    }
+    if (event.code === "KeyB") {
+      event.preventDefault();
+      toggleBackgroundMusic();
       return;
     }
     if (event.code === "KeyX") {
@@ -2784,20 +3037,30 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
   const key = event.key.toUpperCase();
   if (!/^[A-Z]$/.test(key)) return false;
 
-  const next = `${mysteryCodeProgress}${key}`;
-  if (MYSTERY_CODE.startsWith(next)) {
-    mysteryCodeProgress = next;
+  const nextMystery = `${mysteryCodeProgress}${key}`;
+  const nextMoney = `${moneyCodeProgress}${key}`;
+  const matchesMystery = MYSTERY_CODE.startsWith(nextMystery);
+  const matchesMoney = MONEY_CODE.startsWith(nextMoney);
+
+  if (matchesMystery || matchesMoney) {
+    mysteryCodeProgress = matchesMystery ? nextMystery : "";
+    moneyCodeProgress = matchesMoney ? nextMoney : "";
     event.preventDefault();
     if (mysteryCodeProgress === MYSTERY_CODE) {
       mysteryCodeProgress = "";
       activateTemporaryJetpack();
     }
+    if (moneyCodeProgress === MONEY_CODE) {
+      moneyCodeProgress = "";
+      activateMoneyCheat();
+    }
     return true;
   }
 
   mysteryCodeProgress = MYSTERY_CODE.startsWith(key) ? key : "";
-  if (mysteryCodeProgress) event.preventDefault();
-  return mysteryCodeProgress.length > 0;
+  moneyCodeProgress = MONEY_CODE.startsWith(key) ? key : "";
+  if (mysteryCodeProgress || moneyCodeProgress) event.preventDefault();
+  return mysteryCodeProgress.length > 0 || moneyCodeProgress.length > 0;
 }
 
 function handleKeyboardFlightCodeKey(event: KeyboardEvent) {
@@ -2873,17 +3136,36 @@ function activateEquipmentJetpack() {
 function showJetpackControlsHint(source: JetpackSource) {
   if (!started || !canUseFlightMode()) return;
   const equipmentHint = source === "equipment";
-  showDialogue(
-    "飞行背包",
-    isSmallScreenMapTouch()
-      ? equipmentHint
-        ? "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。"
-        : "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。"
-      : equipmentHint
-        ? "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。"
-        : "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。",
-    5.6
-  );
+  showOneTimeOperationHelp("jetpack.controls", "飞行背包", jetpackControlsHintText(equipmentHint), 5.6);
+}
+
+function showOneTimeOperationHelp(id: string, speaker: string, text: string, seconds: number) {
+  if (shownOperationHelpIds.has(id)) return false;
+  shownOperationHelpIds.add(id);
+  showDialogue(speaker, text, seconds);
+  return true;
+}
+
+function jetpackControlsHintText(equipmentHint: boolean) {
+  const touch = isSmallScreenMapTouch();
+  if (isEnglish()) {
+    if (touch) {
+      return equipmentHint
+        ? "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. After landing, double-tap Jump to take off again."
+        : "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. Landing exits flight.";
+    }
+    return equipmentHint
+      ? "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight. Double-tap Space to take off again."
+      : "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight.";
+  }
+  if (touch) {
+    return equipmentHint
+      ? "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。"
+      : "左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。";
+  }
+  return equipmentHint
+    ? "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。"
+    : "W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。";
 }
 
 function landFromFlight() {
@@ -3311,6 +3593,7 @@ function toggleScaleGunAiming(force?: boolean) {
   if (next === scaleGunAiming) return;
   scaleGunAiming = next;
   if (scaleGunAiming) {
+    suppressTransientInfoWindows();
     scaleGunCameraDistanceBefore = cameraDistance;
     cameraDistance = CAMERA_MIN_DISTANCE;
     pitch = 0.34;
@@ -3334,7 +3617,7 @@ function toggleScaleGunAiming(force?: boolean) {
 }
 
 function canUseScaleGun() {
-  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover;
+  return started && hasScaleGun && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator;
 }
 
 function isScaleGunAimControlKey(code: string) {
@@ -3411,7 +3694,7 @@ function awardCamera() {
 }
 
 function canUseCamera() {
-  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !photoViewerOpen;
+  return started && hasCamera && !dialogueOpen && !exitConfirmOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !photoViewerOpen;
 }
 
 function toggleCameraMode(force?: boolean) {
@@ -3428,6 +3711,7 @@ function toggleCameraMode(force?: boolean) {
   if (next === cameraMode) return;
   cameraMode = next;
   if (cameraMode) {
+    suppressTransientInfoWindows();
     if (scaleGunAiming) toggleScaleGunAiming(false);
     cameraDistanceBeforeCamera = cameraDistance;
     cameraDistance = CAMERA_MIN_DISTANCE;
@@ -3531,77 +3815,108 @@ function captureCameraPhoto() {
     removed?.texture.dispose();
   }
   updatePhotoWallFrames();
-  showDialogue("相机", "照片已保存到居住舱照片墙", 2.2);
+  showDialogue("相机", "照片已保存到居住舱电子屏", 2.2);
 }
 
 function createPhotoWall() {
   const group = new THREE.Group();
-  group.name = "Habitat photo wall";
-  group.position.set(5.62, -0.08, 0);
+  group.name = "Habitat photo screen";
+  group.position.set(5.58, -0.08, 0);
   group.rotation.y = -Math.PI / 2;
 
-  const frameLayout = [
-    { x: -1.24, y: 0.56, w: 1.02, h: 0.68 },
-    { x: 0, y: 0.56, w: 1.12, h: 0.76 },
-    { x: 1.28, y: 0.56, w: 0.96, h: 0.64 },
-    { x: -1.42, y: -0.34, w: 0.86, h: 0.62 },
-    { x: -0.42, y: -0.34, w: 0.78, h: 0.58 },
-    { x: 0.58, y: -0.34, w: 0.86, h: 0.62 },
-    { x: 1.55, y: -0.34, w: 0.72, h: 0.54 },
-  ];
-  const railMat = new THREE.MeshStandardMaterial({ color: 0x6e513b, roughness: 0.74, metalness: 0.12 });
+  const screenWidth = 3.06;
+  const screenHeight = 1.54;
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x1e2b31, roughness: 0.46, metalness: 0.52, emissive: 0x07161e, emissiveIntensity: 0.34 });
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0x6fe7ff, transparent: true, opacity: 0.42, toneMapped: false });
+  const screenMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    map: getPhotoWallStandbyTexture(),
+    transparent: true,
+    opacity: 1,
+    toneMapped: false,
+  });
 
-  for (const [index, item] of frameLayout.entries()) {
-    const frame = new THREE.Group();
-    frame.position.set(item.x, item.y, 0.02);
-    const photoMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(item.w, item.h),
-      new THREE.MeshBasicMaterial({ map: createPhotoPlaceholderTexture(), transparent: true, toneMapped: false })
-    );
-    const borderTop = new THREE.Mesh(new THREE.BoxGeometry(item.w + 0.12, 0.045, 0.06), railMat);
-    const borderBottom = borderTop.clone();
-    const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.045, item.h + 0.12, 0.06), railMat);
-    const borderRight = borderLeft.clone();
-    borderTop.position.y = item.h * 0.5 + 0.055;
-    borderBottom.position.y = -item.h * 0.5 - 0.055;
-    borderLeft.position.x = -item.w * 0.5 - 0.055;
-    borderRight.position.x = item.w * 0.5 + 0.055;
-    frame.add(photoMesh, borderTop, borderBottom, borderLeft, borderRight);
-    group.add(frame);
-    photoWallFrames.push(photoMesh);
-  }
+  const backPanel = new THREE.Mesh(new THREE.BoxGeometry(screenWidth + 0.22, screenHeight + 0.2, 0.08), frameMat);
+  backPanel.position.set(0, 0.16, -0.02);
+  backPanel.castShadow = true;
+  group.add(backPanel);
+
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(screenWidth, screenHeight), screenMat);
+  screen.position.set(0, 0.16, 0.035);
+  screen.renderOrder = 4;
+  group.add(screen);
+  photoWallScreen = screen;
+
+  const borderTop = new THREE.Mesh(new THREE.BoxGeometry(screenWidth + 0.16, 0.035, 0.035), glowMat);
+  const borderBottom = borderTop.clone();
+  const borderLeft = new THREE.Mesh(new THREE.BoxGeometry(0.035, screenHeight + 0.14, 0.035), glowMat);
+  const borderRight = borderLeft.clone();
+  borderTop.position.set(0, screenHeight * 0.5 + 0.245, 0.052);
+  borderBottom.position.set(0, -screenHeight * 0.5 + 0.075, 0.052);
+  borderLeft.position.set(-screenWidth * 0.5 - 0.085, 0.16, 0.052);
+  borderRight.position.set(screenWidth * 0.5 + 0.085, 0.16, 0.052);
+  group.add(borderTop, borderBottom, borderLeft, borderRight);
 
   return group;
 }
 
-function createPhotoPlaceholderTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 176;
-  const ctx = canvas.getContext("2d");
-  ctx?.clearRect(0, 0, canvas.width, canvas.height);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+function updatePhotoWallFrames() {
+  if (!photoWallScreen) return;
+  const nextIndex = cameraPhotos.length === 0 ? -1 : Math.floor(elapsedTime / 4) % cameraPhotos.length;
+  const nextTexture = nextIndex >= 0 ? cameraPhotos[nextIndex]?.texture ?? null : getPhotoWallStandbyTexture();
+  if (nextIndex === photoWallScreenPhotoIndex && photoWallScreen.material.map === nextTexture) return;
+  photoWallScreenPhotoIndex = nextIndex;
+  const material = photoWallScreen.material;
+  material.map = nextTexture;
+  material.color.set(0xffffff);
+  material.opacity = 1;
+  material.needsUpdate = true;
 }
 
-function updatePhotoWallFrames() {
-  for (const [index, frame] of photoWallFrames.entries()) {
-    const material = frame.material;
-    if (material.map && !cameraPhotos.some((photo) => photo.texture === material.map)) material.map.dispose();
-    material.map = cameraPhotos[index]?.texture ?? createPhotoPlaceholderTexture();
-    material.transparent = !cameraPhotos[index];
-    material.needsUpdate = true;
+function getPhotoWallStandbyTexture() {
+  if (photoWallStandbyTexture) return photoWallStandbyTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    photoWallStandbyTexture = new THREE.CanvasTexture(canvas);
+    return photoWallStandbyTexture;
   }
+
+  ctx.fillStyle = "#061014";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "rgba(111,231,255,0.24)";
+  ctx.lineWidth = 5;
+  ctx.strokeRect(34, 34, canvas.width - 68, canvas.height - 68);
+  ctx.fillStyle = "rgba(111,231,255,0.09)";
+  for (let y = 62; y < canvas.height - 54; y += 22) {
+    ctx.fillRect(56, y, canvas.width - 112, 2);
+  }
+  ctx.fillStyle = "rgba(255,103,64,0.92)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "700 42px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("Happy birthday to Mr. Elon Musk! 🎂🥳", canvas.width / 2, 180);
+  ctx.font = "700 30px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("May all your dreams come true", canvas.width / 2, 246);
+  ctx.fillText("and wish you good health and longevity!", canvas.width / 2, 292);
+  ctx.font = "700 34px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace";
+  ctx.fillText("June 29, 2026", canvas.width / 2, 372);
+
+  photoWallStandbyTexture = new THREE.CanvasTexture(canvas);
+  photoWallStandbyTexture.colorSpace = THREE.SRGBColorSpace;
+  return photoWallStandbyTexture;
 }
 
 function openPhotoViewer() {
   if (cameraPhotos.length === 0) {
-    showDialogue("照片墙", "照片墙暂无照片", 2);
+    showDialogue("照片电子屏", "照片电子屏暂无照片", 2);
     return;
   }
   if (cameraMode) toggleCameraMode(false);
   photoViewerOpen = true;
+  suppressTransientInfoWindows();
   photoViewerIndex = THREE.MathUtils.clamp(photoViewerIndex, 0, cameraPhotos.length - 1);
   photoViewerZoom = 1;
   clearMovementInputState();
@@ -3863,6 +4178,7 @@ function startGame() {
   if (started) return;
   playUiBeep();
   started = true;
+  backgroundMusicEnabled = true;
   resetQuestState();
   resetDialogueState();
   gameStartElapsed = elapsedTime;
@@ -3879,6 +4195,8 @@ function startGame() {
   exitConfirmOpen = false;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
+  resetAncientPortal();
   world.habitatDoor.open = false;
   world.habitatDoor.occupied = false;
   world.habitatDoor.doorPanels.visible = true;
@@ -3905,7 +4223,9 @@ function startGame() {
   clearScaleGunEffects();
   resetCameraSystem();
   resetPlayerToSpawn();
+  respawnFootball();
   resetFufu();
+  resetAncientPortal();
   resetStick();
   multiplayer.connect();
   startBackgroundMusic();
@@ -3933,6 +4253,7 @@ function returnToTitle() {
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   introCallQueued = false;
   introMovementConfirmed = false;
   introIdlePromptShown = false;
@@ -3948,6 +4269,7 @@ function returnToTitle() {
   clearMapHoldTimer();
   keyState.clear();
   resetPlayerToSpawn();
+  respawnFootball();
   resetFufu();
   resetStick();
   document.body.classList.remove("is-playing", "hud-collapsed", "mission-panel-open", "map-open", "map-expanded");
@@ -3996,7 +4318,9 @@ function resetStick(_event?: PointerEvent) {
 
 function animate() {
   const now = performance.now();
-  const delta = Math.min((now - lastFrameTime) / 1000, 0.033);
+  const frameDurationMs = now - lastFrameTime;
+  updatePerformanceReadout(now, frameDurationMs);
+  const delta = Math.min(frameDurationMs / 1000, 0.033);
   lastFrameTime = now;
   elapsedTime += delta;
 
@@ -4006,13 +4330,17 @@ function animate() {
   if (sunLight) updateSolarArrays(world.solarArrays, sunLight.position);
   updateElevators(world.elevators, delta);
   updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
+  updateWormholeWhiteout();
   const speed = started ? updatePlayer(delta) : 0;
+  document.body.classList.toggle("is-wormhole", Boolean(wormholeFall));
+  document.body.classList.toggle("is-wormhole-whiteout", isWormholeWhiteoutActive());
   updateIntroOperationFeedback(speed);
   updateSuitOxygen(delta);
   updateJetpackEnergy(delta);
   updateCamera(delta);
+  updatePhotoWallFrames();
   updateRovers(world.rovers, elapsedTime, world.colliders);
-  if (ridingRover) updateRoverRide(ridingRover);
+  if (ridingRover) updateRoverRide(ridingRover, 0);
   updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
@@ -4054,13 +4382,36 @@ function animate() {
   requestAnimationFrame(animate);
 }
 
+function updatePerformanceReadout(now: number, frameDurationMs: number) {
+  performanceSampleFrames += 1;
+  performanceSampleFrameMsTotal += frameDurationMs;
+  const sampleDuration = now - performanceSampleStartedAt;
+  if (sampleDuration < PERFORMANCE_SAMPLE_INTERVAL_MS) return;
+  const averageFrameMs = performanceSampleFrames > 0 ? performanceSampleFrameMsTotal / performanceSampleFrames : sampleDuration;
+  fpsValue.textContent = Math.round(averageFrameMs).toString().padStart(3, "0");
+  performanceSampleStartedAt = now;
+  performanceSampleFrames = 0;
+  performanceSampleFrameMsTotal = 0;
+}
+
 function startBackgroundMusic() {
-  if (!started) return;
+  if (!started || !backgroundMusicEnabled || wormholeFall) return;
   if (!backgroundMusic.paused) return;
   backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
   backgroundMusic.play().catch(() => {
     // Browser audio policies can still block playback in unusual cases.
   });
+}
+
+function toggleBackgroundMusic() {
+  if (!started) return;
+  playUiBeep();
+  backgroundMusicEnabled = !backgroundMusicEnabled;
+  if (!backgroundMusicEnabled) {
+    backgroundMusic.pause();
+    return;
+  }
+  startBackgroundMusic();
 }
 
 function updateMonolithSignal() {
@@ -4148,7 +4499,11 @@ function playDingDong() {
 }
 
 function updateBackgroundMusicFade() {
-  if (wormholeFall) {
+  if (!backgroundMusicEnabled) {
+    backgroundMusic.volume = 0;
+    return;
+  }
+  if (wormholeFall || isWormholeWhiteoutActive()) {
     backgroundMusic.volume = 0;
     return;
   }
@@ -4181,13 +4536,28 @@ function starlinkDisplayStatus() {
   return isEnglish() ? starlinkStatusTextEn(world.starlinkConstellation) : starlinkStatusText(world.starlinkConstellation);
 }
 
+function isInsideInteriorSpace() {
+  return world.habitatDoor.occupied || insideGreenhouse || insideRocket;
+}
+
 function updateScheduledCalls() {
-  if (!started || dialogueOpen || pendingMotherCall || introCallQueued) return;
+  if (!started || isFocusOverlayActive() || isInsideInteriorSpace()) return;
+  if (pendingMotherCall) {
+    updatePendingMotherCallTimeout();
+    return;
+  }
+  if (introCallQueued) return;
   if (missionStep !== "intro") return;
   if (elapsedTime < motherCallRetryAt) return;
   if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
   queueMotherCall("intro", "基地中央 AI 史蒂夫正在呼叫。");
+}
+
+function updatePendingMotherCallTimeout() {
+  if (!pendingMotherCall) return;
+  if (elapsedTime - pendingMotherCallQueuedAt < MOTHER_CALL_IDLE_DISMISS_SECONDS) return;
+  deferPendingMotherCall(MOTHER_CALL_IDLE_RETRY_SECONDS);
 }
 
 function canShowIntroOperationToast() {
@@ -4200,19 +4570,19 @@ function updateIntroOperationFeedback(speed: number) {
 
   if (!introMovementConfirmed && sinceStart > 1.2 && speed > 0.45 && canShowIntroOperationToast()) {
     introMovementConfirmed = true;
-    showDialogue("操作确认", "W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", 4.2);
+    showOneTimeOperationHelp("intro.movementConfirmed", "操作确认", "W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", 4.2);
     return;
   }
 
   if (!introIdlePromptShown && !introMovementConfirmed && sinceStart > 8 && canShowIntroOperationToast()) {
     introIdlePromptShown = true;
-    showDialogue("操作提示", isSmallScreenMapTouch() ? "拖动左下角摇杆，先向前走几步。" : "按 W 向前走几步，按 A/D 调整方向。", 4.2);
+    showOneTimeOperationHelp("intro.idleMove", "操作提示", isSmallScreenMapTouch() ? "拖动左下角摇杆，先向前走几步。" : "按 W 向前走几步，按 A/D 调整方向。", 4.2);
     return;
   }
 
   if (!introMissionReminderShown && sinceStart > 16 && !missionPanelOpen && canShowIntroOperationToast()) {
     introMissionReminderShown = true;
-    showDialogue("操作提示", isSmallScreenMapTouch() ? "点 R 可再次查看任务；点 F 打开雷达。" : "按 R 可再次查看任务；按 F 打开雷达。", 4.2);
+    showOneTimeOperationHelp("intro.missionReminder", "操作提示", isSmallScreenMapTouch() ? "点 R 可再次查看任务；点 F 打开雷达。" : "按 R 可再次查看任务；按 F 打开雷达。", 4.2);
   }
 }
 
@@ -4245,6 +4615,10 @@ function isMapFocusActive() {
 }
 
 function updatePlayer(delta: number) {
+  if (isWormholeWhiteoutActive()) {
+    playerVelocity.set(0, 0, 0);
+    return 0;
+  }
   if (wormholeFall) {
     return updateWormholeFall(delta);
   }
@@ -4266,7 +4640,7 @@ function updatePlayer(delta: number) {
     return updateElevatorRide(delta, ridingElevator);
   }
   if (ridingRover) {
-    return updateRoverRide(ridingRover);
+    return updateRoverRide(ridingRover, delta);
   }
   if (cameraMode) {
     return updateCameraModePlayer(delta);
@@ -4318,21 +4692,24 @@ function isWormholeControlKey(code: string) {
 }
 
 function wormholeInputVector() {
-  const x = (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0) - (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0);
-  const y = (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0) - (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0);
-  const vector = new THREE.Vector2(x, y);
+  const x = (keyState.has("KeyD") || keyState.has("ArrowRight") ? 1 : 0) - (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0);
+  const vector = new THREE.Vector2(x, 0);
   if (vector.lengthSq() > 1) vector.normalize();
   return vector;
 }
 
+function wormholeDepthInput() {
+  return (keyState.has("KeyS") || keyState.has("ArrowDown") ? 1 : 0) - (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0);
+}
+
 function maybeTriggerWormholeFall() {
-  if (!ancientTreeArchObject || wormholeFall) return;
+  if (!ancientTreeArchObject || wormholeFall || isWormholeWhiteoutActive()) return;
   if (elapsedTime < lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) return;
   if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || dialogueOpen || exitConfirmOpen) return;
 
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
-  const inDoorway = isInsideAncientTreeDoorway(local);
-  if (!inDoorway) {
+  const inPortalCore = isInsideAncientTreePortalCore(local);
+  if (!inPortalCore) {
     wormholeTriggerArmed = true;
     return;
   }
@@ -4343,25 +4720,112 @@ function maybeTriggerWormholeFall() {
     return;
   }
   if (!wormholeTriggerArmed) return;
+  startWormholeWhiteout();
+}
+
+function isInsideAncientTreeDoorway(local: THREE.Vector3, scale = 1) {
+  const lowerDoorWidth = THREE.MathUtils.lerp(34, 24, THREE.MathUtils.smoothstep(local.y, -8, 18));
+  const upperDoorWidth = THREE.MathUtils.lerp(24, 19, THREE.MathUtils.smoothstep(local.y, 50, 92));
+  const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth) * scale;
+  return Math.abs(local.x) < doorwayWidth && local.y > -16 * scale && local.y < 122 * scale && Math.abs(local.z) < 42 * scale;
+}
+
+function isInsideAncientTreePortalCore(local: THREE.Vector3) {
+  const verticalFade = THREE.MathUtils.smoothstep(local.y, 8, 34);
+  const topFade = 1 - THREE.MathUtils.smoothstep(local.y, 62, 92);
+  const coreWidth = THREE.MathUtils.lerp(7.2, ANCIENT_PORTAL_CORE_HALF_WIDTH, Math.min(verticalFade, topFade));
+  return Math.abs(local.x) < coreWidth
+    && local.y > 2
+    && local.y < 96
+    && Math.abs(local.z) < ANCIENT_PORTAL_CORE_HALF_DEPTH;
+}
+
+function startWormholeWhiteout() {
+  if (isWormholeWhiteoutActive() || wormholeFall) return;
+  lastWormholeTriggerAt = elapsedTime;
+  wormholeTriggerArmed = false;
+  wormholeWhiteoutStartedAt = elapsedTime;
+  wormholeWhiteoutUntil = elapsedTime + WORMHOLE_WHITEOUT_SECONDS;
+  wormholeWhiteoutOverlay.setAttribute("aria-hidden", "false");
+  updateWormholeWhiteoutOverlay(0);
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
+  promptBox.textContent = "";
+  promptBox.classList.remove("is-visible");
+  interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("interaction-drawer-open");
+  keyState.clear();
+  playerVelocity.set(0, 0, 0);
+  verticalVelocity = 0;
+  disableActiveJetpackForRespawn();
+  backgroundMusic.volume = 0;
+}
+
+function isWormholeWhiteoutActive() {
+  return elapsedTime < wormholeWhiteoutUntil;
+}
+
+function updateWormholeWhiteout() {
+  if (wormholeWhiteoutUntil === -Infinity || wormholeFall) return;
+  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeWhiteoutStartedAt) / WORMHOLE_WHITEOUT_SECONDS, 0, 1);
+  updateWormholeWhiteoutOverlay(progress);
+  if (elapsedTime < wormholeWhiteoutUntil) return;
+  wormholeWhiteoutUntil = -Infinity;
+  wormholeWhiteoutStartedAt = -Infinity;
+  wormholeWhiteoutOverlay.setAttribute("aria-hidden", "true");
   startWormholeFall();
 }
 
-function isInsideAncientTreeDoorway(local: THREE.Vector3) {
-  const lowerDoorWidth = THREE.MathUtils.lerp(34, 24, THREE.MathUtils.smoothstep(local.y, -8, 18));
-  const upperDoorWidth = THREE.MathUtils.lerp(24, 19, THREE.MathUtils.smoothstep(local.y, 50, 92));
-  const doorwayWidth = Math.max(upperDoorWidth, lowerDoorWidth);
-  return Math.abs(local.x) < doorwayWidth && local.y > -16 && local.y < 122 && Math.abs(local.z) < 42;
+function updateWormholeWhiteoutCamera(delta: number) {
+  cameraObstructionLift = 0;
+  world.root.visible = false;
+  playerRig.visual.visible = false;
+  if (scene.background instanceof THREE.Color) scene.background.set(0x000000);
+  if (scene.fog instanceof THREE.FogExp2) {
+    scene.fog.color.set(0x000003);
+    scene.fog.density = 0.00015;
+  }
+  const progress = wormholeWhiteoutStartedAt === -Infinity
+    ? 0
+    : THREE.MathUtils.clamp((elapsedTime - wormholeWhiteoutStartedAt) / WORMHOLE_WHITEOUT_SECONDS, 0, 1);
+  const previewProgress = THREE.MathUtils.lerp(0.004, 0.075, THREE.MathUtils.smoothstep(progress, 0.28, 1));
+  updateWormholeFallVisual(previewProgress, new THREE.Vector2(), delta);
+}
+
+function updateWormholeWhiteoutOverlay(progress: number) {
+  const scatter = THREE.MathUtils.smoothstep(progress, 0.22, 1);
+  const hazeOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.36, 0.98);
+  const captionOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.2, 0.78);
+  wormholeWhiteoutOverlay.style.setProperty("--wormhole-whiteout-opacity", hazeOpacity.toFixed(3));
+  wormholeWhiteoutCaption.style.opacity = captionOpacity.toFixed(3);
+  const pulse = 1 + Math.sin(elapsedTime * 16) * 0.025;
+  for (const particle of wormholeWhiteoutParticles) {
+    const x = particle.startX + particle.driftX * scatter;
+    const y = particle.startY + particle.driftY * scatter;
+    const scale = Math.max(0.05, (1 - particle.shrink * scatter) * pulse);
+    const opacity = particle.opacity * Math.pow(1 - scatter, 1.35);
+    particle.element.style.transform = `translate(-50%, -50%) translate(${x.toFixed(2)}vw, ${y.toFixed(2)}vh) scale(${scale.toFixed(3)})`;
+    particle.element.style.opacity = opacity.toFixed(3);
+  }
 }
 
 function startWormholeFall() {
   const spawnNormal = planetNormal(SPAWN_X, SPAWN_Z, new THREE.Vector3());
   const spawnForward = planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z, new THREE.Vector3()).sub(spawnNormal).projectOnPlane(spawnNormal).normalize();
+  wormholeWhiteoutUntil = -Infinity;
   lastWormholeTriggerAt = elapsedTime;
   wormholeFall = {
     startedAt: elapsedTime,
+    elapsed: 0,
+    paused: false,
     lastTriggerAt: lastWormholeTriggerAt,
     drift: new THREE.Vector2(),
     velocity: new THREE.Vector2(),
+    depth: 0,
+    depthVelocity: 0,
     spawnNormal,
     spawnForward,
   };
@@ -4378,11 +4842,14 @@ function startWormholeFall() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
+  resetAncientPortal();
   disableActiveJetpackForRespawn();
   scaleGunAiming = false;
   cameraMode = false;
@@ -4396,17 +4863,62 @@ function startWormholeFall() {
   playerAltitudeOffset = 0;
   placePlayerOnPlanet();
   updateWormholeFallVisual(0, wormholeFall.drift, 0);
-  showDialogue("远古巨树拱门", "门洞中的蓝白光吞没了你。火星在远处变成一个红色的点。", 4.2);
+  showDialogue("远古巨树拱门", "门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", 4.2);
+}
+
+function wormholeElapsed() {
+  return wormholeFall ? wormholeFall.elapsed : 0;
+}
+
+function wormholeProgress() {
+  return THREE.MathUtils.clamp(wormholeElapsed() / WORMHOLE_FALL_DURATION, 0, 1);
+}
+
+function wormholeFallSpeedFactor(progress: number) {
+  const organicRamp = THREE.MathUtils.smoothstep(progress, 0.02, WORMHOLE_ORGANIC_RAMP_END);
+  const finalRush = THREE.MathUtils.smoothstep(progress, 0.56, WORMHOLE_ORGANIC_RAMP_END);
+  return THREE.MathUtils.lerp(WORMHOLE_INITIAL_SPEED_FACTOR, 2.85, organicRamp) + finalRush * 1.15;
+}
+
+function wormholeDepthVisualSpeedMultiplier(depth: number) {
+  if (depth < 0) return THREE.MathUtils.lerp(1, 1.5, THREE.MathUtils.clamp(-depth, 0, 1));
+  return THREE.MathUtils.lerp(1, 0.5, THREE.MathUtils.clamp(depth, 0, 1));
+}
+
+function setWormholeFallPaused(paused: boolean) {
+  if (!wormholeFall || wormholeFall.paused === paused) return;
+  wormholeFall.paused = paused;
+  showDialogue("远古巨树拱门", paused ? "黑洞下落暂停。按 Q 继续。" : "黑洞继续下落。", 1.5);
 }
 
 function updateWormholeFall(delta: number) {
   if (!wormholeFall) return 0;
-  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  if (!wormholeFall.paused) {
+    wormholeFall.elapsed = Math.min(WORMHOLE_FALL_DURATION, wormholeFall.elapsed + delta);
+  }
+  const progress = wormholeProgress();
   const input = wormholeInputVector();
-  const targetDrift = input.multiplyScalar(WORMHOLE_DRIFT_LIMIT);
+  const targetDepth = wormholeDepthInput();
+  const depthPull = targetDepth - wormholeFall.depth;
+  const pushingDepthOutward = Math.sign(depthPull) === Math.sign(wormholeFall.depth) && Math.abs(targetDepth) > Math.abs(wormholeFall.depth);
+  const depthResistance = pushingDepthOutward ? 1 - THREE.MathUtils.smoothstep(Math.abs(wormholeFall.depth), 0.55, 1) : 1;
+  wormholeFall.depthVelocity += depthPull * WORMHOLE_DEPTH_CONTROL_STRENGTH * depthResistance * delta;
+  wormholeFall.depthVelocity *= Math.exp(-WORMHOLE_DEPTH_DAMPING * delta);
+  wormholeFall.depthVelocity = THREE.MathUtils.clamp(wormholeFall.depthVelocity, -WORMHOLE_DEPTH_MAX_SPEED, WORMHOLE_DEPTH_MAX_SPEED);
+  wormholeFall.depth = THREE.MathUtils.clamp(wormholeFall.depth + wormholeFall.depthVelocity * delta, -1, 1);
+  if (Math.abs(targetDepth) < 0.001 && Math.abs(wormholeFall.depth) < 0.004 && Math.abs(wormholeFall.depthVelocity) < 0.02) {
+    wormholeFall.depth = 0;
+    wormholeFall.depthVelocity = 0;
+  }
+
+  const floatCenter = wormholeFloatingCenter();
+  const targetDrift = input
+    .multiplyScalar(WORMHOLE_DRIFT_LIMIT)
+    .addScaledVector(floatCenter, WORMHOLE_DRIFT_LIMIT);
   const boundaryResistance = 1 - THREE.MathUtils.smoothstep(wormholeFall.drift.length(), WORMHOLE_DRIFT_LIMIT * 0.55, WORMHOLE_DRIFT_LIMIT);
   wormholeFall.velocity.addScaledVector(targetDrift.clone().sub(wormholeFall.drift), WORMHOLE_DRIFT_CONTROL_STRENGTH * boundaryResistance * delta);
-  wormholeFall.velocity.addScaledVector(wormholeFall.drift, -WORMHOLE_DRIFT_CENTER_PULL * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFall.drift.clone().sub(floatCenter.multiplyScalar(WORMHOLE_DRIFT_LIMIT * 0.45)), -WORMHOLE_DRIFT_CENTER_PULL * delta);
+  wormholeFall.velocity.addScaledVector(wormholeFloatingTurbulence(), WORMHOLE_FLOAT_CENTER_FORCE * delta);
   wormholeFall.velocity.multiplyScalar(Math.exp(-WORMHOLE_DRIFT_DAMPING * delta));
   wormholeFall.drift.addScaledVector(wormholeFall.velocity, delta);
   const driftLength = wormholeFall.drift.length();
@@ -4422,6 +4934,24 @@ function updateWormholeFall(delta: number) {
     return 0;
   }
   return THREE.MathUtils.lerp(35, 10, progress);
+}
+
+function wormholeFloatingCenter() {
+  if (!wormholeFall) return new THREE.Vector2();
+  const t = elapsedTime - wormholeFall.startedAt;
+  return new THREE.Vector2(
+    Math.sin(t * 0.74 + 0.8) * WORMHOLE_FLOAT_CENTER_RADIUS + Math.sin(t * 1.31 + 2.2) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.34,
+    Math.cos(t * 0.61 + 1.4) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.82 + Math.sin(t * 1.08 + 3.6) * WORMHOLE_FLOAT_CENTER_RADIUS * 0.28,
+  );
+}
+
+function wormholeFloatingTurbulence() {
+  if (!wormholeFall) return new THREE.Vector2();
+  const t = elapsedTime - wormholeFall.startedAt;
+  return new THREE.Vector2(
+    Math.sin(t * 1.9 + 0.35) + Math.sin(t * 3.7 + 1.8) * 0.34,
+    Math.cos(t * 1.6 + 2.15) + Math.sin(t * 3.2 + 0.4) * 0.28,
+  );
 }
 
 function finishWormholeFall() {
@@ -4444,6 +4974,7 @@ function finishWormholeFall() {
   orbitYawOffset = 0;
   camera.fov = 54;
   camera.updateProjectionMatrix();
+  awardRepeatableScore(SCORE_WORMHOLE_TRAVERSAL, localizeText("穿越时空之门"));
   messageUntil = Math.max(messageUntil, performance.now() + 2200);
   showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
   window.setTimeout(() => {
@@ -4712,11 +5243,27 @@ function updateFootball(delta: number) {
     return;
   }
 
+  if (footballCarried) {
+    updateCarriedFootball(delta);
+    rememberRoverPositions();
+    return;
+  }
+
   applyPlayerFootballCollision();
   applyRoverFootballCollisions(delta);
   integrateFootballMotion(delta);
   resolveFootballStaticCollisions();
   checkFootballGoal();
+  updateFootballVisual(football, delta);
+}
+
+function updateCarriedFootball(delta: number) {
+  const carryNormal = playerNormal.clone().addScaledVector(playerForward, FOOTBALL_CARRY_FORWARD_DISTANCE / PLANET_RADIUS).normalize();
+  football.normal.copy(carryNormal);
+  football.velocity.set(0, 0, 0);
+  football.altitude = FOOTBALL_CARRY_ALTITUDE;
+  football.verticalVelocity = 0;
+  football.lastPlayerKickAt = elapsedTime;
   updateFootballVisual(football, delta);
 }
 
@@ -4883,6 +5430,8 @@ function checkFootballGoal() {
 }
 
 function respawnFootball() {
+  footballCarried = false;
+  activeFootball = false;
   football.normal.copy(planetNormal(FOOTBALL_SPAWN_X, FOOTBALL_SPAWN_Z, new THREE.Vector3()));
   football.velocity.set(0, 0, 0);
   football.altitude = FOOTBALL_REST_ALTITUDE;
@@ -4890,6 +5439,37 @@ function respawnFootball() {
   football.lastPlayerKickAt = elapsedTime + 0.35;
   football.ball.quaternion.identity();
   updateFootballVisual(football, 0);
+}
+
+function findActiveFootball() {
+  if (!started || footballCarried || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+    return false;
+  }
+  return surfaceDistanceBetween(playerNormal, football.normal) < FOOTBALL_PICKUP_RADIUS;
+}
+
+function pickupFootball() {
+  if (footballCarried || !activeFootball) return;
+  footballCarried = true;
+  activeFootball = false;
+  updateCarriedFootball(0);
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  showDialogue("火星足球", "已拾取。按 Q 放下。", 1.8);
+}
+
+function dropFootball(showMessage = true) {
+  if (!footballCarried) return;
+  const dropNormal = playerNormal.clone().addScaledVector(playerForward, FOOTBALL_CARRY_FORWARD_DISTANCE / PLANET_RADIUS).normalize();
+  footballCarried = false;
+  activeFootball = false;
+  football.normal.copy(dropNormal);
+  football.velocity.set(0, 0, 0);
+  football.altitude = FOOTBALL_REST_ALTITUDE;
+  football.verticalVelocity = 0;
+  football.lastPlayerKickAt = elapsedTime + 0.25;
+  updateFootballVisual(football, 0);
+  if (showMessage) showDialogue("火星足球", "已放下。", 1.4);
 }
 
 function rememberRoverPositions() {
@@ -4926,10 +5506,14 @@ function updateWormholeCamera(delta: number) {
   if (!wormholeFall) return;
   cameraObstructionLift = 0;
   world.root.visible = false;
-  const progress = THREE.MathUtils.clamp((elapsedTime - wormholeFall.startedAt) / WORMHOLE_FALL_DURATION, 0, 1);
+  const progress = wormholeProgress();
+  const depth = wormholeFall.depth;
   const normal = playerNormal.clone();
   const right = playerForward.clone().cross(normal).normalize();
-  const driftOffset = right.clone().multiplyScalar(wormholeFall.drift.x * 0.24).addScaledVector(playerForward, wormholeFall.drift.y * 0.24);
+  const driftOffset = right
+    .clone()
+    .multiplyScalar(wormholeFall.drift.x * 0.24 * WORMHOLE_DRIFT_VISUAL_MULTIPLIER)
+    .addScaledVector(playerForward, wormholeFall.drift.y * 0.24 * WORMHOLE_DRIFT_VISUAL_MULTIPLIER);
   const isFirstPerson = cameraDistance <= 0.9;
 
   if (scene.background instanceof THREE.Color) {
@@ -4951,14 +5535,17 @@ function updateWormholeCamera(delta: number) {
     playerRig.visual.visible = false;
   } else {
     const distanceT = THREE.MathUtils.smoothstep(progress, 0, 0.68);
+    const forwardDepth = THREE.MathUtils.clamp(-depth, 0, 1);
+    const backDepth = THREE.MathUtils.clamp(depth, 0, 1);
+    const cameraDolly = THREE.MathUtils.lerp(1, 1.55, forwardDepth) * THREE.MathUtils.lerp(1, 1 - 0.41 * WORMHOLE_DEPTH_BACK_DOLLY_MULTIPLIER, backDepth);
     const desired = player.position
       .clone()
-      .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT))
-      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.72, 5.06, distanceT));
+      .addScaledVector(normal, THREE.MathUtils.lerp(3.14, 2.88, distanceT) * cameraDolly)
+      .addScaledVector(playerForward, -THREE.MathUtils.lerp(5.72, 5.06, distanceT) * cameraDolly);
     const lookTarget = player.position
       .clone()
       .addScaledVector(normal, THREE.MathUtils.lerp(0.72, 0.52, distanceT))
-      .addScaledVector(playerForward, 0.04)
+      .addScaledVector(playerForward, WORMHOLE_PLAYER_SCREEN_UP_OFFSET)
       .add(driftOffset.clone().multiplyScalar(1.18));
     const initialSnap = elapsedTime - wormholeFall.startedAt < 0.12;
     camera.position.lerp(desired, initialSnap ? 1 : 1 - Math.pow(0.00004, delta));
@@ -4973,7 +5560,11 @@ function updateWormholeCamera(delta: number) {
 function updateWormholePlayerPose(delta: number) {
   const targetRotation = wormholeFall ? -Math.PI / 2 : 0;
   playerRig.visual.rotation.x = THREE.MathUtils.lerp(playerRig.visual.rotation.x, targetRotation, 1 - Math.pow(0.0004, delta));
-  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * 1.42 : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
+  const depth = wormholeFall?.depth ?? 0;
+  const perspectiveScale = depth < 0
+    ? THREE.MathUtils.lerp(1, 0.7, THREE.MathUtils.clamp(-depth, 0, 1))
+    : THREE.MathUtils.lerp(1, 1.3, THREE.MathUtils.clamp(depth, 0, 1));
+  player.scale.lerp(new THREE.Vector3().setScalar(wormholeFall ? PLAYER_BASE_SCALE * WORMHOLE_PLAYER_SCALE_MULTIPLIER * perspectiveScale : PLAYER_BASE_SCALE), 1 - Math.pow(0.0005, delta));
   if (wormholeFall) {
     playerRig.visual.position.y = 1.05 + Math.sin(elapsedTime * 9.5) * 0.035;
     playerRig.leftArm.rotation.x = 0.42 + Math.sin(elapsedTime * 6.7) * 0.04;
@@ -5004,6 +5595,11 @@ function updateCamera(delta: number) {
 
   if (wormholeFall) {
     updateWormholeCamera(delta);
+    return;
+  }
+
+  if (isWormholeWhiteoutActive()) {
+    updateWormholeWhiteoutCamera(delta);
     return;
   }
 
@@ -5041,10 +5637,10 @@ function updateCamera(delta: number) {
     if (exitDistance >= exitFrontCamera.releaseDistance && !holdUntilElevatorLands) {
       exitFrontCamera = null;
     } else {
-      const distance = Math.max(cameraDistance, 8);
+      const distance = Math.max(cameraDistance, exitFrontCamera.distance);
       const target = player.position.clone().addScaledVector(normal, 1.45);
       const frontDirection = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
-      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, 2.2);
+      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, exitFrontCamera.lift);
       camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
       camera.up.copy(normal);
       camera.lookAt(target);
@@ -5118,9 +5714,9 @@ function placePlayerOnPlanet() {
   placeObjectOnPlanetNormal(player, playerNormal, PLAYER_ALTITUDE + playerAltitudeOffset, headingFromForward(playerNormal, playerForward));
 }
 
-function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number) {
-  exitFrontCamera = { origin: origin.clone(), releaseDistance };
-  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
+function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number, lift = 2.2, distance = 8) {
+  exitFrontCamera = { origin: origin.clone(), releaseDistance, lift, distance };
+  cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE, distance);
   orbitYawOffset = 0;
 }
 
@@ -5132,6 +5728,9 @@ function resetPlayerToSpawn() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeAncientPortal = false;
+  activeFootball = false;
+  footballCarried = false;
   world.habitatDoor.occupied = false;
   world.habitatDoor.interiorScene.visible = false;
   setHabitatInteriorMode(false);
@@ -5164,6 +5763,8 @@ function respawnInsideHabitat() {
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
+  activeFootball = false;
+  footballCarried = false;
   insideGreenhouse = false;
   world.greenhouseDoor.occupied = false;
   world.greenhouseDoor.doorPanels.visible = true;
@@ -5209,7 +5810,7 @@ function resetFufu() {
   fufuNextWanderAt = 0;
   fufu.visible = true;
   fufuNormal.copy(world.fufuRescueSite.normal);
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, world.fufuRescueSite.yaw);
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, world.fufuRescueSite.yaw);
   fufuForward.copy(new THREE.Vector3(0, 0, -1).applyQuaternion(fufu.quaternion).projectOnPlane(fufuNormal).normalize());
   fufuRestForward.copy(fufuForward);
 }
@@ -5259,7 +5860,7 @@ function updateFufu(delta: number) {
   if (playerDistance > 28) {
     fufuNormal.copy(targetNormal);
     fufuForward.copy(playerForward);
-    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
     settleFufuAnimation(delta);
     return;
   }
@@ -5267,7 +5868,7 @@ function updateFufu(delta: number) {
   if (targetDistance < 1.15 && playerDistance < 7.5) {
     const relaxedForward = playerForward.clone().projectOnPlane(fufuNormal).normalize();
     turnFufuToward(relaxedForward, delta, 0.7);
-    placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+    placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
     settleFufuAnimation(delta);
     return;
   }
@@ -5282,7 +5883,7 @@ function updateFufu(delta: number) {
   const stepAngle = Math.min((targetSpeed * delta) / PLANET_RADIUS, Math.acos(dot));
   fufuNormal.multiplyScalar(Math.cos(stepAngle)).addScaledVector(tangent, Math.sin(stepAngle)).normalize();
   turnFufuToward(tangent, delta, 1.8);
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
   fufuSpeed = THREE.MathUtils.lerp(fufuSpeed, targetSpeed, 1 - Math.pow(0.002, delta));
 }
 
@@ -5298,7 +5899,7 @@ function updateWaitingFufu(delta: number) {
     : fufuRestForward.clone().applyAxisAngle(fufuNormal, Math.sin(elapsedTime * 0.48) * 0.82 + Math.sin(elapsedTime * 1.05) * 0.16);
   if (lookDirection.lengthSq() > 0.000001) turnFufuToward(lookDirection.normalize(), delta, seesPlayer ? 1.2 : 0.48);
 
-  placeObjectOnPlanetNormal(fufu, fufuNormal, 0.26, headingFromForward(fufuNormal, fufuForward));
+  placeObjectOnPlanetNormal(fufu, fufuNormal, FUFU_SURFACE_ALTITUDE, headingFromForward(fufuNormal, fufuForward));
   settleFufuAnimation(delta);
 }
 
@@ -5355,14 +5956,16 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 }
 
 function updateMissionState() {
-  if (wormholeFall) {
+  if (wormholeFall || isWormholeWhiteoutActive()) {
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
     activeHabitatDoor = null;
     activeGreenhouseDoor = null;
+    activeAncientPortal = false;
     activeRobot = null;
     activeFufu = false;
+    activeFootball = false;
     activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
@@ -5376,14 +5979,16 @@ function updateMissionState() {
     dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
     return;
   }
-  if (dialogueOpen) {
+  if (isFocusOverlayActive()) {
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
     activeHabitatDoor = null;
     activeGreenhouseDoor = null;
+    activeAncientPortal = false;
     activeRobot = null;
     activeFufu = false;
+    activeFootball = false;
     activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
@@ -5394,7 +5999,28 @@ function updateMissionState() {
     interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
     interactionChoice.setAttribute("aria-hidden", "true");
     document.body.classList.remove("interaction-drawer-open");
+    if (dialogueOpen) {
+      suppressTransientInfoWindows();
+    }
     dialogueBox.classList.remove("is-visible");
+    return;
+  }
+  if (world.habitatDoor.occupied) {
+    activeInteractable = null;
+    activeExplorable = null;
+    activeElevator = null;
+    activeHabitatDoor = findActiveHabitatDoor();
+    activeGreenhouseDoor = null;
+    activeAncientPortal = false;
+    activeRobot = null;
+    activeFufu = false;
+    activeFootball = false;
+    activeOxygenSupply = null;
+    activeRideRover = null;
+    interactionActions = buildInteractionActions();
+    if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
+    updateInteractionPrompts();
+    dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
     return;
   }
   activeInteractable = null;
@@ -5402,8 +6028,10 @@ function updateMissionState() {
   activeElevator = findActiveElevator();
   activeHabitatDoor = findActiveHabitatDoor();
   activeGreenhouseDoor = findActiveGreenhouseDoor();
+  activeAncientPortal = findActiveAncientPortal();
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = ridingRover;
   let bestDistance = Infinity;
@@ -5426,11 +6054,13 @@ function updateMissionState() {
     awardBuildingExploration(activeExplorable);
   }
   activeFufu = findActiveFufu();
+  activeFootball = findActiveFootball();
   activeRobot = findActiveRobot();
   activeOxygenSupply = findActiveOxygenSupply();
   if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
   if (hasMotherCallInfoActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "motherCallAccept");
+  if (hasAncientPortalPaymentActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "ancientPortalPay");
   if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
   updateInteractionPrompts();
   dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
@@ -5438,21 +6068,36 @@ function updateMissionState() {
 
 function buildInteractionActions() {
   const actions: InteractionAction[] = [];
-  if (wormholeFall || isFlightActive()) return actions;
+  if (wormholeFall || isWormholeWhiteoutActive()) return actions;
+  if (isFlightActive()) {
+    if (activeAncientPortal) {
+      actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
+      actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
+    }
+    return actions;
+  }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
-  if (world.habitatDoor.occupied && cameraPhotos.length > 0) actions.push({ id: "photoWall", label: localizeText("查看照片墙") });
+  if (world.habitatDoor.occupied && cameraPhotos.length > 0 && isNearHabitatPhotoWall()) actions.push({ id: "photoWall", label: localizeText("查看美好瞬间") });
   if (activeGreenhouseDoor) actions.push({ id: "greenhouse", label: localizeText(insideGreenhouse ? "离开温室生态舱" : "进入温室生态舱") });
-  if (activeInteractable && !(activeHabitatDoor && activeInteractable.id === "habitatCheck")) actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
+  if (activeAncientPortal) {
+    actions.push({ id: "ancientPortalConsider", label: localizeText("考虑一下") });
+    actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
+  }
+  if (activeInteractable && activeInteractable.id !== "habitatCheck") actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
+  if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
-  if (pendingMotherCall) {
+  if (pendingMotherCall && !isInsideInteriorSpace()) {
     actions.push({ id: "motherCallReject", label: tr("info.reject") });
     actions.push({ id: "motherCallAccept", label: tr("info.accept") });
   }
-  return prioritizeInteractionActions(actions).slice(0, 2);
+  const prioritized = prioritizeInteractionActions(actions);
+  const hasTwoButtonChoice = prioritized.some((action) => action.id === "motherCallReject" || action.id === "motherCallAccept" || action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
+  const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
+  return prioritized.slice(0, visibleActionLimit);
 }
 
 function prioritizeInteractionActions(actions: InteractionAction[]) {
@@ -5470,11 +6115,14 @@ function interactionActionPriority(action: InteractionAction) {
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
+    ancientPortalConsider: 1.2,
+    ancientPortalPay: 1.2,
     hitchRide: 1.5,
     photoWall: 2,
     mission: 2,
     robot: 3,
     fufu: 3,
+    footballPickup: 3,
   };
   return priority[action.id];
 }
@@ -5508,6 +6156,8 @@ function updateInteractionPrompts() {
 
 function singleInteractionPromptText(action: InteractionAction) {
   if (isMotherCallInfoAction(action)) return action.label;
+  if (action.id === "photoWall") return localizeText("这里保存着你拍下的火星瞬间，按 E 查看。");
+  if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
   return `E ${action.label}`;
 }
 
@@ -5517,6 +6167,29 @@ function isMotherCallInfoAction(action: InteractionAction) {
 
 function hasMotherCallInfoActions() {
   return interactionActions.some(isMotherCallInfoAction);
+}
+
+function isAncientPortalPaymentAction(action: InteractionAction) {
+  return action.id === "ancientPortalConsider" || action.id === "ancientPortalPay";
+}
+
+function hasAncientPortalPaymentActions() {
+  return interactionActions.some(isAncientPortalPaymentAction);
+}
+
+function isInfoChoiceAction(action: InteractionAction) {
+  return isMotherCallInfoAction(action) || isAncientPortalPaymentAction(action);
+}
+
+function hasInfoChoiceActions() {
+  return interactionActions.some(isInfoChoiceAction);
+}
+
+function infoChoiceCopy() {
+  if (hasAncientPortalPaymentActions()) {
+    return { title: localizeText("时空之门"), detail: localizeText("你是否愿意为穿越时空之门支付50个火星币？") };
+  }
+  return { title: tr("info.title"), detail: tr("info.motherCall") };
 }
 
 function renderInteractionChoice() {
@@ -5534,16 +6207,17 @@ function renderInteractionChoice() {
     return;
   }
   document.body.classList.remove("interaction-drawer-open");
-  const isInfoChoice = hasMotherCallInfoActions();
+  const isInfoChoice = hasInfoChoiceActions();
   interactionChoice.classList.remove("is-touch-entry", "is-drawer-open");
   interactionChoice.classList.toggle("is-info-choice", isInfoChoice);
   if (isInfoChoice) {
     const infoHeader = document.createElement("div");
     infoHeader.className = "info-choice-head";
+    const copy = infoChoiceCopy();
     const title = document.createElement("strong");
-    title.textContent = tr("info.title");
+    title.textContent = copy.title;
     const detail = document.createElement("span");
-    detail.textContent = tr("info.motherCall");
+    detail.textContent = copy.detail;
     infoHeader.append(title, detail);
     interactionChoice.appendChild(infoHeader);
   }
@@ -5564,8 +6238,8 @@ function renderInteractionChoice() {
 }
 
 function renderTouchInteractionChoice() {
-  if (hasMotherCallInfoActions()) {
-    renderMotherCallInfoChoice();
+  if (hasInfoChoiceActions()) {
+    renderInfoChoice();
     return;
   }
   interactionChoice.classList.remove("is-info-choice");
@@ -5618,17 +6292,18 @@ function renderTouchInteractionChoice() {
   interactionChoice.setAttribute("aria-hidden", "false");
 }
 
-function renderMotherCallInfoChoice() {
+function renderInfoChoice() {
   interactionChoice.classList.remove("is-drawer-open");
   interactionChoice.classList.add("is-touch-entry", "is-info-choice");
   document.body.classList.remove("interaction-drawer-open");
 
   const infoHeader = document.createElement("div");
   infoHeader.className = "info-choice-head";
+  const copy = infoChoiceCopy();
   const title = document.createElement("strong");
-  title.textContent = tr("info.title");
+  title.textContent = copy.title;
   const detail = document.createElement("span");
-  detail.textContent = tr("info.motherCall");
+  detail.textContent = copy.detail;
   infoHeader.append(title, detail);
   interactionChoice.appendChild(infoHeader);
 
@@ -5661,7 +6336,6 @@ function getInteractionChoiceSignature() {
 
 function interact() {
   if (ridingRover) {
-    exitRoverRide();
     return;
   }
   if (wormholeFall || isFlightActive()) return;
@@ -5701,12 +6375,24 @@ function executeSelectedInteraction() {
     else enterGreenhouse(activeGreenhouseDoor);
     return;
   }
+  if (action.id === "ancientPortalConsider") {
+    dismissAncientPortalPrompt();
+    return;
+  }
+  if (action.id === "ancientPortalPay") {
+    payAncientPortal();
+    return;
+  }
   if (action.id === "photoWall") {
     openPhotoViewer();
     return;
   }
   if (action.id === "fufu") {
     rescueFufu();
+    return;
+  }
+  if (action.id === "footballPickup") {
+    pickupFootball();
     return;
   }
   if (action.id === "robot" && activeRobot) {
@@ -5724,16 +6410,13 @@ function executeSelectedInteraction() {
     return;
   }
   if (action.id === "motherCallReject" && pendingMotherCall) {
-    pendingMotherCall = null;
-    introCallQueued = false;
-    motherCallRetryAt = elapsedTime + 8;
-    setCurrentMissionText();
-    showDialogue("信息栏", "已拒绝接收。史蒂夫将在稍后重试。", 3);
+    deferPendingMotherCall(MOTHER_CALL_DELAY_RETRY_SECONDS, "已设为稍后接收。史蒂夫将在2分钟后重试。");
     return;
   }
   if (action.id === "motherCallAccept" && pendingMotherCall) {
     const scene = pendingMotherCall;
     pendingMotherCall = null;
+    pendingMotherCallQueuedAt = -Infinity;
     openDialogueScene(scene);
     return;
   }
@@ -5797,9 +6480,85 @@ function interactMission(interactable: Interactable) {
   }
 }
 
+function findActiveAncientPortal() {
+  if (!started || wormholeFall || isWormholeWhiteoutActive() || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+    return false;
+  }
+  if (!ancientTreeArchObject || isAncientPortalOpen()) return false;
+  if (coins < ANCIENT_PORTAL_COST_COINS) return false;
+  const inPaymentZone = isInsideAncientTreePortalPaymentZone();
+  if (!inPaymentZone) {
+    ancientPortalPromptDismissedInZone = false;
+    return false;
+  }
+  return !ancientPortalPromptDismissedInZone;
+}
+
+function isInsideAncientTreePortalPaymentZone() {
+  if (!ancientTreeArchObject) return false;
+  const local = ancientTreeArchObject.worldToLocal(player.position.clone());
+  if (isInsideAncientTreeDoorway(local, ANCIENT_PORTAL_PROMPT_SCALE)) return true;
+  if (!isFlightActive()) return false;
+  const doorwayFootprint = Math.max(34, 24) * ANCIENT_PORTAL_PROMPT_SCALE;
+  return Math.abs(local.x) < doorwayFootprint
+    && local.y > -16 * ANCIENT_PORTAL_PROMPT_SCALE
+    && local.y < ANCIENT_PORTAL_FLIGHT_PROMPT_MAX_HEIGHT
+    && Math.abs(local.z) < 42 * ANCIENT_PORTAL_PROMPT_SCALE;
+}
+
+function isInsideAncientTreeArchDiscoveryRange() {
+  if (!ancientTreeArchObject) return false;
+  const position = new THREE.Vector3();
+  ancientTreeArchObject.getWorldPosition(position);
+  return position.distanceTo(player.position) <= ANCIENT_TREE_ARCH_DISCOVERY_RADIUS;
+}
+
+function isAncientPortalOpen() {
+  const openedAt = Number(world.ancientTreePortal.userData.openedAt ?? -Infinity);
+  return elapsedTime - openedAt >= 0 && elapsedTime - openedAt < ANCIENT_PORTAL_ACTIVE_SECONDS;
+}
+
+function dismissAncientPortalPrompt(showFeedback = true) {
+  ancientPortalPromptDismissedInZone = true;
+  activeAncientPortal = false;
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
+  interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open", "is-info-choice");
+  interactionChoice.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("interaction-drawer-open");
+  if (showFeedback) showDialogue("时空之门", "已取消。离开门洞区域后可再次选择。", 1.8);
+}
+
+function payAncientPortal() {
+  if (!activeAncientPortal || isAncientPortalOpen()) return;
+  if (!spendCoins(ANCIENT_PORTAL_COST_COINS)) {
+    dismissAncientPortalPrompt(false);
+    return;
+  }
+  world.ancientTreePortal.userData.openedAt = elapsedTime;
+  world.ancientTreePortal.userData.portalStrength = 0.2;
+  world.ancientTreePortal.visible = true;
+  ancientPortalPromptDismissedInZone = true;
+  activeAncientPortal = false;
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  interactionActions = [];
+  interactionChoiceSignature = "";
+  showDialogue("时空之门", "已支付 50 金币。时空之门已开启。", 2.6);
+}
+
+function resetAncientPortal() {
+  world.ancientTreePortal.userData.openedAt = -Infinity;
+  world.ancientTreePortal.userData.portalStrength = 0;
+  world.ancientTreePortal.visible = false;
+  activeAncientPortal = false;
+  ancientPortalPromptDismissedInZone = false;
+}
+
 function findActiveFufu() {
   if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
-  return fufu.position.distanceTo(player.position) < 3.4;
+  return fufu.position.distanceTo(player.position) < 2.6;
 }
 
 function rescueFufu() {
@@ -5807,7 +6566,8 @@ function rescueFufu() {
   activeFufu = false;
   fufuForward.copy(playerForward);
   fufuSideStep = "medical";
-  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。", 5.6);
+  awardTaskScore("side_fufu_rescue", "找到福福", SCORE_FUFU_RESCUE);
+  showDialogue("福福", "喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。生命支持系统同步福福体征后，氧气消耗降低25%。", 6.4);
   setCurrentMissionText();
 }
 
@@ -5859,6 +6619,7 @@ function resetRunUiAfterRespawn() {
   activeGreenhouseDoor = null;
   activeRobot = null;
   activeFufu = false;
+  activeFootball = false;
   activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
@@ -5894,7 +6655,8 @@ function updateSuitOxygen(delta: number) {
   if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
-  const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1);
+  const fufuOxygenBonus = fufuRescued ? FUFU_OXYGEN_DRAIN_MULTIPLIER : 1;
+  const oxygenDrain = SUIT_OXYGEN_WALK_DRAIN_PER_SECOND * (sprinting ? SUIT_OXYGEN_SPRINT_MULTIPLIER : 1) * fufuOxygenBonus;
   suitOxygen = Math.max(0, suitOxygen - oxygenDrain * delta);
   if (moving) {
     const staminaDrain = !grounded ? STAMINA_JUMP_DRAIN_PER_SECOND : sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_WALK_DRAIN_PER_SECOND;
@@ -5931,10 +6693,19 @@ function respawnAfterStaminaDepleted() {
 
 function findActiveHabitatDoor() {
   const door = world.habitatDoor;
-  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, -0.48, door.occupied ? -2.18 : -2.76));
+  if (door.occupied) {
+    const localPlayer = door.root.worldToLocal(player.position.clone());
+    return localPlayer.z < -1.12 && Math.abs(localPlayer.x) < 1.34 ? door : null;
+  }
+  const doorWorld = door.root.localToWorld(new THREE.Vector3(0, -0.48, -2.76));
   const distance = doorWorld.distanceTo(player.position);
-  if (door.occupied) return door;
   return distance < door.promptRadius ? door : null;
+}
+
+function isNearHabitatPhotoWall() {
+  if (!world.habitatDoor.occupied) return false;
+  const localPlayer = world.habitatDoor.root.worldToLocal(player.position.clone());
+  return localPlayer.x > 3.75 && Math.abs(localPlayer.z) < 1.55;
 }
 
 function findActiveRobot() {
@@ -5952,7 +6723,7 @@ function findActiveRobot() {
       nearestRobot = rover;
     }
   }
-  return nearestRobot && nearestDistance < 4.2 ? nearestRobot : null;
+  return nearestRobot && nearestDistance < 2.35 ? nearestRobot : null;
 }
 
 function robotConversationId(robot: THREE.Group) {
@@ -5991,6 +6762,15 @@ function isRideableRover(rover: THREE.Group) {
 
 function enterRoverRide(rover: THREE.Group) {
   if (!isRideableRover(rover)) return;
+  if (coins < ROVER_RIDE_COST_COINS) {
+    showDialogue("车辆", "金币不足，搭便车需要 10 个金币。", 2.4);
+    pulseRewardReadout(coinReadout, true);
+    playPenaltySound();
+    return;
+  }
+  if (footballCarried) dropFootball(false);
+  if (!spendCoins(ROVER_RIDE_COST_COINS)) return;
+  awardRepeatableScore(SCORE_ROVER_RIDE, localizeText("搭便车"));
   ridingRover = rover;
   activeRideRover = rover;
   exitFrontCamera = null;
@@ -6002,10 +6782,10 @@ function enterRoverRide(rover: THREE.Group) {
   verticalVelocity = 0;
   grounded = true;
   setFirstPersonCamera();
-  updateRoverRide(rover);
+  updateRoverRide(rover, 0);
   closeTouchInteractionDrawer();
   interactionChoiceOpen = false;
-  showDialogue("车辆", "已搭上巡检车辆。乘车期间不消耗氧气和体能，按 E 可随时下车。", 3.2);
+  showDialogue("车辆", "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", 3.2);
 }
 
 function exitRoverRide() {
@@ -6034,7 +6814,7 @@ function exitRoverRide() {
   showDialogue("车辆", "已下车。", 1.8);
 }
 
-function updateRoverRide(rover: THREE.Group) {
+function updateRoverRide(rover: THREE.Group, delta = 0) {
   if (!rover.parent || !isRideableRover(rover)) {
     ridingRover = null;
     activeRideRover = null;
@@ -6047,7 +6827,17 @@ function updateRoverRide(rover: THREE.Group) {
   const roverForward = new THREE.Vector3(0, 0, -1).transformDirection(rover.matrixWorld).projectOnPlane(roverUp);
   player.position.copy(seatWorld);
   playerNormal.copy(roverUp);
-  if (roverForward.lengthSq() > 0.000001) playerForward.copy(roverForward.normalize());
+  let fallbackForward = roverForward.lengthSq() > 0.000001 ? roverForward.normalize() : new THREE.Vector3(0, 0, -1).projectOnPlane(roverUp);
+  if (fallbackForward.lengthSq() < 0.000001) fallbackForward = new THREE.Vector3(1, 0, 0).projectOnPlane(roverUp);
+  fallbackForward.normalize();
+  playerForward.projectOnPlane(playerNormal);
+  if (playerForward.lengthSq() < 0.000001) playerForward.copy(fallbackForward);
+  else playerForward.normalize();
+  if (scaleGunAiming) {
+    updateScaleGunAimInput(delta);
+  } else {
+    updateRoverPassengerLook(delta);
+  }
   player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
   player.rotateY(headingFromForward(playerNormal, playerForward));
   playerVelocity.set(0, 0, 0);
@@ -6055,6 +6845,22 @@ function updateRoverRide(rover: THREE.Group) {
   verticalVelocity = 0;
   grounded = true;
   return 0;
+}
+
+function updateRoverPassengerLook(delta: number) {
+  let turnInput = 0;
+  if (keyState.has("KeyA") || keyState.has("ArrowLeft")) turnInput += 1;
+  if (keyState.has("KeyD") || keyState.has("ArrowRight")) turnInput -= 1;
+  if (Math.abs(turnInput) > 0.001) {
+    playerForward.applyAxisAngle(playerNormal, turnInput * 1.35 * delta).projectOnPlane(playerNormal).normalize();
+  }
+  if (cameraMode) return;
+  let pitchInput = 0;
+  if (keyState.has("KeyW") || keyState.has("ArrowUp")) pitchInput += 1;
+  if (keyState.has("KeyS") || keyState.has("ArrowDown")) pitchInput -= 1;
+  if (Math.abs(pitchInput) > 0.001) {
+    pitch = THREE.MathUtils.clamp(pitch + pitchInput * 0.72 * delta, 0.12, 0.92);
+  }
 }
 
 function findActiveGreenhouseDoor() {
@@ -6136,14 +6942,14 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   door.interiorLight.visible = false;
   setHabitatInteriorMode(false);
   resetVitals();
-  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -1.18, -3.15));
+  const exitWorld = door.root.localToWorld(new THREE.Vector3(0, -0.18, -6.85));
   playerNormal.copy(exitWorld.normalize());
-  const faceAway = door.root.localToWorld(new THREE.Vector3(0, -1.18, -4.3)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
+  const faceAway = door.root.localToWorld(new THREE.Vector3(0, -0.18, -8.2)).normalize().sub(playerNormal).projectOnPlane(playerNormal).normalize();
   if (faceAway.lengthSq() > 0.0001) playerForward.copy(faceAway);
   cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
-  startExitFrontCamera(exitWorld, 16);
+  startExitFrontCamera(player.position, 22, 4.8, 11);
   showDialogue("居住舱", "外舱门已打开。氧气背包与体能 100%。", 2.8);
 }
 
@@ -6487,27 +7293,8 @@ function addLabel(landmark: Landmark): LabelAnchor {
 }
 
 function updateLabels() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
   labels.forEach((anchor) => {
-    const worldPosition = new THREE.Vector3();
-    anchor.object.getWorldPosition(worldPosition);
-    worldPosition.addScaledVector(worldPosition.clone().normalize(), 4.2);
-    const distance = worldPosition.distanceTo(player.position);
-    const projected = worldPosition.clone().project(camera);
-    const screenY = ((-projected.y + 1) / 2) * height;
-    const visible =
-      started &&
-      !(anchor.object === fufu && fufuRescued) &&
-      distance < anchor.distance &&
-      projected.z > -1 &&
-      projected.z < 1 &&
-      Math.abs(projected.x) < 1.15 &&
-      Math.abs(projected.y) < 1.15 &&
-      !(width < 560 && screenY < 170);
-    anchor.element.style.left = `${((projected.x + 1) / 2) * width}px`;
-    anchor.element.style.top = `${screenY}px`;
-    anchor.element.classList.toggle("is-visible", visible);
+    anchor.element.classList.remove("is-visible");
   });
 }
 
@@ -6589,20 +7376,22 @@ function updateMap() {
     coinTarget: false,
   });
 
-  for (const [index, group] of currentCoinGroups.entries()) {
-    if (!group.coins.some((coin) => !coin.collected)) continue;
-    mapItems.push({
-      label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
-      object: null,
-      x: group.centerX,
-      z: group.centerZ,
-      mapRange: PLANET_RADIUS * Math.PI,
-      type: "coin",
-      unknown: false,
-      missionTarget: false,
-      oxygenSupplyTarget: false,
-      coinTarget: true,
-    });
+  if (!wormholeFall) {
+    for (const [index, group] of currentCoinGroups.entries()) {
+      if (!group.coins.some((coin) => !coin.collected)) continue;
+      mapItems.push({
+        label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
+        object: null,
+        x: group.centerX,
+        z: group.centerZ,
+        mapRange: PLANET_RADIUS * Math.PI,
+        type: "coin",
+        unknown: false,
+        missionTarget: false,
+        oxygenSupplyTarget: false,
+        coinTarget: true,
+      });
+    }
   }
 
   if (sunBody) {
@@ -6775,7 +7564,7 @@ function mapTypeForLabel(label: string) {
 function mysteryDiscoveryIdForLabel(label: string) {
   if (label.includes("远古巨树拱门")) return ANCIENT_TREE_ARCH_DISCOVERY_ID;
   if (label.includes("黑色方碑")) return "monolith";
-  if (label.includes("NASA 火星车") || label.includes("Perseverance")) return `unknown:${label}`;
+  if (label.includes("机遇号火星车") || label.includes("Opportunity")) return `unknown:${label}`;
   if (label.includes("埃隆") || label.includes("Elon")) return `unknown:${label}`;
   return null;
 }
@@ -6832,6 +7621,7 @@ function resetDialogueState() {
   activeDialogueNode = null;
   dialogueOpen = false;
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   motherCallRetryAt = 0;
   dialogueHistory.length = 0;
   appliedDialogueChoiceEffects.clear();
@@ -6847,11 +7637,22 @@ function resetDialogueState() {
 
 function queueMotherCall(scene: DialogueSceneId, mission: string) {
   pendingMotherCall = scene;
+  pendingMotherCallQueuedAt = elapsedTime;
   setMission(mission);
+}
+
+function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
+  pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
+  introCallQueued = false;
+  motherCallRetryAt = elapsedTime + retrySeconds;
+  setCurrentMissionText();
+  if (feedback) showDialogue("信息栏", feedback, 3);
 }
 
 function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
   pendingMotherCall = null;
+  pendingMotherCallQueuedAt = -Infinity;
   motherCallRetryAt = 0;
   if (scene !== "robot") {
     characters.repairRobot.name = "A-12";
@@ -6860,6 +7661,7 @@ function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = s
   activeDialogueNode = startNode;
   dialogueHistory.length = 0;
   dialogueOpen = true;
+  suppressTransientInfoWindows();
   keyState.clear();
   resetStick();
   messageUntil = 0;
@@ -7131,10 +7933,10 @@ function awardExplorationScore(eventId: string, label: string, points = SCORE_BU
   awardScore(`explore:${eventId}`, points, label, "explore");
 }
 
-function awardHiddenDiscovery(eventId: string, label: string) {
+function awardHiddenDiscovery(eventId: string, label: string, points = SCORE_HIDDEN_DISCOVERY) {
   if (hiddenDiscoveries.has(eventId)) return;
   hiddenDiscoveries.add(eventId);
-  awardExplorationScore(`hidden:${eventId}`, tr("score.discovery", { label: localizeLabel(label) }), SCORE_HIDDEN_DISCOVERY);
+  awardExplorationScore(`hidden:${eventId}`, tr("score.discovery", { label: localizeLabel(label) }), points);
 }
 
 function awardFunnyScore(eventId: string, label: string, points = SCORE_FUNNY_DEFAULT) {
@@ -7177,6 +7979,33 @@ function awardCoins(amount: number) {
   coins += amount;
   updateRewardReadouts();
   pulseRewardReadout(coinReadout, false);
+}
+
+function activateMoneyCheat() {
+  moneyCheatCoinsRemaining += 100;
+  showRewardFloat(`+100 ${tr("reward.coins")}`, false);
+  playCoinDing();
+  if (moneyCheatTimer) return;
+  moneyCheatTimer = window.setInterval(() => {
+    if (moneyCheatCoinsRemaining <= 0) {
+      if (moneyCheatTimer) window.clearInterval(moneyCheatTimer);
+      moneyCheatTimer = null;
+      return;
+    }
+    moneyCheatCoinsRemaining -= 1;
+    awardCoins(1);
+    if (moneyCheatCoinsRemaining % 10 === 0) playCoinDing();
+  }, 10);
+}
+
+function spendCoins(amount: number) {
+  if (amount <= 0) return false;
+  if (coins < amount) return false;
+  coins -= amount;
+  updateRewardReadouts();
+  pulseRewardReadout(coinReadout, true);
+  showRewardFloat(`-${amount} ${tr("reward.coins")}`, true);
+  return true;
 }
 
 function updateRewardReadouts() {
@@ -7282,7 +8111,7 @@ function awardColliderExploration(colliderLabel: string) {
 
 function updateHiddenDiscoveries() {
   if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket) return;
-  const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number }> = [
+  const targets: Array<{ id: string; label: string; object: THREE.Object3D; radius: number; points?: number }> = [
     { id: "monolith", label: "黑色方碑", object: world.monolith.object, radius: 22 },
   ];
   for (const [index, item] of world.unnumberedObjects.entries()) {
@@ -7293,13 +8122,14 @@ function updateHiddenDiscoveries() {
       radius: item.label ? 18 : 34,
     });
   }
-  const nasaRover = world.landmarks.find((landmark) => landmark.label.includes("NASA 火星车") || landmark.label.includes("Perseverance"));
+  const nasaRover = world.landmarks.find((landmark) => landmark.label.includes("机遇号火星车") || landmark.label.includes("Opportunity"));
   if (nasaRover) {
     targets.push({
       id: `unknown:${nasaRover.label}`,
       label: nasaRover.label,
       object: nasaRover.object,
       radius: 16,
+      points: 50,
     });
   }
   const ancientTreeArch = world.landmarks.find((landmark) => landmark.label.includes("远古巨树拱门"));
@@ -7308,7 +8138,7 @@ function updateHiddenDiscoveries() {
       id: ANCIENT_TREE_ARCH_DISCOVERY_ID,
       label: ancientTreeArch.label,
       object: ancientTreeArch.object,
-      radius: 76,
+      radius: ANCIENT_TREE_ARCH_DISCOVERY_RADIUS,
     });
   }
   targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });
@@ -7318,12 +8148,17 @@ function updateHiddenDiscoveries() {
     if (hiddenDiscoveries.has(target.id)) continue;
     const position = new THREE.Vector3();
     target.object.getWorldPosition(position);
-    if (position.distanceTo(player.position) <= target.radius) awardHiddenDiscovery(target.id, target.label);
+    if (position.distanceTo(player.position) <= target.radius) awardHiddenDiscovery(target.id, target.label, target.points);
   }
 }
 
 function updateCoinGroup(delta: number) {
   if (!started) return;
+  if (wormholeFall) {
+    setCoinGroupsVisible(false);
+    return;
+  }
+  setCoinGroupsVisible(true);
   if (currentCoinGroups.length === 0) {
     if (elapsedTime >= nextCoinRefreshAt) spawnCoinGroups();
     return;
@@ -7338,6 +8173,14 @@ function updateCoinGroup(delta: number) {
       if (coin.collected) continue;
       coin.group.rotateY(delta * 2.6);
       if (coin.group.position.distanceTo(player.position) <= COIN_COLLECT_RADIUS) collectCoin(coin);
+    }
+  }
+}
+
+function setCoinGroupsVisible(visible: boolean) {
+  for (const group of currentCoinGroups) {
+    for (const coin of group.coins) {
+      if (!coin.collected) coin.group.visible = visible;
     }
   }
 }
@@ -7653,8 +8496,14 @@ function resetQuestState() {
   elonDialogueIndex = 0;
   scorePoints = 0;
   coins = 0;
+  moneyCheatCoinsRemaining = 0;
+  if (moneyCheatTimer) {
+    window.clearInterval(moneyCheatTimer);
+    moneyCheatTimer = null;
+  }
   currentRank = "internPatrol";
   motherCallRetryAt = 0;
+  pendingMotherCallQueuedAt = -Infinity;
   completedAnyTask = false;
   awardedEvents.clear();
   exploredBuildings.clear();
@@ -7955,8 +8804,19 @@ function updateMissionAfterLanguageChange() {
 }
 
 function showDialogue(speaker: string, text: string, seconds: number) {
+  if (isFocusOverlayActive()) return;
   dialogueBox.innerHTML = `<strong>${localizeText(speaker)}</strong><span>${localizeText(text)}</span>`;
   messageUntil = performance.now() + seconds * 1000;
+}
+
+function isFocusOverlayActive() {
+  return dialogueOpen || cameraMode || scaleGunAiming || photoViewerOpen;
+}
+
+function suppressTransientInfoWindows() {
+  messageUntil = 0;
+  dialogueBox.innerHTML = "";
+  dialogueBox.classList.remove("is-visible");
 }
 
 function updateReadouts() {
@@ -7994,7 +8854,12 @@ function updateReadouts() {
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(renderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function renderPixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, RENDER_PIXEL_RATIO_LIMIT);
 }
 
 function isTouchLike() {
