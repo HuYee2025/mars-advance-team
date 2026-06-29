@@ -223,7 +223,7 @@ const VEHICLE_ROUTE_STOP_SECONDS = 30;
 const VEHICLE_STOP_ANGLE_THRESHOLD = 0.02;
 const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
 const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
-const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
+export const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchNormal = new THREE.Vector3();
@@ -495,6 +495,12 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   placeObjectOnPlanetNormal(crashedShip, wreckNormal, -1.72, wreckYaw);
   base.add(crashedShip);
   unnumberedObjects.push({ object: crashedShip, x: wreckX, z: wreckZ, mapRange: 340 });
+  colliders.push({
+    center: new THREE.Vector2(wreckX, wreckZ),
+    normal: wreckNormal.clone(),
+    radius: 13.8,
+    label: "坠毁飞船残骸主体",
+  });
 
   const habitat = createHabitatModule();
   habitat.scale.setScalar(HABITAT_SCALE);
@@ -807,6 +813,16 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       });
     }
     colliders.push(circle(x, z, 8.6, `${label}主体`));
+    addFootprintColliders(
+      colliders,
+      x,
+      z,
+      yaw,
+      [-4.7 * LANDER_SCALE, 0, 4.7 * LANDER_SCALE],
+      [-4.3 * LANDER_SCALE, 0, 4.3 * LANDER_SCALE],
+      3.0,
+      `${label}外壳`
+    );
     colliders.push(offsetCircle(x, z, yaw, -3.25 * LANDER_SCALE, -2.36 * LANDER_SCALE, 2.1, `${label}升降梯塔`));
     for (const angle of [Math.PI / 2, Math.PI / 2 + (Math.PI * 2) / 3, Math.PI / 2 + (Math.PI * 4) / 3]) {
       colliders.push(

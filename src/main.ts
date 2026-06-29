@@ -21,6 +21,7 @@ import {
   type DialogueSceneId,
 } from "./dialogue/dialogues";
 import {
+  CRASHED_SHIP_SITE_NORMAL,
   PLANET_RADIUS,
   expandWorldCoordinate,
   createMarsWorld,
@@ -532,10 +533,14 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
   lab: "lab",
 };
 
+const SHIP_OXYGEN_SUPPLY_RADIUS = 12.2;
+const WRECK_OXYGEN_SUPPLY_RADIUS = 15.0;
+
 const oxygenSupplyPoints: OxygenSupplyPoint[] = [
-  createOxygenSupplyPoint("居住舱补给柜", expandWorldCoordinate(0), expandWorldCoordinate(36), 22, 240),
-  createOxygenSupplyPoint("氧气生产站", expandWorldCoordinate(48), expandWorldCoordinate(36), 24, 260),
-  createOxygenSupplyPoint("登陆飞船补给舱", expandWorldCoordinate(264), expandWorldCoordinate(156), 22, 240),
+  createOxygenSupplyPoint("01 飞船 登陆飞船", expandWorldCoordinate(132), expandWorldCoordinate(78), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
+  createOxygenSupplyPoint("02 飞船 货运飞船", expandWorldCoordinate(142), expandWorldCoordinate(18), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
+  createOxygenSupplyPoint("03 飞船 返回飞船", expandWorldCoordinate(-118), expandWorldCoordinate(82), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
+  createOxygenSupplyPointFromNormal("坠毁飞船残骸", CRASHED_SHIP_SITE_NORMAL, WRECK_OXYGEN_SUPPLY_RADIUS, 340),
 ];
 
 const explorableBuildingIds = new Set<Interactable["id"]>([
@@ -550,15 +555,39 @@ const explorableBuildingIds = new Set<Interactable["id"]>([
   "medical",
 ]);
 
-function createOxygenSupplyPoint(label: string, x: number, z: number, radius: number, mapRange: number): OxygenSupplyPoint {
+function createOxygenSupplyPoint(
+  label: string,
+  x: number,
+  z: number,
+  radius: number,
+  mapRange: number,
+  normal = planetNormal(x, z, new THREE.Vector3())
+): OxygenSupplyPoint {
   return {
     label,
     x,
     z,
     radius,
     mapRange,
-    normal: planetNormal(x, z, new THREE.Vector3()),
+    normal: normal.clone().normalize(),
   };
+}
+
+function createOxygenSupplyPointFromNormal(
+  label: string,
+  normal: THREE.Vector3,
+  radius: number,
+  mapRange: number
+): OxygenSupplyPoint {
+  const projectedY = Math.max(Math.abs(normal.y), 0.001);
+  return createOxygenSupplyPoint(
+    label,
+    (normal.x / projectedY) * PLANET_RADIUS,
+    (normal.z / projectedY) * PLANET_RADIUS,
+    radius,
+    mapRange,
+    normal
+  );
 }
 
 const colliderExplorationRules: Array<{ key: string; match: string; label?: string; interactableId?: Interactable["id"] }> = [
@@ -749,6 +778,7 @@ const exactEnglishTexts: Record<string, string> = {
   "01 飞船 登陆飞船": "01 Ship Lander",
   "02 飞船 货运飞船": "02 Ship Cargo Ship",
   "03 飞船 返回飞船": "03 Ship Return Ship",
+  "${label}外壳": "Ship Hull",
   "01 建筑 居住舱": "01 Building Habitat",
   "02 建筑 温室生态舱": "02 Building Greenhouse",
   "03 建筑 氧气生产站": "03 Building Oxygen Plant",
@@ -776,6 +806,7 @@ const exactEnglishTexts: Record<string, string> = {
   "NASA 机遇号火星车遗迹 / Meridiani Planum": "NASA Opportunity Rover Site / Meridiani Planum",
   "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
   "坠毁飞船残骸": "Crashed ship wreckage",
+  "坠毁飞船残骸主体": "Crashed ship wreckage body",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
   "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
@@ -1233,7 +1264,7 @@ let pitch = 0.34;
 let orbitYawOffset = 0;
 const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE = 10;
 let cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
-let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number; lift: number; distance: number } | null = null;
+let exitFrontCamera: { origin: THREE.Vector3; releaseDistance: number; lift: number; distance: number; mode: "front" | "rear" } | null = null;
 let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
@@ -5637,16 +5668,19 @@ function updateCamera(delta: number) {
     if (exitDistance >= exitFrontCamera.releaseDistance && !holdUntilElevatorLands) {
       exitFrontCamera = null;
     } else {
-      const distance = Math.max(cameraDistance, exitFrontCamera.distance);
-      const target = player.position.clone().addScaledVector(normal, 1.45);
-      const frontDirection = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
-      const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, exitFrontCamera.lift);
-      camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
-      camera.up.copy(normal);
-      camera.lookAt(target);
-      playerRig.visual.visible = true;
-      orbitYawOffset *= Math.pow(0.03, delta);
-      return;
+      if (exitFrontCamera.mode === "front") {
+        const distance = Math.max(cameraDistance, exitFrontCamera.distance);
+        const target = player.position.clone().addScaledVector(normal, 1.45);
+        const frontDirection = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
+        const desired = target.clone().addScaledVector(frontDirection, distance * 0.82).addScaledVector(normal, exitFrontCamera.lift);
+        camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
+        camera.up.copy(normal);
+        camera.lookAt(target);
+        playerRig.visual.visible = true;
+        orbitYawOffset *= Math.pow(0.03, delta);
+        return;
+      }
+      cameraObstructionLift = exitFrontCamera.lift * (1 - THREE.MathUtils.smoothstep(exitDistance, 0, exitFrontCamera.releaseDistance));
     }
   }
 
@@ -5657,7 +5691,7 @@ function updateCamera(delta: number) {
   const activePitch = pitch;
   const cameraForward = playerForward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
   const backDistance = Math.cos(activePitch) * distance * (1 - closeT * 0.92);
-  const upDistance = Math.sin(activePitch) * distance + THREE.MathUtils.lerp(2.4, 0.03, closeT);
+  const upDistance = Math.sin(activePitch) * distance + THREE.MathUtils.lerp(2.4, 0.03, closeT) + cameraObstructionLift;
   const offset = cameraForward.multiplyScalar(-backDistance).addScaledVector(normal, upDistance);
   const desired = target.clone().add(offset);
   cameraObstructionLift = 0;
@@ -5714,8 +5748,8 @@ function placePlayerOnPlanet() {
   placeObjectOnPlanetNormal(player, playerNormal, PLAYER_ALTITUDE + playerAltitudeOffset, headingFromForward(playerNormal, playerForward));
 }
 
-function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number, lift = 2.2, distance = 8) {
-  exitFrontCamera = { origin: origin.clone(), releaseDistance, lift, distance };
+function startExitFrontCamera(origin: THREE.Vector3, releaseDistance: number, lift = 2.2, distance = 8, mode: "front" | "rear" = "front") {
+  exitFrontCamera = { origin: origin.clone(), releaseDistance, lift, distance, mode };
   cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE, distance);
   orbitYawOffset = 0;
 }
@@ -6773,6 +6807,7 @@ function enterRoverRide(rover: THREE.Group) {
   awardRepeatableScore(SCORE_ROVER_RIDE, localizeText("搭便车"));
   ridingRover = rover;
   activeRideRover = rover;
+  resetVitals();
   exitFrontCamera = null;
   cameraMode = false;
   scaleGunAiming = false;
@@ -6949,7 +6984,7 @@ function exitHabitatDoor(door: HabitatDoorControl) {
   cameraDistance = Math.max(cameraDistance, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE);
   playerRig.visual.visible = true;
   placePlayerOnPlanet();
-  startExitFrontCamera(player.position, 22, 4.8, 11);
+  startExitFrontCamera(player.position, 15, 1.8, DEFAULT_THIRD_PERSON_CAMERA_DISTANCE, "rear");
   showDialogue("居住舱", "外舱门已打开。氧气背包与体能 100%。", 2.8);
 }
 
@@ -6957,6 +6992,7 @@ function enterGreenhouse(door: GreenhouseDoorControl) {
   exitFrontCamera = null;
   insideGreenhouse = true;
   door.occupied = true;
+  resetVitals();
   door.doorPanels.visible = true;
   door.interiorLight.visible = true;
   greenhouseLocal.set(0, 0.62, -2.62);
