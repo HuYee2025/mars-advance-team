@@ -67,6 +67,10 @@
         display: none;
       }
 
+      body.is-playing #visitor-counter {
+        display: none !important;
+      }
+
       body.is-wormhole .hud,
       body.is-wormhole .hud-buttons,
       body.is-wormhole #mission-banner,
@@ -168,6 +172,10 @@
           <span id="score-readout">0</span>
         </div>
         <button id="map-toggle" type="button" aria-label="打开基地地图" aria-pressed="false" data-i18n-attr="aria-label:map.open">F</button>
+        <div class="top-nav-readout" aria-live="polite">
+          <span class="map-coordinates" id="map-coordinates">X 000 / Z 000</span>
+          <span class="map-heading" id="map-heading">HDG 000°</span>
+        </div>
       </div>
       <section id="mission-banner" aria-label="当前任务" data-i18n-attr="aria-label:mission.aria">
         <span data-i18n="mission.current">当前任务</span>
@@ -183,18 +191,10 @@
           <div class="map-radar" id="map-radar">
             <div class="map-ring ring-a"></div>
             <div class="map-ring ring-b"></div>
-            <div class="map-compass" id="map-compass" aria-hidden="true">
-              <span data-bearing="0">N</span>
-              <span data-bearing="90">E</span>
-              <span data-bearing="180">S</span>
-              <span data-bearing="270">W</span>
-            </div>
             <div class="map-cross x"></div>
             <div class="map-cross y"></div>
             <div class="map-player" aria-hidden="true"></div>
           </div>
-          <div class="map-coordinates" id="map-coordinates">X 000 / Z 000</div>
-          <div class="map-heading" id="map-heading">HDG 000°</div>
           <div class="map-list" id="map-list"></div>
         </div>
       </section>
@@ -316,6 +316,8 @@
               <div class="guide-key wide"><b>长按 F</b><span>全屏地图</span></div>
               <div class="guide-key wide"><b>C</b><span>第一 / 第三人称</span></div>
               <div class="guide-key wide"><b>X</b><span>开 / 收缩放枪</span></div>
+              <div class="guide-key wide"><b>I</b><span>开 / 收激光剑</span></div>
+              <div class="guide-key wide"><b>J</b><span>举起激光剑</span></div>
               <div class="guide-key wide"><b>WASD</b><span>枪瞄准</span></div>
               <div class="guide-key wide"><b>E / Q</b><span>枪放大 / 缩小</span></div>
               <div class="guide-key wide"><b>= / -</b><span>备用缩放</span></div>

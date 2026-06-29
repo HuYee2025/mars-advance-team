@@ -11,6 +11,8 @@ export type PlayerRig = {
   visor: THREE.Mesh;
   jetpackFlames: THREE.Group;
   scaleGun: THREE.Group;
+  laserSword: THREE.Group;
+  laserSwordLight: THREE.PointLight;
 };
 
 function makeMaterial(color: number, roughness = 0.72, metalness = 0.08, emissive = 0x000000) {
@@ -173,6 +175,10 @@ export function createMarsEngineer(): PlayerRig {
   scaleGun.visible = false;
   rightArm.add(scaleGun);
 
+  const { sword: laserSword, light: laserSwordLight } = createLaserSword(graphite);
+  laserSword.visible = false;
+  rightArm.add(laserSword);
+
   const leftLeg = limb(0.86, 0.14, hardSuit);
   leftLeg.position.set(-0.22, 0.45, 0);
   const rightLeg = limb(0.86, 0.14, hardSuit);
@@ -191,7 +197,7 @@ export function createMarsEngineer(): PlayerRig {
   shoulderB.position.x = 0.49;
   visual.add(shoulderA, shoulderB);
 
-  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor, jetpackFlames, scaleGun };
+  return { group, visual, leftArm, rightArm, leftLeg, rightLeg, helmet, visor, jetpackFlames, scaleGun, laserSword, laserSwordLight };
 }
 
 function createScaleGun(graphite: THREE.Material, hardSuit: THREE.Material, orange: THREE.Material, cyan: THREE.Material) {
@@ -223,6 +229,50 @@ function createScaleGun(graphite: THREE.Material, hardSuit: THREE.Material, oran
   gun.add(body, grip, spine, emitter, lensRing, rearCap, scaleDial, safety);
   gun.scale.setScalar(1.18);
   return gun;
+}
+
+function createLaserSword(graphite: THREE.Material) {
+  const sword = new THREE.Group();
+  sword.name = "Laser sword";
+
+  const hilt = box(0.12, 0.36, 0.12, graphite);
+  hilt.position.set(0, -0.08, -0.02);
+  const pommel = cylinder(0.065, 0.065, 0.055, graphite, 10);
+  pommel.position.set(0, -0.28, -0.02);
+  const guard = box(0.28, 0.06, 0.1, graphite);
+  guard.position.set(0, 0.12, -0.02);
+
+  const bladeMaterial = new THREE.MeshBasicMaterial({
+    color: 0xf8fdff,
+    transparent: true,
+    opacity: 0.94,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: 0x7ccfff,
+    transparent: true,
+    opacity: 0.24,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 1.42, 16), bladeMaterial);
+  blade.position.set(0, 0.86, -0.02);
+  blade.castShadow = false;
+  const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.115, 1.5, 16), glowMaterial);
+  glow.position.copy(blade.position);
+  glow.castShadow = false;
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 8), bladeMaterial);
+  tip.position.set(0, 1.58, -0.02);
+  const light = new THREE.PointLight(0xbfeaff, 0, 20, 1.65);
+  light.position.set(0, 0.85, -0.02);
+  light.visible = false;
+
+  sword.add(hilt, pommel, guard, glow, blade, tip, light);
+  sword.position.set(0.08, -0.92, -0.08);
+  sword.rotation.set(-1.06, 0.08, 0.02);
+  sword.scale.setScalar(1.05);
+  return { sword, light };
 }
 
 export function updateMarsEngineer(rig: PlayerRig, speed: number, elapsed: number, flying = false, thrusting = false) {

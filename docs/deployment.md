@@ -10,7 +10,7 @@
 - 单人体验不需要后端、不需要数据库
 - 多人 v1 和独立访客统计需要额外运行一个常驻 Node 服务
 
-因此如果只上线无统计的单人版，只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。如果要启用多人可见或底部“累计访客”统计，需要同时部署 Node 服务，并把 `/ws` 和 `/api/` 代理到该服务。
+因此如果只上线无统计的单人版，只需要把 `dist/` 放到服务器静态网站目录，由 Nginx、宝塔、1Panel、Cloudflare Pages、Vercel 或 GitHub Pages 托管即可。如果要启用多人可见或首页底部“累计访客”统计，需要同时部署 Node 服务，并把 `/ws` 和 `/api/` 代理到该服务。
 
 后续如果接入 DeepSeek 对话，不能在前端直接放 API Key，需要新增后端接口，例如 `/api/dialogue`。
 
@@ -178,7 +178,7 @@ sudo systemctl reload nginx
 
 ## 访客统计部署说明
 
-底部“累计访客”通过 `/api/visitors` 统计独立 IP。服务器端不会保存明文 IP，只保存带盐 hash；同一 IP 多次访问只增加访问次数，不重复增加累计人数。
+首页底部“累计访客”通过 `/api/visitors` 统计独立 IP，进入游戏后隐藏。服务器端不会保存明文 IP，只保存带盐 hash；同一 IP 多次访问只增加访问次数，不重复增加累计人数。
 
 默认统计文件位置：
 
