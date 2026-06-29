@@ -60,8 +60,6 @@ type InteractionAction = {
     | "footballPickup"
     | "robot"
     | "oxygenSupply"
-    | "motherCallReject"
-    | "motherCallAccept"
     | "mission"
     | "photoWall"
     | "hitchRide";
@@ -703,10 +701,6 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.choose": "选择互动",
     "interaction.close": "收起",
     "interaction.count": "{count} 个可互动项",
-    "info.title": "信息栏",
-    "info.motherCall": "收到史蒂夫的一条信息，是否接收？",
-    "info.reject": "稍后接收",
-    "info.accept": "接收",
     "language.button": "English",
     "wormhole.whiteoutCaption": "这是……",
   },
@@ -778,10 +772,6 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.choose": "Choose Interaction",
     "interaction.close": "Close",
     "interaction.count": "{count} actions",
-    "info.title": "Info",
-    "info.motherCall": "Message from Steve. Receive it?",
-    "info.reject": "Receive Later",
-    "info.accept": "Receive",
     "language.button": "简体中文",
     "wormhole.whiteoutCaption": "This is...",
   },
@@ -1117,7 +1107,6 @@ const englishPhrasePairs: Array<[string, string]> = [
   ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
   ["基地中央 AI 史蒂夫正在呼叫。", "Base central AI Steve is calling."],
   ["史蒂夫：巡航员亚历克斯！收到请回话", "Steve: Patrol Officer Alex! Respond if you copy."],
-  ["已设为稍后接收。史蒂夫将在2分钟后重试。", "Set to receive later. Steve will retry in 2 minutes."],
   ["居住舱补给柜", "Habitat supply locker"],
   ["氧气生产站", "Oxygen Plant"],
   ["登陆飞船补给舱", "Lander supply bay"],
@@ -1393,7 +1382,6 @@ let dialogueOpen = false;
 let pendingMotherCall: DialogueSceneId | null = null;
 const MOTHER_CALL_IDLE_DISMISS_SECONDS = 30;
 const MOTHER_CALL_IDLE_RETRY_SECONDS = 60;
-const MOTHER_CALL_DELAY_RETRY_SECONDS = 120;
 let motherCallRetryAt = 0;
 let pendingMotherCallQueuedAt = -Infinity;
 let gameStartElapsed = 0;
@@ -4719,7 +4707,7 @@ function updateScheduledCalls() {
   if (elapsedTime < motherCallRetryAt) return;
   if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
-  queueMotherCall("intro", "收到史蒂夫的一条信息。");
+  queueMotherCall("intro");
 }
 
 function updatePendingMotherCallTimeout() {
@@ -6226,7 +6214,6 @@ function updateMissionState() {
   activeOxygenSupply = findActiveOxygenSupply();
   if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
-  if (hasMotherCallInfoActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "motherCallAccept");
   if (hasAncientPortalPaymentActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "ancientPortalPay");
   if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
   updateInteractionPrompts();
@@ -6258,7 +6245,7 @@ function buildInteractionActions() {
   if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
   if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
   const prioritized = prioritizeInteractionActions(actions);
-  const hasTwoButtonChoice = prioritized.some((action) => action.id === "motherCallReject" || action.id === "motherCallAccept" || action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
+  const hasTwoButtonChoice = prioritized.some((action) => action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
   const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
   return prioritized.slice(0, visibleActionLimit);
 }
@@ -6272,8 +6259,6 @@ function prioritizeInteractionActions(actions: InteractionAction[]) {
 
 function interactionActionPriority(action: InteractionAction) {
   const priority: Record<InteractionAction["id"], number> = {
-    motherCallReject: 0,
-    motherCallAccept: 0,
     oxygenSupply: 0.5,
     habitat: 1,
     greenhouse: 1,
@@ -6318,18 +6303,9 @@ function updateInteractionPrompts() {
 }
 
 function singleInteractionPromptText(action: InteractionAction) {
-  if (isMotherCallInfoAction(action)) return action.label;
   if (action.id === "photoWall") return localizeText("这里保存着你拍下的火星瞬间，按 E 查看。");
   if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
   return `E ${action.label}`;
-}
-
-function isMotherCallInfoAction(action: InteractionAction) {
-  return action.id === "motherCallReject" || action.id === "motherCallAccept";
-}
-
-function hasMotherCallInfoActions() {
-  return interactionActions.some(isMotherCallInfoAction);
 }
 
 function isAncientPortalPaymentAction(action: InteractionAction) {
@@ -6341,7 +6317,7 @@ function hasAncientPortalPaymentActions() {
 }
 
 function isInfoChoiceAction(action: InteractionAction) {
-  return isMotherCallInfoAction(action) || isAncientPortalPaymentAction(action);
+  return isAncientPortalPaymentAction(action);
 }
 
 function hasInfoChoiceActions() {
@@ -6352,7 +6328,7 @@ function infoChoiceCopy() {
   if (hasAncientPortalPaymentActions()) {
     return { title: localizeText("时空之门"), detail: localizeText("你是否愿意为穿越时空之门支付50个火星币？") };
   }
-  return { title: tr("info.title"), detail: tr("info.motherCall") };
+  return { title: "", detail: "" };
 }
 
 function renderInteractionChoice() {
@@ -6570,17 +6546,6 @@ function executeSelectedInteraction() {
   if (action.id === "hitchRide" && activeRideRover) {
     if (ridingRover) exitRoverRide();
     else enterRoverRide(activeRideRover);
-    return;
-  }
-  if (action.id === "motherCallReject" && pendingMotherCall) {
-    deferPendingMotherCall(MOTHER_CALL_DELAY_RETRY_SECONDS, "已设为稍后接收。史蒂夫将在2分钟后重试。");
-    return;
-  }
-  if (action.id === "motherCallAccept" && pendingMotherCall) {
-    const scene = pendingMotherCall;
-    pendingMotherCall = null;
-    pendingMotherCallQueuedAt = -Infinity;
-    openDialogueScene(scene);
     return;
   }
   if (action.id === "mission" && activeInteractable) {
@@ -7807,10 +7772,11 @@ function resetDialogueState() {
   document.body.classList.remove("dialogue-open");
 }
 
-function queueMotherCall(scene: DialogueSceneId, mission: string) {
+function queueMotherCall(scene: DialogueSceneId) {
   pendingMotherCall = scene;
   pendingMotherCallQueuedAt = elapsedTime;
-  setMission(`${mission} 按 R 查看。`);
+  missionUnread = true;
+  missionToggle.classList.add("has-mission-update");
 }
 
 function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
