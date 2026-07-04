@@ -21,7 +21,7 @@
 
 ## 最近已完成的重点
 
-- 真实太阳光照 MVP 已接入：新增 `src/mars-sun-model.ts`，按真实 `Date.now()` 和 NASA Mars24 近似算法计算火星日下点方向、`Ls`、MTC、火星日心距离和太阳辐照强度；`src/main.ts` 里的太阳 `DirectionalLight`、可见太阳、太阳能阵列追日和暗面蜘蛛避光已统一使用该真实太阳方向。太阳光照不再使用 `10x` 游戏时间加速；沙尘暴循环也从 `elapsedTime * 10` 改为真实 `elapsedTime` 秒推进。已通过 `pnpm build`。
+- 真实太阳光照 MVP 已接入：新增 `src/mars-sun-model.ts`，按真实 `Date.now()` 和 NASA Mars24 近似算法计算火星日下点方向、`Ls`、MTC、火星日心距离和太阳辐照强度；`src/main.ts` 里的太阳 `DirectionalLight`、可见太阳、太阳能阵列追日和暗面蜘蛛避光已统一使用该真实太阳方向。太阳光照不再使用 `10x` 游戏时间加速；沙尘暴作为玩法例外，仍使用 `STORM_TIME_SCALE = 10` 加速推进。已通过 `pnpm build`。
 - 2026-07-04 研究 `hyqzz/Solar-Wanderer` 后形成外部数据利用结论，详见 `docs/research/solar-wanderer-mars-data-lighting.md`：该仓库对本项目最值得借的是真实太阳位置、火星自转、太阳光照方向、大气散射和火星车真实地标坐标；不建议直接把其 `public/textures/mars.jpg` 当作近地表真实火星图片，也不建议直接依赖仓库内 DEM URL。下一步若推进真实化，优先做“真实太阳光照 MVP”，火星表面图片另从 NASA/HiRISE/PDS/USGS 选定真实来源。
 - 正式剧情对话舞台背景已从纯暗色渐变改为暗红火星局部纹理：新增 `src/assets/dialogue-mars-surface-bg.webp`，从火星球体贴图 `src/assets/mars-albedo-generated.webp` 裁切压缩，保持卫星俯拍质感；最新版本降低模糊和遮罩强度，让火星纹理可见但不抢角色和对话框。
 - 雷达 HUD 布局已简化：雷达内不再显示 `N/E/S/W` 方位字母；`坐标/Position` 和 `方位/HDG 000°` 朝向读数固定排成一行，放在右上角金币、积分和 `F` 按钮正下方。该读数现在独立于雷达开关实时更新，样式对齐左侧“制氧量”等指标标签的字色和字号。
