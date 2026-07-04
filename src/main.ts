@@ -8,6 +8,7 @@ import {
   starlinkStatusTextEn,
   updateStarlinkConstellation,
 } from "./orbital-starlink";
+import { computeMarsSunState, type MarsSunState } from "./mars-sun-model";
 import { createMarsEngineer, updateMarsEngineer } from "./player";
 import {
   characters,
@@ -203,12 +204,7 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance",
   preserveDrawingBuffer: true,
 });
-const EARTH_TOTAL_SOLAR_IRRADIANCE = 1361.6;
-const MARS_MEAN_DISTANCE_AU = 1.524;
-const MARS_SUNLIGHT_RATIO = 1 / (MARS_MEAN_DISTANCE_AU * MARS_MEAN_DISTANCE_AU);
 const EARTHLIKE_KEY_LIGHT = 7.2;
-const MARS_TIME_SCALE = 10;
-const MARS_SOL_SECONDS = 88775;
 const CLEAR_FOG_DENSITY = 0.0014;
 const STORM_FOG_DENSITY = 0.012;
 const STORM_PERIOD_SECONDS = 4 * 60 * 60;
@@ -229,6 +225,7 @@ const WORMHOLE_ORGANIC_LOOP_LENGTH = WORMHOLE_ORGANIC_SEGMENT_COUNT * WORMHOLE_O
 const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP_LENGTH;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
+let currentMarsSunState: MarsSunState = computeMarsSunState();
 renderer.setPixelRatio(renderPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -1501,10 +1498,9 @@ function must<T extends Element>(selector: string): T {
 }
 
 function buildLighting() {
-  const marsKeyLight = EARTHLIKE_KEY_LIGHT * MARS_SUNLIGHT_RATIO;
   scene.add(new THREE.HemisphereLight(0xf7dcc2, 0x3f130b, 0.78));
 
-  const sun = new THREE.DirectionalLight(0xffd2a3, marsKeyLight);
+  const sun = new THREE.DirectionalLight(0xffd2a3, EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio);
   sun.position.set(-36, 54, 28);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -1526,16 +1522,11 @@ function buildLighting() {
 
 function updateSolarLighting() {
   if (!sunLight || !sunBody) return;
-  const marsSolAngle = (elapsedTime * MARS_TIME_SCALE / MARS_SOL_SECONDS) * Math.PI * 2 + 2.26;
-  const elevation = 0.42 + Math.sin(marsSolAngle * 0.37) * 0.08;
-  const direction = new THREE.Vector3(
-    Math.cos(marsSolAngle) * Math.cos(elevation),
-    Math.sin(elevation),
-    Math.sin(marsSolAngle) * Math.cos(elevation)
-  ).normalize();
+  currentMarsSunState = computeMarsSunState();
+  const direction = currentMarsSunState.direction;
   sunLight.position.copy(direction).multiplyScalar(72);
   sunLight.intensity =
-    EARTHLIKE_KEY_LIGHT * MARS_SUNLIGHT_RATIO * THREE.MathUtils.lerp(0.74, 1.08, Math.max(0, direction.y)) * THREE.MathUtils.lerp(1, 0.42, stormStrength);
+    EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio * THREE.MathUtils.lerp(1, 0.42, stormStrength);
   sunBody.position.copy(direction).multiplyScalar(540);
   const occluded = isSunOccludedByPlanet(sunBody.position);
   sunBody.visible = !occluded;
@@ -4673,7 +4664,7 @@ function updateBackgroundMusicFade() {
 }
 
 function updateWeather() {
-  const cycle = (elapsedTime * MARS_TIME_SCALE + 13200) % STORM_PERIOD_SECONDS;
+  const cycle = (elapsedTime + 13200) % STORM_PERIOD_SECONDS;
   const fadeIn = THREE.MathUtils.smoothstep(cycle, 0, STORM_FADE_SECONDS);
   const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, STORM_DURATION_SECONDS - STORM_FADE_SECONDS, STORM_DURATION_SECONDS);
   stormStrength = cycle < STORM_DURATION_SECONDS ? Math.min(fadeIn, fadeOut) : 0;
