@@ -1242,24 +1242,6 @@ body:not(.hud-collapsed) #hud-toggle,
   text-shadow: none;
 }
 
-.map-marker.type-spider-nest {
-  width: 18px;
-  height: 18px;
-  border: 0;
-  background: transparent;
-  color: #76ff73;
-  border-radius: 0;
-  box-shadow: none;
-  font-family: "SF Mono", "Roboto Mono", ui-monospace, monospace;
-  font-size: 15px;
-  font-weight: 900;
-  line-height: 18px;
-  text-align: center;
-  text-shadow:
-    0 0 5px rgba(118, 255, 115, 0.95),
-    0 0 14px rgba(42, 255, 88, 0.52);
-}
-
 .map-marker.type-oxygen {
   color: #82dc72;
   background: #82dc72;
@@ -1398,13 +1380,6 @@ body:not(.hud-collapsed) #hud-toggle,
   line-height: 36px;
 }
 
-.map-expanded .map-marker.type-spider-nest {
-  width: 36px;
-  height: 36px;
-  font-size: 30px;
-  line-height: 36px;
-}
-
 .map-expanded .map-marker.type-meteor {
   width: 24px;
   height: 24px;
@@ -1447,10 +1422,6 @@ body:not(.hud-collapsed) #hud-toggle,
 }
 
 .map-expanded .map-marker.type-unknown span {
-  left: 44px;
-}
-
-.map-expanded .map-marker.type-spider-nest span {
   left: 44px;
 }
 

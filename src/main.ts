@@ -808,14 +808,12 @@ const exactEnglishTexts: Record<string, string> = {
   "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
   "坠毁飞船残骸": "Crashed ship wreckage",
   "坠毁飞船残骸主体": "Crashed ship wreckage body",
-  "暗面蜘蛛巢穴": "Dark-side Spider Nest",
-  "暗面蜘蛛巢穴洞口": "Dark-side Spider Nest Mouth",
-  "暗面巢穴岩石": "Dark-side Nest Rock",
   "暗面玄武岩": "Dark-side Basalt",
   "暗面散落岩石": "Dark-side Scattered Rock",
   "暗面蜘蛛": "Dark-side Spider",
   "装备解锁": "Gear Unlocked",
   "你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。": "You obtained the laser sword. Press I to draw or holster it; hold J to raise it, release to lower it. It lights dark areas, and spiders avoid the light.",
+  "HUYEE 已启动：获得喷气背包、缩放枪和激光剑。按 X 使用缩放枪；按 I 展开或收回激光剑，按住 J 举起。": "HUYEE activated: jetpack, scale gun, and laser sword obtained. Press X to use the scale gun; press I to draw or holster the laser sword, and hold J to raise it.",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
   "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
@@ -3099,7 +3097,7 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
     event.preventDefault();
     if (mysteryCodeProgress === MYSTERY_CODE) {
       mysteryCodeProgress = "";
-      activateTemporaryJetpack();
+      activateHuyeeCheat();
     }
     if (moneyCodeProgress === MONEY_CODE) {
       moneyCodeProgress = "";
@@ -3162,6 +3160,21 @@ function setFlightModeEnabled(enabled: boolean, source: JetpackSource) {
 
 function activateTemporaryJetpack() {
   setFlightModeEnabled(true, "temporary");
+}
+
+function activateHuyeeCheat() {
+  activateTemporaryJetpack();
+  const unlockedExtraGear = !hasScaleGun || !hasLaserSword;
+  setScaleGunOwned(true);
+  setLaserSwordOwned(true);
+  if (started && unlockedExtraGear) {
+    showOneTimeOperationHelp(
+      "huyee.extraGear",
+      localizeText("装备解锁"),
+      localizeText("HUYEE 已启动：获得喷气背包、缩放枪和激光剑。按 X 使用缩放枪；按 I 展开或收回激光剑，按住 J 举起。"),
+      7.2
+    );
+  }
 }
 
 function unlockEquipmentJetpack(startFlight: boolean) {
@@ -7543,22 +7556,6 @@ function updateMap() {
     });
   }
 
-  {
-    const spiderDiscovered = hiddenDiscoveries.has("unknown:dark_spider");
-    mapItems.push({
-      label: mysteryMapLabel("unknown:dark_spider", "暗面蜘蛛巢穴", "map.unknownLocation"),
-      object: world.spiderNest.object,
-      x: world.spiderNest.x,
-      z: world.spiderNest.z,
-      mapRange: PLANET_RADIUS * Math.PI,
-      type: spiderDiscovered ? "robot" : "spider-nest",
-      unknown: !spiderDiscovered,
-      missionTarget: false,
-      oxygenSupplyTarget: false,
-      coinTarget: false,
-    });
-  }
-
   if (isStarlinkMapVisible()) {
     mapItems.push({
       label: starlinkDisplayStatus(),
@@ -8276,7 +8273,6 @@ function updateHiddenDiscoveries() {
   }
   targets.push({ id: "football", label: "火星足球", object: football.group, radius: FOOTBALL_PLAYER_RADIUS + FOOTBALL_RADIUS + 3.5 });
   if (!fufuRescued) targets.push({ id: "unknown:fufu", label: "福福", object: fufu, radius: 13 });
-  targets.push({ id: "unknown:dark_spider", label: "暗面蜘蛛巢穴", object: world.spiderNest.object, radius: world.spiderNest.radius, points: 100 });
 
   for (const target of targets) {
     if (hiddenDiscoveries.has(target.id)) continue;

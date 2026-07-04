@@ -85,7 +85,6 @@ export type MarsWorld = {
   ancientTreePortal: THREE.Group;
   fufuRescueSite: FufuRescueSite;
   monolith: MonolithSite;
-  spiderNest: SpiderNestSite;
 };
 
 export type FufuRescueSite = {
@@ -97,14 +96,6 @@ export type FufuRescueSite = {
 
 export type MonolithSite = {
   object: THREE.Object3D;
-  x: number;
-  z: number;
-  radius: number;
-};
-
-export type SpiderNestSite = {
-  object: THREE.Object3D;
-  normal: THREE.Vector3;
   x: number;
   z: number;
   radius: number;
@@ -257,10 +248,13 @@ const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
 const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
 export const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 const ANCIENT_TREE_ARCH_NORMAL = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
-const SPIDER_NEST_NORMAL = ANCIENT_TREE_ARCH_NORMAL.clone().lerp(CRASHED_SHIP_SITE_NORMAL, 0.56).normalize();
-const SPIDER_NEST_DISCOVERY_RADIUS = 18;
-const SPIDER_PATROL_RADIUS = 34;
+const SPIDER_ARRIVAL_NORMAL = ANCIENT_TREE_ARCH_NORMAL.clone().lerp(CRASHED_SHIP_SITE_NORMAL, 0.72).normalize();
+const SPIDER_PATROL_RADIUS = 44;
 const SPIDER_BODY_RADIUS = 1.65;
+const TERRAIN_WIDTH_SEGMENTS = 96;
+const TERRAIN_HEIGHT_SEGMENTS = 54;
+const MAINTENANCE_BOT_BUILDING_CLEARANCE = 5.8;
+const MAINTENANCE_BOT_BLOCKED_CLEARANCE = 5.2;
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const VEHICLE_LOOP_DIRECTION = new THREE.Vector3(Math.cos(VEHICLE_LOOP_HEADING), 0, Math.sin(VEHICLE_LOOP_HEADING)).normalize();
@@ -430,19 +424,11 @@ function sphereHeightFromNormal(normal: THREE.Vector3) {
   const duneC = Math.sin((normal.x + normal.y - normal.z) * 22.0) * 0.16;
   const baseElevation = duneA + duneB + duneC;
   const darkSide = THREE.MathUtils.smoothstep(-normal.y, 0.18, 0.82);
-  const nestDot = THREE.MathUtils.clamp(normal.dot(SPIDER_NEST_NORMAL), -1, 1);
-  const nestDistance = Math.acos(nestDot) * PLANET_RADIUS;
-  const nestFocus = THREE.MathUtils.smoothstep(nestDot, 0.88, 0.985);
   const darkRidges =
     (Math.sin(normal.x * 25.0 - normal.z * 13.0) * 0.62 + Math.cos((normal.x + normal.z) * 31.0 + normal.y * 6.0) * 0.42) *
     darkSide;
-  const nestRim = Math.sin((1 - nestDot) * 84.0) * 0.16 * nestFocus;
-  const nestBowl = -2.35 * (1 - THREE.MathUtils.smoothstep(nestDistance, 1.2, 9.2));
-  const nestFloor = -0.55 * (1 - THREE.MathUtils.smoothstep(nestDistance, 0, 2.7));
-  const nestHollow = nestBowl + nestFloor;
-  const roughElevation = baseElevation + darkRidges + nestRim + nestHollow;
-  const nestRouteExclusion = 1 - THREE.MathUtils.smoothstep(nestDistance, 8, 16);
-  const routeSmooth = vehicleRouteTerrainSmoothFactor(normal) * (1 - nestRouteExclusion);
+  const roughElevation = baseElevation + darkRidges;
+  const routeSmooth = vehicleRouteTerrainSmoothFactor(normal);
   return THREE.MathUtils.lerp(roughElevation, baseElevation * 0.35, routeSmooth);
 }
 
@@ -514,11 +500,6 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   root.add(base);
   addNasaPerseveranceRover(base, colliders, landmarks);
 
-  const spiderNest = createSpiderNest();
-  const spiderNestCoords = mapCoordinatesFromNormal(SPIDER_NEST_NORMAL);
-  placeObjectOnPlanetNormal(spiderNest, SPIDER_NEST_NORMAL, -0.07, 0.4);
-  root.add(spiderNest);
-  addSpiderNestColliders(colliders);
   addDarkSideRockField(root, colliders);
   for (let i = 0; i < 3; i += 1) {
     const spider = createDarkSpider(i);
@@ -864,13 +845,6 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       z: monolithZ,
       radius: 24,
     },
-    spiderNest: {
-      object: spiderNest,
-      normal: SPIDER_NEST_NORMAL.clone(),
-      x: spiderNestCoords.x,
-      z: spiderNestCoords.z,
-      radius: SPIDER_NEST_DISCOVERY_RADIUS,
-    },
   };
 
   function addLanderSite(label: string, x: number, z: number, yaw: number, interactive: boolean) {
@@ -1158,10 +1132,10 @@ function addCrashedShipColliders(colliders: CircleCollider[], x: number, z: numb
   const label = "坠毁飞船残骸主体";
   const hullXs = [-12.7, -9.3, -5.2, 5.2, 9.3, 12.4].map((value) => value * scale);
   const hullZs = [-0.92, 0.92].map((value) => value * scale);
-  addFootprintColliders(colliders, x, z, yaw, hullXs, hullZs, 1.52 * scale, label);
+  addFootprintColliders(colliders, x, z, yaw, hullXs, hullZs, 1.08 * scale, label);
 
   for (const localX of [-13.8, 13.0]) {
-    colliders.push(offsetCircle(x, z, yaw, localX * scale, 0, 1.85 * scale, label));
+    colliders.push(offsetCircle(x, z, yaw, localX * scale, 0, 1.32 * scale, label));
   }
 }
 
@@ -1218,7 +1192,7 @@ function addAncientTreeArchColliders(colliders: CircleCollider[], yaw: number) {
 }
 
 function createTerrain() {
-  const geometry = new THREE.SphereGeometry(PLANET_RADIUS, 96, 54);
+  const geometry = new THREE.SphereGeometry(PLANET_RADIUS, TERRAIN_WIDTH_SEGMENTS, TERRAIN_HEIGHT_SEGMENTS);
   const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
   const colors: number[] = [];
   const color = new THREE.Color();
@@ -1244,7 +1218,7 @@ function createTerrain() {
       vertexColors: true,
       roughness: 0.98,
       metalness: 0.01,
-      flatShading: true,
+      flatShading: false,
     })
   );
   terrain.receiveShadow = true;
@@ -3143,48 +3117,6 @@ function headingFromForward(normal: THREE.Vector3, forward: THREE.Vector3) {
   return Math.atan2(-localForward.x, -localForward.z);
 }
 
-function createSpiderNest() {
-  const group = new THREE.Group();
-  group.name = "Dark-side spider nest";
-
-  const scorched = mat(0x09080a, 0.98, 0.02);
-  const edgeMat = mat(0x3b130e, 0.9, 0.04, 0x120403);
-
-  const mouth = new THREE.Mesh(new THREE.CylinderGeometry(2.35, 2.7, 0.08, 32), scorched);
-  mouth.position.y = -0.12;
-  mouth.scale.z = 0.66;
-  mouth.castShadow = false;
-  mouth.receiveShadow = true;
-  group.add(mouth);
-
-  const throat = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 10), scorched);
-  throat.position.set(0, -0.04, -0.22);
-  throat.scale.set(1.72, 0.2, 0.8);
-  throat.castShadow = false;
-  group.add(throat);
-
-  const stoneAngles = [0.46, 2.38, 3.78, 5.42];
-  stoneAngles.forEach((angle, index) => {
-    const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18 + (index % 2) * 0.05, 0), edgeMat);
-    stone.position.set(Math.cos(angle) * 3.05, 0.03, Math.sin(angle) * 2.05);
-    stone.rotation.set(index * 0.7, angle, index * 0.43);
-    stone.scale.y = 0.36 + (index % 2) * 0.12;
-    stone.castShadow = true;
-    stone.receiveShadow = true;
-    group.add(stone);
-  });
-  return group;
-}
-
-function addSpiderNestColliders(colliders: CircleCollider[]) {
-  colliders.push({
-    center: new THREE.Vector2(),
-    normal: SPIDER_NEST_NORMAL.clone(),
-    radius: 3.25,
-    label: "暗面蜘蛛巢穴洞口",
-  });
-}
-
 function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
   const rockMat = mat(0x8d4228, 1);
   for (let i = 0; i < 95; i += 1) {
@@ -3228,17 +3160,17 @@ function addRockAtNormal(scene: THREE.Object3D, colliders: CircleCollider[], nor
 }
 
 function addDarkSideRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
-  const { tangentA, tangentB } = tangentBasis(SPIDER_NEST_NORMAL);
-  for (let i = 0; i < 44; i += 1) {
+  const { tangentA, tangentB } = tangentBasis(SPIDER_ARRIVAL_NORMAL);
+  for (let i = 0; i < 32; i += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const distance = 13 + Math.random() * 56;
-    const normal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
+    const distance = 24 + Math.random() * 58;
+    const normal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
     addRockAtNormal(scene, colliders, normal, 0.42 + Math.random() * 1.55, "红色岩石");
   }
-  for (let i = 0; i < 58; i += 1) {
+  for (let i = 0; i < 46; i += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const distance = 28 + Math.random() * 88;
-    const normal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
+    const distance = 46 + Math.random() * 84;
+    const normal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
     addRockAtNormal(scene, colliders, normal, 0.32 + Math.random() * 1.15, "红色岩石");
   }
 }
@@ -3310,9 +3242,10 @@ function createDarkSpider(index: number): DarkSpider {
     }
   }
 
-  const { tangentA, tangentB } = tangentBasis(SPIDER_NEST_NORMAL);
+  const { tangentA, tangentB } = tangentBasis(SPIDER_ARRIVAL_NORMAL);
   const angle = (index / 3) * Math.PI * 2 + 0.45;
-  const homeNormal = normalOffset(SPIDER_NEST_NORMAL, tangentA, tangentB, Math.cos(angle) * (10 + index * 3), Math.sin(angle) * (8 + index * 2));
+  const homeDistance = 12 + index * 7;
+  const homeNormal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * homeDistance, Math.sin(angle) * homeDistance);
   const forward = tangentA.clone().applyAxisAngle(homeNormal, angle).projectOnPlane(homeNormal).normalize();
   group.scale.setScalar(1.15);
   return {
@@ -3325,8 +3258,8 @@ function createDarkSpider(index: number): DarkSpider {
     tangentA: tangentA.clone(),
     tangentB: tangentB.clone(),
     phase: index * 1.9,
-    radius: 16 + index * 3,
-    speed: 1.3 + index * 0.18,
+    radius: 14 + index * 5,
+    speed: 1.75 + index * 0.22,
   };
 }
 
@@ -3345,7 +3278,10 @@ export function updateDarkSpiders(
     const orbitA = Math.cos(elapsed * 0.16 + spider.phase) * spider.radius + Math.sin(elapsed * 0.43 + spider.phase) * 4.5;
     const orbitB = Math.sin(elapsed * 0.19 + spider.phase * 0.7) * spider.radius * 0.72 + Math.cos(elapsed * 0.37 + spider.phase * 1.3) * 3.5;
     const patrolNormal = normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, orbitA, orbitB);
-    let desiredNormal = lit ? spider.homeNormal : patrolNormal;
+    const shelterOrbitA = Math.cos(elapsed * 0.08 + spider.phase) * spider.radius * 0.28;
+    const shelterOrbitB = Math.sin(elapsed * 0.07 + spider.phase * 0.7) * spider.radius * 0.2;
+    const shelterNormal = normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, shelterOrbitA, shelterOrbitB);
+    let desiredNormal = lit ? shelterNormal : patrolNormal;
     let avoidingLaser = false;
     if (lightThreat && lightThreatNormal) {
       const lightDot = THREE.MathUtils.clamp(spider.normal.dot(lightThreatNormal), -1, 1);
@@ -3355,15 +3291,15 @@ export function updateDarkSpiders(
         const urgency = 1 - THREE.MathUtils.smoothstep(lightDistance, 0, lightThreat.radius);
         let away = spider.normal.clone().addScaledVector(lightThreatNormal, -lightDot);
         if (away.lengthSq() < 0.000001) {
-          away = spider.normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -spider.normal.dot(SPIDER_NEST_NORMAL));
+          away = spider.normal.clone().addScaledVector(SPIDER_ARRIVAL_NORMAL, -spider.normal.dot(SPIDER_ARRIVAL_NORMAL));
         }
         if (away.lengthSq() > 0.000001) {
           away.normalize();
           const retreatMeters = (10 + (lightThreat.strength ?? 1) * 10) * (0.35 + urgency);
           desiredNormal = spider.normal.clone().addScaledVector(away, retreatMeters / PLANET_RADIUS).normalize();
-          desiredNormal.lerp(spider.homeNormal, 0.32 + urgency * 0.28).normalize();
+          desiredNormal.lerp(shelterNormal, 0.32 + urgency * 0.28).normalize();
         } else {
-          desiredNormal = spider.homeNormal;
+          desiredNormal = shelterNormal;
         }
       }
     }
@@ -3371,18 +3307,20 @@ export function updateDarkSpiders(
     const dot = THREE.MathUtils.clamp(spider.normal.dot(targetNormal), -1, 1);
     const tangent = targetNormal.clone().addScaledVector(spider.normal, -dot);
     const distance = Math.acos(dot);
+    let moving = false;
     if (tangent.lengthSq() > 0.000001 && distance > 0.00002) {
       tangent.normalize();
-      const speedScale = avoidingLaser ? 2.05 : lit ? 1.45 : 1;
+      const speedScale = avoidingLaser ? 2.05 : lit ? 0.7 : 1;
       const step = Math.min((spider.speed * speedScale * delta) / PLANET_RADIUS, distance);
       spider.normal.multiplyScalar(Math.cos(step)).addScaledVector(tangent, Math.sin(step)).normalize();
       spider.forward.lerp(tangent, 0.08).projectOnPlane(spider.normal).normalize();
+      moving = step > 0.000001;
     }
     const collisionState = resolveSpiderObstacleContact(spider.normal, colliders, SPIDER_BODY_RADIUS);
     spider.normal.copy(collisionState.normal);
     spider.forward.projectOnPlane(spider.normal).normalize();
 
-    const legWave = elapsed * (avoidingLaser ? 9.8 : lit ? 8.4 : 5.8) + spider.phase;
+    const legWave = elapsed * (moving ? (avoidingLaser ? 9.8 : lit ? 4.2 : 5.8) : 1.4) + spider.phase;
     const climbLift = collisionState.climbHeight;
     for (let i = 0; i < spider.legs.length; i += 1) {
       const leg = spider.legs[i];
@@ -3402,13 +3340,13 @@ export function updateDarkSpiders(
 }
 
 function constrainSpiderTerritory(normal: THREE.Vector3) {
-  const dot = THREE.MathUtils.clamp(SPIDER_NEST_NORMAL.dot(normal), -1, 1);
+  const dot = THREE.MathUtils.clamp(SPIDER_ARRIVAL_NORMAL.dot(normal), -1, 1);
   const distance = Math.acos(dot) * PLANET_RADIUS;
   if (distance <= SPIDER_PATROL_RADIUS) return normal.clone();
-  const tangent = normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -dot);
-  if (tangent.lengthSq() < 0.000001) return SPIDER_NEST_NORMAL.clone();
+  const tangent = normal.clone().addScaledVector(SPIDER_ARRIVAL_NORMAL, -dot);
+  if (tangent.lengthSq() < 0.000001) return SPIDER_ARRIVAL_NORMAL.clone();
   tangent.normalize();
-  return SPIDER_NEST_NORMAL.clone().multiplyScalar(Math.cos(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).addScaledVector(tangent, Math.sin(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).normalize();
+  return SPIDER_ARRIVAL_NORMAL.clone().multiplyScalar(Math.cos(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).addScaledVector(tangent, Math.sin(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).normalize();
 }
 
 function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
@@ -3452,7 +3390,7 @@ function resolveSpiderObstacleContact(normal: THREE.Vector3, colliders: CircleCo
       if (distance >= minDistance) continue;
       let away = adjusted.clone().addScaledVector(colliderNormal, -dot);
       if (away.lengthSq() < 0.000001) {
-        away = spiderTangentAwayFromNest(colliderNormal);
+        away = spiderTangentAwayFromArrival(colliderNormal);
       }
       away.normalize();
       adjusted.copy(colliderNormal).multiplyScalar(Math.cos(minDistance / PLANET_RADIUS)).addScaledVector(away, Math.sin(minDistance / PLANET_RADIUS)).normalize();
@@ -3470,8 +3408,8 @@ function isSpiderClimbableCollider(collider: CircleCollider) {
   return collider.label.includes("岩石") || collider.label.includes("玄武岩") || collider.label.includes("散落");
 }
 
-function spiderTangentAwayFromNest(normal: THREE.Vector3) {
-  const away = normal.clone().addScaledVector(SPIDER_NEST_NORMAL, -normal.dot(SPIDER_NEST_NORMAL));
+function spiderTangentAwayFromArrival(normal: THREE.Vector3) {
+  const away = normal.clone().addScaledVector(SPIDER_ARRIVAL_NORMAL, -normal.dot(SPIDER_ARRIVAL_NORMAL));
   if (away.lengthSq() > 0.000001) return away;
   const fallback = new THREE.Vector3(1, 0, 0).projectOnPlane(normal);
   if (fallback.lengthSq() > 0.000001) return fallback;
@@ -3570,17 +3508,21 @@ function updateMaintenanceBotPatrol(rover: THREE.Group, elapsed: number, delta: 
   if (typeof data.botTargetIndex !== "number" || typeof data.planetX !== "number" || typeof data.planetZ !== "number") {
     const startIndex = Math.abs(Math.floor(data.offset ?? 0)) % points.length;
     const start = points[startIndex];
-    data.planetX = start.x;
-    data.planetZ = start.z;
+    const safeStart = keepBotPointOutsideFixedColliders(start.x, start.z, colliders);
+    data.planetX = safeStart.x;
+    data.planetZ = safeStart.z;
     data.botTargetIndex = (startIndex + 1) % points.length;
     data.botWaitingUntil = elapsed + botWaitSeconds(data, startIndex);
     data.botYaw = data.botYaw ?? 0;
-    placeObjectOnPlanet(rover, start.x, start.z, 0, data.botYaw);
+    placeObjectOnPlanet(rover, safeStart.x, safeStart.z, 0, data.botYaw);
     updateUtilityBotWalk(rover, elapsed, 0);
     return;
   }
 
   if ((data.botWaitingUntil ?? 0) > elapsed) {
+    const safeCurrent = keepBotPointOutsideFixedColliders(data.planetX, data.planetZ, colliders);
+    data.planetX = safeCurrent.x;
+    data.planetZ = safeCurrent.z;
     placeObjectOnPlanet(rover, data.planetX, data.planetZ, 0, data.botYaw ?? 0);
     updateUtilityBotWalk(rover, elapsed, 0);
     return;
@@ -3600,6 +3542,9 @@ function updateMaintenanceBotPatrol(rover: THREE.Group, elapsed: number, delta: 
     nextX = current.x + toTarget.x;
     nextZ = current.y + toTarget.y;
   }
+  const safeNext = keepBotPointOutsideFixedColliders(nextX, nextZ, colliders);
+  nextX = safeNext.x;
+  nextZ = safeNext.z;
   if (isBotPointInsideFixedCollider(nextX, nextZ, colliders)) {
     data.botTargetIndex = chooseNextBotPatrolIndex(points.length, targetIndex, data.offset);
     data.botWaitingUntil = elapsed + botWaitSeconds(data, targetIndex) * 0.55;
@@ -3643,7 +3588,7 @@ function keepBotPointOutsideFixedColliders(x: number, z: number, colliders: Circ
       if (collider.enabled && !collider.enabled()) continue;
       const away = point.clone().sub(collider.center);
       let distance = away.length();
-      const minDistance = collider.radius + 3.4;
+      const minDistance = collider.radius + MAINTENANCE_BOT_BUILDING_CLEARANCE;
       if (distance >= minDistance) continue;
       if (distance < 0.0001) {
         away.set(1, 0);
@@ -3660,7 +3605,7 @@ function isBotPointInsideFixedCollider(x: number, z: number, colliders: CircleCo
     if (collider.normal) continue;
     if (collider.dynamicObject || collider.radius < 1.4) continue;
     if (collider.enabled && !collider.enabled()) continue;
-    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + 2.8) return true;
+    if (Math.hypot(x - collider.center.x, z - collider.center.y) < collider.radius + MAINTENANCE_BOT_BLOCKED_CLEARANCE) return true;
   }
   return false;
 }
