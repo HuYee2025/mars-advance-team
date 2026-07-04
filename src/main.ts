@@ -207,6 +207,7 @@ const renderer = new THREE.WebGLRenderer({
 const EARTHLIKE_KEY_LIGHT = 7.2;
 const CLEAR_FOG_DENSITY = 0.0014;
 const STORM_FOG_DENSITY = 0.012;
+const STORM_TIME_SCALE = 10;
 const STORM_PERIOD_SECONDS = 4 * 60 * 60;
 const STORM_DURATION_SECONDS = 1500;
 const STORM_FADE_SECONDS = 260;
@@ -4664,7 +4665,7 @@ function updateBackgroundMusicFade() {
 }
 
 function updateWeather() {
-  const cycle = (elapsedTime + 13200) % STORM_PERIOD_SECONDS;
+  const cycle = (elapsedTime * STORM_TIME_SCALE + 13200) % STORM_PERIOD_SECONDS;
   const fadeIn = THREE.MathUtils.smoothstep(cycle, 0, STORM_FADE_SECONDS);
   const fadeOut = 1 - THREE.MathUtils.smoothstep(cycle, STORM_DURATION_SECONDS - STORM_FADE_SECONDS, STORM_DURATION_SECONDS);
   stormStrength = cycle < STORM_DURATION_SECONDS ? Math.min(fadeIn, fadeOut) : 0;
