@@ -1,5 +1,29 @@
 # 决策记录
 
+## 2026-07-04
+
+### 真实太阳光照优先接入
+
+原因：
+
+用户要求优先优化真实太阳光照，并明确“从现在开始都按真实的时间来，不加速”。此前太阳方向是手写循环角度，并通过 `MARS_TIME_SCALE = 10` 加速，不符合真实太阳位置和真实时间推进。
+
+决策：
+
+- 新增 `src/mars-sun-model.ts`，按 NASA Mars24 近似算法由真实 `Date.now()` 计算 Mars Sol Date、MTC、太阳黄经 `Ls`、太阳赤纬、日下点经纬度、火星日心距离和太阳方向。
+- `src/main.ts` 的太阳 `DirectionalLight`、可见太阳、太阳能阵列朝向和暗面蜘蛛避光统一使用该真实太阳方向。
+- 太阳直射强度按火星日心距离 `1 / r^2` 变化，再叠加沙尘暴衰减；不再用游戏内手写太阳角度模拟昼夜。
+- 移除太阳光照里的 `10x` 时间加速；天气循环也从 `elapsedTime * 10` 改为真实 `elapsedTime` 秒推进。
+- 本次不引入真实 DEM 或 HiRISE 地表图片，保持范围集中在光照。
+
+已登记文件：
+
+- `src/mars-sun-model.ts`
+- `src/main.ts`
+- `docs/tech-plan.md`
+- `docs/decision-log.md`
+- `docs/dev-log/current-handoff.md`
+
 ## 2026-06-30
 
 ### 史蒂夫呼叫改为 R 键直达
