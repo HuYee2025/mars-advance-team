@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import backgroundMusicUrl from "./assets/audio/mars-background-light.mp3?url";
+import sunCloseDetailTextureUrl from "./assets/sun-close-detail-texture.png?url";
 import { createFufuCat, updateFufuCat } from "./cat";
 import { MultiplayerClient } from "./multiplayer";
 import type { PlayerInsideState } from "./multiplayer-protocol";
@@ -113,6 +114,7 @@ type WormholeWhiteoutParticle = {
 type JetpackSource = "temporary" | "equipment" | null;
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
+const solarOverexposure = must<HTMLElement>("#solar-overexposure");
 const labelsRoot = must<HTMLDivElement>("#labels");
 const wormholeWhiteoutOverlay = must<HTMLElement>("#wormhole-whiteout");
 const wormholeWhiteoutParticlesRoot = must<HTMLDivElement>("#wormhole-whiteout-particles");
@@ -140,6 +142,7 @@ const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
 const scaleGunOverlay = must<HTMLElement>("#scale-gun-overlay");
 const scaleGunTargetLabel = must<HTMLElement>("#scale-gun-target");
+const scaleGunSummary = must<HTMLElement>("#scale-gun-summary");
 const scaleGunShrinkButton = must<HTMLButtonElement>("#scale-gun-shrink");
 const scaleGunGrowButton = must<HTMLButtonElement>("#scale-gun-grow");
 const cameraOverlay = must<HTMLElement>("#camera-overlay");
@@ -218,6 +221,36 @@ const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
 const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
+const visualShaderNoise = `
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float noise2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash12(i);
+  float b = hash12(i + vec2(1.0, 0.0));
+  float c = hash12(i + vec2(0.0, 1.0));
+  float d = hash12(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm2(vec2 p) {
+  float value = 0.0;
+  float amp = 0.5;
+  mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
+  for (int i = 0; i < 5; i++) {
+    value += amp * noise2(p);
+    p = rot * p * 2.04 + 19.1;
+    amp *= 0.5;
+  }
+  return value;
+}
+`;
 const RENDER_PIXEL_RATIO_LIMIT = 1.25;
 const WORMHOLE_ORGANIC_SEGMENT_COUNT = 42;
 const WORMHOLE_ORGANIC_SEGMENT_SPACING = 2.15;
@@ -226,7 +259,10 @@ const WORMHOLE_ORGANIC_LOOP_LENGTH = WORMHOLE_ORGANIC_SEGMENT_COUNT * WORMHOLE_O
 const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP_LENGTH;
 let sunLight: THREE.DirectionalLight | null = null;
 let sunBody: THREE.Group | null = null;
+const sunWorldScaleVector = new THREE.Vector3();
 let currentMarsSunState: MarsSunState = computeMarsSunState();
+let solarOverexposureStrength = 0;
+let solarHeatStaminaMultiplier = 1;
 renderer.setPixelRatio(renderPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -250,6 +286,8 @@ const playerContactShadow = createPlayerContactShadow();
 scene.add(playerContactShadow);
 const wormholeVisual = createWormholeFallVisual();
 scene.add(wormholeVisual.group);
+const stormWindLayer = createStormWindLayer();
+scene.add(stormWindLayer);
 
 const PHOTO_WALL_CAPACITY = 36;
 const CAMERA_MIN_ZOOM = 1;
@@ -669,8 +707,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "exit.resume": "继续巡检",
     "exit.quit": "返回主页",
     "scale.instructions": "WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）",
-    "scale.shrink": "缩小",
-    "scale.grow": "放大",
+    "scale.shrink": "缩小 Q",
+    "scale.grow": "放大 E",
     "scale.noTarget": "未锁定目标",
     "camera.instructions": "A/D 转向 / W/S 缩放 / E 或 Enter 拍照 / G 收起",
     "photoViewer.instructions": "A/D 切换 / W 放大 / S 恢复 / E 下载 / Q 退出",
@@ -740,8 +778,8 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "exit.resume": "Resume Patrol",
     "exit.quit": "Return Home",
     "scale.instructions": "WASD aim / X holster / Q shrink / E enlarge (- / = backup)",
-    "scale.shrink": "Shrink",
-    "scale.grow": "Enlarge",
+    "scale.shrink": "Shrink Q",
+    "scale.grow": "Enlarge E",
     "scale.noTarget": "No target locked",
     "camera.instructions": "A/D turn / W/S zoom / E or Enter photo / G holster",
     "photoViewer.instructions": "A/D switch / W zoom / S reset / E download / Q exit",
@@ -1346,6 +1384,7 @@ let lastCanvasTapY = 0;
 let hasScaleGun = false;
 let scaleGunAiming = false;
 let scaleGunTarget: ScaleGunTarget | null = null;
+let lastScaleGunTargetUuid: string | null = null;
 let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
 let hasLaserSword = false;
 let laserSwordActive = false;
@@ -1523,12 +1562,18 @@ function updateSolarLighting() {
   if (!sunLight || !sunBody) return;
   currentMarsSunState = computeMarsSunState();
   const direction = currentMarsSunState.direction;
+  const visibleSunScale = THREE.MathUtils.clamp(sunBody.getWorldScale(sunWorldScaleVector).x, 0.35, 4);
+  const stormDim = THREE.MathUtils.lerp(1, 0.42, stormStrength);
+  const scaleLightBoost = THREE.MathUtils.clamp(visibleSunScale, 0.45, 4);
+  solarHeatStaminaMultiplier = visibleSunScale >= 3 ? visibleSunScale : 1;
   sunLight.position.copy(direction).multiplyScalar(72);
-  sunLight.intensity =
-    EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio * THREE.MathUtils.lerp(1, 0.42, stormStrength);
+  sunLight.intensity = EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio * stormDim * scaleLightBoost;
   sunBody.position.copy(direction).multiplyScalar(540);
   const occluded = isSunOccludedByPlanet(sunBody.position);
   sunBody.visible = !occluded;
+  solarOverexposureStrength = !occluded ? THREE.MathUtils.smoothstep(visibleSunScale, 2.2, 4) : 0;
+  const overexposureOpacity = solarOverexposureStrength * THREE.MathUtils.lerp(0.78, 0.28, stormStrength);
+  solarOverexposure.style.setProperty("--solar-overexposure-opacity", overexposureOpacity.toFixed(3));
   setVisibleSunOpacity(sunBody, THREE.MathUtils.lerp(1, 0.28, stormStrength));
   updateVisibleSunFire(sunBody);
 }
@@ -1546,158 +1591,165 @@ function isSunOccludedByPlanet(sunPosition: THREE.Vector3) {
 
 function createVisibleSun(direction: THREE.Vector3) {
   const group = new THREE.Group();
-  const surfaceTexture = createSunSurfaceTexture();
-  const coronaTexture = createSunCoronaTexture();
+  const sunDiscTexture = createSunDiscTexture();
+  const rayTexture = createSunRayTexture();
   const haloTexture = createSunHaloTexture();
-  const sunCore = new THREE.Mesh(
-    new THREE.SphereGeometry(9.2, 48, 24),
-    new THREE.MeshBasicMaterial({
-      map: surfaceTexture,
-      color: 0xfff0a0,
-      transparent: true,
-      toneMapped: false,
-    })
-  );
-  const sunShell = new THREE.Mesh(
-    new THREE.SphereGeometry(10.6, 48, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0xff5f18,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      toneMapped: false,
-    })
-  );
-  const corona = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: coronaTexture,
+  const closeDetailTexture = createSunCloseDetailTexture();
+  const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: sunDiscTexture,
     transparent: true,
-    opacity: 0.84,
+    opacity: 1.45,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  corona.scale.setScalar(32);
+  sunDisc.scale.setScalar(15);
+  const rays = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: rayTexture,
+    transparent: true,
+    opacity: 0.36,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }));
+  rays.scale.setScalar(94);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: haloTexture,
     transparent: true,
-    opacity: 0.42,
+    opacity: 0.66,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  halo.scale.setScalar(58);
-  sunCore.userData.baseOpacity = 1;
-  sunCore.userData.sunPart = "core";
-  sunShell.userData.baseOpacity = 0.42;
-  sunShell.userData.sunPart = "shell";
-  corona.userData.baseOpacity = 0.84;
-  corona.userData.sunPart = "corona";
-  corona.userData.baseScale = 32;
-  halo.userData.baseOpacity = 0.42;
+  halo.scale.setScalar(118);
+  const closeBacklight = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: sunDiscTexture,
+    color: new THREE.Color(1.18, 1.12, 0.98),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }));
+  closeBacklight.scale.setScalar(48);
+  const closeDetail = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: closeDetailTexture,
+    color: new THREE.Color(1.24, 1.16, 1.02),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  }));
+  closeDetail.scale.setScalar(46);
+  const orderedSunSprites = [halo, rays, sunDisc, closeBacklight, closeDetail];
+  orderedSunSprites.forEach((sprite, index) => {
+    sprite.renderOrder = 60 + index;
+    sprite.material.depthTest = false;
+  });
+  sunDisc.userData.baseOpacity = 1.45;
+  sunDisc.userData.sunPart = "disc";
+  sunDisc.userData.baseScale = 15;
+  rays.userData.baseOpacity = 0.36;
+  rays.userData.sunPart = "rays";
+  rays.userData.baseScale = 94;
+  halo.userData.baseOpacity = 0.66;
   halo.userData.sunPart = "halo";
-  halo.userData.baseScale = 58;
-  group.add(halo, corona, sunShell, sunCore);
+  halo.userData.baseScale = 118;
+  closeBacklight.userData.baseOpacity = 1.08;
+  closeBacklight.userData.sunPart = "detailBacklight";
+  closeBacklight.userData.baseScale = 48;
+  closeDetail.userData.baseOpacity = 1.12;
+  closeDetail.userData.sunPart = "detail";
+  closeDetail.userData.baseScale = 46;
+  group.add(halo, rays, sunDisc, closeBacklight, closeDetail);
   group.position.copy(direction.clone().normalize().multiplyScalar(540));
   return group;
 }
 
 function updateVisibleSunFire(sun: THREE.Group) {
-  const pulse = 1 + Math.sin(elapsedTime * 2.8) * 0.035 + Math.sin(elapsedTime * 5.7) * 0.018;
+  const pulse = 1 + Math.sin(elapsedTime * 1.7) * 0.012 + Math.sin(elapsedTime * 3.1) * 0.006;
+  const sceneOpacity = Number(sun.userData.sceneOpacity ?? 1);
+  const worldScale = sun.getWorldScale(sunWorldScaleVector).x;
+  const closeDetail = worldScale >= 3.75 ? 1 : 0;
   sun.traverse((object) => {
-    if (object.userData.sunPart === "core") {
-      object.rotation.y = elapsedTime * 0.035;
-      object.rotation.x = Math.sin(elapsedTime * 0.21) * 0.04;
-      return;
-    }
-    if (object.userData.sunPart === "shell") {
-      object.rotation.y = -elapsedTime * 0.052;
-      return;
-    }
-    if (object.userData.sunPart === "corona" || object.userData.sunPart === "halo") {
+    if (object.userData.sunPart === "disc" || object.userData.sunPart === "rays" || object.userData.sunPart === "halo" || object.userData.sunPart === "detail" || object.userData.sunPart === "detailBacklight") {
       const baseScale = object.userData.baseScale ?? 1;
-      object.scale.setScalar(baseScale * pulse);
+      const detailScale = object.userData.sunPart === "detail" || object.userData.sunPart === "detailBacklight" ? 1 + closeDetail * 0.12 : 1;
+      object.scale.setScalar(baseScale * pulse * detailScale);
       const material = object instanceof THREE.Sprite ? object.material : null;
-      if (material instanceof THREE.SpriteMaterial) material.rotation = elapsedTime * (object.userData.sunPart === "corona" ? 0.018 : -0.006);
+      if (material instanceof THREE.SpriteMaterial) {
+        const baseOpacity = Number(object.userData.baseOpacity ?? 1);
+        if (object.userData.sunPart === "disc") {
+          material.opacity = baseOpacity * sceneOpacity * (1 - closeDetail);
+        } else if (object.userData.sunPart === "rays") {
+          material.opacity = baseOpacity * sceneOpacity * (1 - closeDetail);
+        } else if (object.userData.sunPart === "detail" || object.userData.sunPart === "detailBacklight") {
+          material.opacity = baseOpacity * sceneOpacity * closeDetail;
+        } else {
+          material.opacity = baseOpacity * sceneOpacity * (1 - closeDetail);
+        }
+        const speed = object.userData.sunPart === "rays" ? -0.003 : 0;
+        material.rotation = elapsedTime * speed;
+      }
     }
   });
 }
 
-function createSunSurfaceTexture() {
-  const size = 256;
+function createSunDiscTexture() {
+  const size = 384;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Unable to create sun texture");
   const center = size / 2;
-  const base = ctx.createRadialGradient(center * 0.72, center * 0.68, size * 0.08, center, center, size * 0.54);
-  base.addColorStop(0, "#fff8bd");
-  base.addColorStop(0.24, "#ffd660");
-  base.addColorStop(0.56, "#ff8b21");
-  base.addColorStop(0.82, "#d93608");
-  base.addColorStop(1, "#6f1603");
+  const base = ctx.createRadialGradient(center, center, size * 0.015, center, center, size * 0.5);
+  base.addColorStop(0, "rgba(255, 255, 255, 1)");
+  base.addColorStop(0.24, "rgba(255, 255, 255, 1)");
+  base.addColorStop(0.38, "rgba(255, 252, 218, 0.96)");
+  base.addColorStop(0.58, "rgba(255, 210, 92, 0.62)");
+  base.addColorStop(0.78, "rgba(255, 147, 38, 0.2)");
+  base.addColorStop(1, "rgba(255, 124, 30, 0)");
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, size, size);
-  ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 34; i += 1) {
-    const angle = i * 1.97;
-    const radius = size * (0.08 + ((i * 37) % 100) / 100 * 0.36);
-    const x = center + Math.cos(angle) * radius;
-    const y = center + Math.sin(angle * 1.23) * radius;
-    const spot = ctx.createRadialGradient(x, y, 2, x, y, size * (0.035 + (i % 5) * 0.008));
-    spot.addColorStop(0, i % 3 === 0 ? "rgba(255, 255, 215, 0.92)" : "rgba(255, 167, 34, 0.72)");
-    spot.addColorStop(1, "rgba(255, 76, 0, 0)");
-    ctx.fillStyle = spot;
-    ctx.beginPath();
-    ctx.arc(x, y, size * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalCompositeOperation = "source-over";
-  ctx.strokeStyle = "rgba(128, 20, 0, 0.24)";
-  ctx.lineWidth = 7;
-  for (let i = 0; i < 9; i += 1) {
-    ctx.beginPath();
-    const y = size * (0.16 + i * 0.09);
-    ctx.moveTo(-20, y);
-    ctx.bezierCurveTo(size * 0.24, y - 28, size * 0.68, y + 30, size + 20, y - 10);
-    ctx.stroke();
-  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
 }
 
-function createSunCoronaTexture() {
-  const size = 256;
+function createSunRayTexture() {
+  const size = 512;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Unable to create sun corona texture");
+  if (!ctx) throw new Error("Unable to create sun ray texture");
   const center = size / 2;
   ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 44; i += 1) {
-    const angle = (i / 44) * Math.PI * 2;
-    const inner = size * (0.25 + (i % 4) * 0.012);
-    const outer = size * (0.37 + ((i * 19) % 17) / 100);
-    const width = size * (0.016 + (i % 3) * 0.004);
-    ctx.beginPath();
-    ctx.moveTo(center + Math.cos(angle - width) * inner, center + Math.sin(angle - width) * inner);
-    ctx.lineTo(center + Math.cos(angle) * outer, center + Math.sin(angle) * outer);
-    ctx.lineTo(center + Math.cos(angle + width) * inner, center + Math.sin(angle + width) * inner);
-    ctx.closePath();
-    ctx.fillStyle = i % 2 === 0 ? "rgba(255, 107, 10, 0.28)" : "rgba(255, 210, 72, 0.2)";
-    ctx.fill();
-  }
-  const glow = ctx.createRadialGradient(center, center, size * 0.21, center, center, size * 0.5);
-  glow.addColorStop(0, "rgba(255, 250, 196, 0.94)");
-  glow.addColorStop(0.28, "rgba(255, 144, 22, 0.62)");
-  glow.addColorStop(0.58, "rgba(255, 56, 0, 0.28)");
-  glow.addColorStop(1, "rgba(255, 48, 0, 0)");
-  ctx.fillStyle = glow;
+  const radial = ctx.createRadialGradient(center, center, size * 0.02, center, center, size * 0.5);
+  radial.addColorStop(0, "rgba(255, 255, 255, 0.56)");
+  radial.addColorStop(0.16, "rgba(255, 244, 188, 0.28)");
+  radial.addColorStop(0.46, "rgba(255, 188, 92, 0.09)");
+  radial.addColorStop(1, "rgba(255, 175, 88, 0)");
+  ctx.fillStyle = radial;
   ctx.fillRect(0, 0, size, size);
+  const rayAngles = [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4];
+  for (const angle of rayAngles) {
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(angle);
+    const gradient = ctx.createLinearGradient(-size * 0.48, 0, size * 0.48, 0);
+    gradient.addColorStop(0, "rgba(255, 210, 126, 0)");
+    gradient.addColorStop(0.47, "rgba(255, 244, 198, 0.13)");
+    gradient.addColorStop(0.5, "rgba(255, 255, 255, 0.32)");
+    gradient.addColorStop(0.53, "rgba(255, 244, 198, 0.13)");
+    gradient.addColorStop(1, "rgba(255, 210, 126, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-size * 0.48, -size * 0.012, size * 0.96, size * 0.024);
+    ctx.restore();
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
@@ -1712,11 +1764,11 @@ function createSunHaloTexture() {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Unable to create sun halo texture");
   const center = size / 2;
-  const glow = ctx.createRadialGradient(center, center, size * 0.16, center, center, size * 0.5);
-  glow.addColorStop(0, "rgba(255, 239, 172, 0.72)");
-  glow.addColorStop(0.38, "rgba(255, 126, 18, 0.28)");
-  glow.addColorStop(0.74, "rgba(255, 70, 0, 0.12)");
-  glow.addColorStop(1, "rgba(255, 70, 0, 0)");
+  const glow = ctx.createRadialGradient(center, center, size * 0.03, center, center, size * 0.5);
+  glow.addColorStop(0, "rgba(255, 255, 255, 0.72)");
+  glow.addColorStop(0.22, "rgba(255, 244, 176, 0.34)");
+  glow.addColorStop(0.5, "rgba(255, 190, 92, 0.16)");
+  glow.addColorStop(1, "rgba(255, 175, 86, 0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
   const texture = new THREE.CanvasTexture(canvas);
@@ -1726,14 +1778,28 @@ function createSunHaloTexture() {
 }
 
 function setVisibleSunOpacity(sun: THREE.Group, opacity: number) {
+  sun.userData.sceneOpacity = opacity;
   sun.traverse((object) => {
     if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Sprite)) return;
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) {
       if (!(material instanceof THREE.Material)) continue;
       material.opacity = (object.userData.baseOpacity ?? 1) * opacity;
+      if (material instanceof THREE.ShaderMaterial && material.uniforms.uSceneOpacity) {
+        material.uniforms.uSceneOpacity.value = opacity;
+      }
     }
   });
+}
+
+function createSunCloseDetailTexture() {
+  const texture = new THREE.TextureLoader().load(sunCloseDetailTextureUrl);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function createPlayerContactShadow() {
@@ -1749,6 +1815,55 @@ function createPlayerContactShadow() {
   });
   const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.72, 32), material);
   mesh.renderOrder = 2;
+  return mesh;
+}
+
+function createStormWindLayer() {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.BackSide,
+    blending: THREE.NormalBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uStrength: { value: 0 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vWorldDir;
+      void main() {
+        vUv = uv;
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldDir = normalize(worldPosition.xyz);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform float uTime;
+      uniform float uStrength;
+      varying vec2 vUv;
+      varying vec3 vWorldDir;
+      ${visualShaderNoise}
+
+      void main() {
+        vec2 flowUv = vec2(vUv.x * 3.2 + uTime * 0.018, vUv.y * 1.8 + sin(uTime * 0.05) * 0.08);
+        float broad = fbm2(flowUv * vec2(2.1, 1.0));
+        float streaks = fbm2(vec2(vUv.x * 18.0 + uTime * 0.18 + broad * 1.4, vUv.y * 4.4 - uTime * 0.035));
+        float latitude = smoothstep(0.12, 0.82, 1.0 - abs(vWorldDir.y));
+        float bands = smoothstep(0.44, 0.84, streaks + broad * 0.38) * latitude;
+        float fineDust = hash12(gl_FragCoord.xy + floor(uTime * 24.0)) * 0.06;
+        float alpha = (bands * 0.24 + fineDust) * uStrength;
+        vec3 color = mix(vec3(0.32, 0.12, 0.06), vec3(0.86, 0.36, 0.15), broad);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(385, 48, 24), material);
+  mesh.name = "Shader storm wind bands";
+  mesh.renderOrder = 18;
+  mesh.visible = false;
   return mesh;
 }
 
@@ -1888,6 +2003,12 @@ function createWormholeFallVisual() {
   veil.renderOrder = 29;
   group.add(veil);
 
+  const shaderVeilMaterial = createWormholeShaderVeilMaterial();
+  const shaderVeil = new THREE.Mesh(new THREE.PlaneGeometry(160, 100), shaderVeilMaterial);
+  shaderVeil.position.set(0, 0, -38);
+  shaderVeil.renderOrder = 31;
+  group.add(shaderVeil);
+
   const organicTunnel = createWormholeOrganicTunnel();
   organicTunnel.group.renderOrder = 30;
   group.add(organicTunnel.group);
@@ -1902,10 +2023,64 @@ function createWormholeFallVisual() {
     mars,
     marsMaterial,
     veilMaterial,
+    shaderVeilMaterial,
     organicTunnel: organicTunnel.group,
     organicSegments: organicTunnel.segments,
     organicMaterials: organicTunnel.materials,
   };
+}
+
+function createWormholeShaderVeilMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uProgress: { value: 0 },
+      uOpacity: { value: 0 },
+      uDrift: { value: new THREE.Vector2() },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform float uTime;
+      uniform float uProgress;
+      uniform float uOpacity;
+      uniform vec2 uDrift;
+      varying vec2 vUv;
+      ${visualShaderNoise}
+
+      void main() {
+        vec2 p = (vUv - 0.5) * vec2(1.75, 1.0);
+        p += uDrift * 0.025;
+        float r = length(p);
+        float angle = atan(p.y, p.x);
+        float tunnel = fbm2(vec2(angle * 2.4 + uTime * 0.11, 1.0 / max(r, 0.05) - uTime * 0.34));
+        float cloud = fbm2(p * 4.2 + vec2(uTime * 0.16, -uTime * 0.11));
+        float streak = smoothstep(0.46, 0.9, tunnel + cloud * 0.34) * smoothstep(0.92, 0.12, r);
+        float edgeFlow = smoothstep(0.24, 0.86, r) * smoothstep(1.05, 0.45, r) * tunnel;
+        float grain = hash12(gl_FragCoord.xy + floor(uTime * 30.0)) - 0.5;
+        float marsFade = 1.0 - smoothstep(0.74, 0.94, uProgress);
+        float alpha = (streak * 0.16 + edgeFlow * 0.1 + abs(grain) * 0.035) * uOpacity * marsFade;
+        vec3 blue = vec3(0.18, 0.48, 1.0);
+        vec3 white = vec3(0.86, 0.98, 1.0);
+        vec3 amber = vec3(1.0, 0.36, 0.12);
+        vec3 color = mix(blue, white, streak);
+        color = mix(color, amber, smoothstep(0.68, 0.98, uProgress) * cloud);
+        color += grain * 0.045;
+        gl_FragColor = vec4(max(color, vec3(0.0)), alpha);
+      }
+    `,
+  });
 }
 
 function createWormholeOrganicTunnel() {
@@ -2248,6 +2423,10 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   particlePosition.needsUpdate = true;
 
   wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
+  wormholeVisual.shaderVeilMaterial.uniforms.uTime.value = visualTime;
+  wormholeVisual.shaderVeilMaterial.uniforms.uProgress.value = progress;
+  wormholeVisual.shaderVeilMaterial.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.82, 0.36, marsPhase) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
+  wormholeVisual.shaderVeilMaterial.uniforms.uDrift.value.copy(drift);
 
   const organicOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.04) * (1 - THREE.MathUtils.smoothstep(progress, 0.62, 0.74));
   wormholeVisual.organicTunnel.visible = organicOpacity > 0.01;
@@ -3691,6 +3870,7 @@ function toggleScaleGunAiming(force?: boolean) {
     orbitYawOffset = 0;
     camera.fov = 54;
     scaleGunTarget = null;
+    lastScaleGunTargetUuid = null;
   }
   camera.updateProjectionMatrix();
   updateLaserSwordVisual();
@@ -3830,10 +4010,14 @@ function updateScaleGun() {
     return;
   }
   if (!scaleGunAiming) {
+    lastScaleGunTargetUuid = null;
     updateScaleGunOverlay();
     return;
   }
   scaleGunTarget = findScaleGunTarget();
+  const targetUuid = scaleGunTarget?.object.uuid ?? null;
+  if (targetUuid && targetUuid !== lastScaleGunTargetUuid) playScaleGunLockBeep();
+  lastScaleGunTargetUuid = targetUuid;
   updateScaleGunOverlay();
 }
 
@@ -3842,6 +4026,69 @@ function updateScaleGunOverlay() {
   scaleGunOverlay.classList.toggle("is-visible", visible);
   scaleGunOverlay.setAttribute("aria-hidden", String(!visible));
   scaleGunTargetLabel.textContent = visible && scaleGunTarget ? localizeLabel(scaleGunTarget.label) : tr("scale.noTarget");
+  scaleGunSummary.textContent = visible && scaleGunTarget ? scaleGunTargetSummary(scaleGunTarget) : "";
+}
+
+function scaleGunTargetSummary(target: ScaleGunTarget) {
+  return currentLanguage === "zh-CN" ? scaleGunTargetSummaryZh(target) : scaleGunTargetSummaryEn(target);
+}
+
+function scaleGunTargetSummaryZh(target: ScaleGunTarget) {
+  const label = target.label;
+  if (label === "太阳") return "直径约 139 万公里，表面约 5,500°C。\n火星平均距太阳约 2.28 亿公里，是基地昼夜与能源的源头。";
+  if (target.kind === "starlink") return "参考 Starlink 低轨通信星座，用密集小卫星提供宽带链路。\nARES 版本负责火星基地与轨道中继通信。";
+  if (target.kind === "meteor") return "石质近火流星，参考火星上常见的外来陨石发现。\n它沿近火轨道掠过，是雷达里的高速异常目标。";
+  if (label.includes("NASA") || label.includes("火星车")) return "参考 NASA Perseverance：六轮、桅杆相机、机械臂和样本缓存系统。\n它代表真实火星探测留下的工程遗产。";
+  if (label.includes("太阳能阵列")) return "太阳能阵列把日照转成基地电力，沙尘会降低输出。\n当前基地靠它给氧气站、温室和通信系统供电。";
+  if (label.includes("居住舱")) return "参考火星模拟栖息舱，是巡检员生活、休整和照片展示区。\n它维持气压、温度和基础生存环境。";
+  if (label.includes("温室")) return "受控生态舱，用补光、水循环和密封环境培育植物。\n它是基地从工程系统走向生态系统的第一步。";
+  if (label.includes("氧气生产站")) return "氧气站从火星稀薄 CO2 大气中维持可呼吸储备。\n它和太阳能阵列耦合，是当前主线故障核心。";
+  if (label.includes("甲烷燃料厂")) return "参考火星原位资源利用，把 CO2 与氢源转成甲烷燃料。\n它决定基地未来能否返航和扩建。";
+  if (label.includes("机器人车库")) return "维修机器人调度点，负责外部管线、阵列和阀门巡检。\n基地无人值守时期主要靠它维持运行。";
+  if (label.includes("通信塔")) return "基地到轨道与地球的通信节点，信号存在分钟级延迟。\n它把火星巡检数据传回任务控制。";
+  if (label.includes("科研舱")) return "样本分析和材料打印区域，可复检密封件与地质样本。\n它把现场故障转成可执行维修方案。";
+  if (label.includes("物资仓")) return "存放备件、密封环、食物和外勤消耗品。\n它是基地长期运行的缓冲库存。";
+  if (label.includes("医疗舱")) return "生命体征监测与应急处理舱，参考远征医疗站。\n在火星上，小伤病也会变成任务风险。";
+  if (label.includes("登陆飞船")) return "载人登陆器，负责把第一位居民送到基地附近。\n它是地球任务链和火星地表生活的连接点。";
+  if (label.includes("货运飞船")) return "自动货运飞船，提前投送基地模块、备件和补给。\n多数火星基地建设都要先靠货运窗口铺底。";
+  if (label.includes("返回飞船")) return "返程飞船，依赖燃料、导航和生命保障全部达标。\n它提醒玩家：定居之前，撤离能力同样重要。";
+  if (label.includes("黑色方碑")) return "未知方碑，外形参考科幻中的单体遗迹符号。\n它是缩放枪与异常科技线索的入口。";
+  if (label.includes("足球")) return "火星低重力下的娱乐物件，也是相机解锁支线的一部分。\n它让基地不只是工程设施，也有人类生活痕迹。";
+  if (label === "福福") return "获救伙伴，来自坠毁飞船附近的意外生命迹象。\n当前跟随亚历克斯巡检，是基地里的温情变量。";
+  if (label.includes("未知生命")) return "未归档生命迹象，行为和火星已知生态不匹配。\n靠近后才能确认它和古树门洞的关系。";
+  if (label.includes("坠毁") || label.includes("残骸")) return "坠毁飞船残骸，参考薄壁不锈钢航天器破损形态。\n它记录了一次失败降落，也藏着救援线索。";
+  if (label.includes("远古巨树") || label.includes("拱门")) return "远古巨树拱门，火星暗面的异常巨构。\n它内部的时空之门连接虫洞坠落事件。";
+  if (label.includes("未知")) return "未归档目标，传感器只能确认轮廓和位置。\n靠近、对话或拍照后可补全身份。";
+  return "可缩放实体，缩放效果 60 秒后恢复。\n观察尺寸变化时，留意它和基地系统的关系。";
+}
+
+function scaleGunTargetSummaryEn(target: ScaleGunTarget) {
+  const label = target.label;
+  if (label === "太阳") return "Diameter about 1.39 million km; surface about 5,500°C.\nMars orbits about 228 million km from it on average.";
+  if (target.kind === "starlink") return "Inspired by Starlink low-orbit broadband constellations.\nARES uses it as a Mars orbital relay mesh.";
+  if (target.kind === "meteor") return "A rocky near-Mars meteor inspired by real meteorite finds.\nIt is a fast radar anomaly crossing local orbit.";
+  if (label.includes("NASA") || label.includes("火星车")) return "Inspired by NASA Perseverance: six wheels, mast cameras, arm, and sample cache.\nIt marks the engineering legacy of real Mars exploration.";
+  if (label.includes("太阳能阵列")) return "Solar arrays convert sunlight into base power; dust reduces output.\nThey feed oxygen, greenhouse, and communication systems.";
+  if (label.includes("居住舱")) return "A Mars habitat-style living and recovery module.\nIt keeps pressure, temperature, and survival basics stable.";
+  if (label.includes("温室")) return "A controlled greenhouse for plants, water loops, and grow lights.\nIt is the base's first step toward an ecology.";
+  if (label.includes("氧气生产站")) return "The oxygen plant maintains breathable reserves from the CO2-rich air.\nIts power link is central to the current failure.";
+  if (label.includes("甲烷燃料厂")) return "Inspired by Mars in-situ fuel production.\nIt turns local resources into future return and expansion capacity.";
+  if (label.includes("机器人车库")) return "Maintenance robot dispatch hub for pipes, arrays, and valves.\nIt kept the base alive before human arrival.";
+  if (label.includes("通信塔")) return "Surface-to-orbit and Earth relay node with minutes of delay.\nIt carries patrol data back to mission control.";
+  if (label.includes("科研舱")) return "Lab and fabrication module for samples, seals, and materials.\nIt turns field faults into repair plans.";
+  if (label.includes("物资仓")) return "Stores spares, seal rings, food, and field consumables.\nIt is the base's operational buffer.";
+  if (label.includes("医疗舱")) return "Expedition medical bay for monitoring and emergency care.\nOn Mars, small injuries can become mission risks.";
+  if (label.includes("登陆飞船")) return "Crew lander linking the Earth mission chain to the surface base.\nIt delivered the first resident nearby.";
+  if (label.includes("货运飞船")) return "Autonomous cargo lander for modules, spares, and supplies.\nMars bases depend on cargo windows before crew arrival.";
+  if (label.includes("返回飞船")) return "Return vehicle requiring fuel, navigation, and life support readiness.\nSettlement still needs an escape path.";
+  if (label.includes("黑色方碑")) return "Unknown monolith inspired by classic sci-fi artifact imagery.\nIt opens the scale-gun and anomaly technology thread.";
+  if (label.includes("足球")) return "A low-gravity recreation object and camera-unlock side path.\nIt makes the base feel lived in, not only engineered.";
+  if (label === "福福") return "Rescued companion from the crash site life-sign anomaly.\nNow follows Alex as a warmer variable in the base.";
+  if (label.includes("未知生命")) return "Uncatalogued life sign outside known Martian ecology.\nApproach to learn its tie to the ancient portal.";
+  if (label.includes("坠毁") || label.includes("残骸")) return "Crashed ship wreckage inspired by thin-wall stainless spacecraft failure.\nIt records a hard landing and hides rescue clues.";
+  if (label.includes("远古巨树") || label.includes("拱门")) return "Ancient tree arch, an anomalous megastructure on the dark side.\nIts portal connects to the wormhole fall event.";
+  if (label.includes("未知")) return "Uncatalogued target; sensors confirm only outline and position.\nApproach, talk, or photograph it to identify.";
+  return "Scalable object. The effect restores after 60 seconds.\nWatch how its size relates to nearby base systems.";
 }
 
 function awardCamera() {
@@ -4311,7 +4558,7 @@ function adjustMapZoom(direction: number) {
 
 function jump() {
   if (!grounded) return;
-  stamina = Math.max(0, stamina - STAMINA_JUMP_COST);
+  stamina = Math.max(0, stamina - STAMINA_JUMP_COST * currentSolarHeatStaminaMultiplier());
   if (stamina <= 0) {
     respawnAfterStaminaDepleted();
     return;
@@ -4634,6 +4881,31 @@ function playUiBeep() {
   oscillator.stop(now + 0.1);
 }
 
+function playScaleGunLockBeep() {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  uiAudioContext ??= new AudioContextClass();
+  const context = uiAudioContext;
+  if (context.state === "suspended") context.resume().catch(() => undefined);
+
+  const now = context.currentTime;
+  const playTone = (frequency: number, start: number) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.052, start + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.064);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.078);
+  };
+  playTone(1320, now);
+  playTone(1760, now + 0.092);
+}
+
 function playDingDong() {
   const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
   if (!AudioContextClass) return;
@@ -4687,7 +4959,12 @@ function updateWeather() {
   fog.density = THREE.MathUtils.lerp(CLEAR_FOG_DENSITY, STORM_FOG_DENSITY, stormStrength);
   fog.color.copy(new THREE.Color(0x120a0a).lerp(new THREE.Color(0x8d3a20), stormStrength));
   if (scene.background instanceof THREE.Color) scene.background.copy(clearSkyColor).lerp(stormSkyColor, stormStrength * 0.82);
-  renderer.toneMappingExposure = THREE.MathUtils.lerp(1.08, 0.72, stormStrength);
+  renderer.toneMappingExposure = THREE.MathUtils.lerp(1.08, 0.72, stormStrength) * THREE.MathUtils.lerp(1, 1.72, solarOverexposureStrength);
+  stormWindLayer.visible = started && stormStrength > 0.015 && !wormholeFall && !isWormholeWhiteoutActive();
+  if (stormWindLayer.material instanceof THREE.ShaderMaterial) {
+    stormWindLayer.material.uniforms.uTime.value = elapsedTime;
+    stormWindLayer.material.uniforms.uStrength.value = stormStrength;
+  }
 }
 
 function updateStarlink() {
@@ -6784,8 +7061,31 @@ function refillSuitOxygen(label: string) {
   showDialogue(label, "氧气背包已更换。剩余氧气 100%。", 2.8);
 }
 
+function currentSolarHeatStaminaMultiplier() {
+  return solarHeatStaminaMultiplier > 1.01 ? solarHeatStaminaMultiplier : 1;
+}
+
+function warnAndHandleVitalFailure() {
+  if (stamina <= STAMINA_LOW_THRESHOLD && !staminaWarningShown) {
+    staminaWarningShown = true;
+    showDialogue("生命维持", "体能低于 20%。回到居住舱休整即可恢复。", 4);
+  }
+  if (suitOxygen <= 0) respawnAfterOxygenDepleted();
+  else if (stamina <= 0) respawnAfterStaminaDepleted();
+}
+
 function updateSuitOxygen(delta: number) {
-  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  if (!started || wormholeFall) return;
+  const solarHeatMultiplier = currentSolarHeatStaminaMultiplier();
+  const solarHeatActive = solarHeatMultiplier > 1;
+  const vitalsPaused = dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover;
+  if (vitalsPaused) {
+    if (solarHeatActive) {
+      stamina = Math.max(0, stamina - STAMINA_WALK_DRAIN_PER_SECOND * solarHeatMultiplier * delta);
+      warnAndHandleVitalFailure();
+    }
+    return;
+  }
   const moving = playerVelocity.length() > 0.6;
   const sprinting = moving && (keyState.has("ShiftLeft") || keyState.has("ShiftRight"));
   const fufuOxygenBonus = fufuRescued ? FUFU_OXYGEN_DRAIN_MULTIPLIER : 1;
@@ -6793,7 +7093,9 @@ function updateSuitOxygen(delta: number) {
   suitOxygen = Math.max(0, suitOxygen - oxygenDrain * delta);
   if (moving) {
     const staminaDrain = !grounded ? STAMINA_JUMP_DRAIN_PER_SECOND : sprinting ? STAMINA_SPRINT_DRAIN_PER_SECOND : STAMINA_WALK_DRAIN_PER_SECOND;
-    stamina = Math.max(0, stamina - staminaDrain * delta);
+    stamina = Math.max(0, stamina - staminaDrain * solarHeatMultiplier * delta);
+  } else if (solarHeatActive) {
+    stamina = Math.max(0, stamina - STAMINA_WALK_DRAIN_PER_SECOND * solarHeatMultiplier * delta);
   } else if (grounded) {
     stamina = Math.min(STAMINA_MAX, stamina + STAMINA_STAND_RECOVERY_PER_SECOND * delta);
     if (stamina > STAMINA_LOW_THRESHOLD + 5) staminaWarningShown = false;
@@ -6802,12 +7104,7 @@ function updateSuitOxygen(delta: number) {
     oxygenWarningShown = true;
     showDialogue("生命维持", "氧气背包低于 20%。寻找补给点更换。", 4);
   }
-  if (stamina <= STAMINA_LOW_THRESHOLD && !staminaWarningShown) {
-    staminaWarningShown = true;
-    showDialogue("生命维持", "体能低于 20%。回到居住舱休整即可恢复。", 4);
-  }
-  if (suitOxygen <= 0) respawnAfterOxygenDepleted();
-  else if (stamina <= 0) respawnAfterStaminaDepleted();
+  warnAndHandleVitalFailure();
 }
 
 function respawnAfterOxygenDepleted() {
