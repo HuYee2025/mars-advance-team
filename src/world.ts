@@ -249,7 +249,9 @@ const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
 export const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 const ANCIENT_TREE_ARCH_NORMAL = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
 const SPIDER_ARRIVAL_NORMAL = ANCIENT_TREE_ARCH_NORMAL.clone().lerp(CRASHED_SHIP_SITE_NORMAL, 0.72).normalize();
-const SPIDER_PATROL_RADIUS = 44;
+const SPIDER_PATROL_RADIUS = 72;
+const SPIDER_DARK_RING_DISTANCE = 54;
+const SPIDER_DARK_SPREAD_ANGLE = 0.46;
 const SPIDER_BODY_RADIUS = 1.65;
 const TERRAIN_WIDTH_SEGMENTS = 96;
 const TERRAIN_HEIGHT_SEGMENTS = 54;
@@ -278,6 +280,37 @@ meteorRockTexture.anisotropy = 4;
 const wheelTrackGeometry = new THREE.PlaneGeometry(0.54, 3.15);
 let dustFogTexture: THREE.CanvasTexture | null = null;
 let ancientTreePortalTexture: THREE.CanvasTexture | null = null;
+
+const shaderNoise = `
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float noise2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash12(i);
+  float b = hash12(i + vec2(1.0, 0.0));
+  float c = hash12(i + vec2(0.0, 1.0));
+  float d = hash12(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm2(vec2 p) {
+  float value = 0.0;
+  float amp = 0.5;
+  mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
+  for (int i = 0; i < 5; i++) {
+    value += amp * noise2(p);
+    p = rot * p * 2.03 + 17.7;
+    amp *= 0.5;
+  }
+  return value;
+}
+`;
 
 function spread(value: number) {
   return value * LAYOUT_SPREAD;
@@ -2034,37 +2067,26 @@ function createAncientTreePortal() {
   group.visible = false;
   group.renderOrder = 8;
 
-  const portalMaterial = new THREE.MeshBasicMaterial({
-    map: getAncientTreePortalTexture(),
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
+  const portalMaterial = createPortalEnergyMaterial(0xffffff, 0.84, 1);
   const portal = new THREE.Mesh(new THREE.CircleGeometry(1, 96), portalMaterial);
   portal.position.set(0, 39.5, 0);
   portal.scale.set(22.4, 39.2, 1);
   portal.renderOrder = 8;
   group.add(portal);
 
-  const haloMaterial = new THREE.MeshBasicMaterial({
-    map: getAncientTreePortalTexture(),
-    color: 0x43bfff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
+  const haloMaterial = createPortalEnergyMaterial(0x43bfff, 0.42, 1.55);
   const halo = new THREE.Mesh(new THREE.CircleGeometry(1, 96), haloMaterial);
   halo.position.set(0, 39.5, -0.16);
   halo.scale.set(25.8, 42.6, 1);
   halo.renderOrder = 7;
   group.add(halo);
+
+  const depthMaterial = createPortalEnergyMaterial(0x74eaff, 0.34, 2.4);
+  const depthVeil = new THREE.Mesh(new THREE.CircleGeometry(1, 96), depthMaterial);
+  depthVeil.position.set(0, 39.5, -1.25);
+  depthVeil.scale.set(18.8, 33.5, 1);
+  depthVeil.renderOrder = 6;
+  group.add(depthVeil);
 
   const particleCount = 120;
   const positions = new Float32Array(particleCount * 3);
@@ -2150,6 +2172,7 @@ function createAncientTreePortal() {
 
   group.userData.portalMaterial = portalMaterial;
   group.userData.haloMaterial = haloMaterial;
+  group.userData.depthMaterial = depthMaterial;
   group.userData.particleMaterial = particleMaterial;
   group.userData.reflectedLightMaterials = group.children
     .filter((child): child is THREE.Mesh => child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial && child.renderOrder === 11)
@@ -2163,6 +2186,60 @@ function createAncientTreePortal() {
   group.userData.groundLight = groundLight;
   group.userData.lastLightningTick = -1;
   return group;
+}
+
+function createPortalEnergyMaterial(color: number, baseOpacity: number, depthScale: number) {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uStrength: { value: 0 },
+      uPulse: { value: 1 },
+      uColor: { value: new THREE.Color(color) },
+      uBaseOpacity: { value: baseOpacity },
+      uDepthScale: { value: depthScale },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform float uTime;
+      uniform float uStrength;
+      uniform float uPulse;
+      uniform vec3 uColor;
+      uniform float uBaseOpacity;
+      uniform float uDepthScale;
+      varying vec2 vUv;
+      ${shaderNoise}
+
+      void main() {
+        vec2 centered = vUv - 0.5;
+        centered.x *= 1.42;
+        float r = length(centered) * 2.0;
+        float angle = atan(centered.y, centered.x);
+        float edge = smoothstep(1.02, 0.78, r);
+        float rim = smoothstep(0.98, 0.74, r) - smoothstep(0.7, 0.42, r);
+        float rings = sin((1.05 - r) * 24.0 * uDepthScale - uTime * 3.4 + fbm2(centered * 5.0 + uTime * 0.08) * 3.2);
+        float stream = fbm2(vec2(angle * 1.8 + uTime * 0.18, r * 5.5 - uTime * 0.36));
+        float core = smoothstep(0.82, 0.08, r) * (0.38 + stream * 0.4);
+        float depth = smoothstep(-0.12, 0.9, rings) * smoothstep(1.04, 0.18, r) * 0.36;
+        float alpha = (core + depth + rim * 0.9) * edge * uStrength * uBaseOpacity * uPulse;
+        vec3 whiteHot = vec3(0.92, 1.0, 1.0);
+        vec3 color = mix(uColor, whiteHot, clamp(core + depth * 0.7, 0.0, 1.0));
+        color += uColor * rim * 0.8;
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+  });
 }
 
 function getAncientTreePortalTexture() {
@@ -2213,16 +2290,24 @@ export function updateAncientTreePortal(portal: THREE.Group, elapsed: number) {
   if (!portal.visible) return;
 
   const pulse = 0.74 + Math.sin(elapsed * 5.2) * 0.12 + Math.sin(elapsed * 13.1) * 0.06;
-  const portalMaterial = portal.userData.portalMaterial as THREE.MeshBasicMaterial;
-  const haloMaterial = portal.userData.haloMaterial as THREE.MeshBasicMaterial;
+  const portalMaterial = portal.userData.portalMaterial as THREE.ShaderMaterial;
+  const haloMaterial = portal.userData.haloMaterial as THREE.ShaderMaterial;
+  const depthMaterial = portal.userData.depthMaterial as THREE.ShaderMaterial;
   const particleMaterial = portal.userData.particleMaterial as THREE.PointsMaterial;
   const lightningMaterial = portal.userData.lightningMaterial as THREE.LineBasicMaterial;
   const coreLight = portal.userData.coreLight as THREE.PointLight;
   const archLight = portal.userData.archLight as THREE.PointLight;
   const groundLight = portal.userData.groundLight as THREE.PointLight;
   const reflectedLightMaterials = portal.userData.reflectedLightMaterials as THREE.MeshBasicMaterial[];
-  portalMaterial.opacity = strength * pulse * 0.84;
-  haloMaterial.opacity = strength * (0.36 + Math.sin(elapsed * 3.1) * 0.08);
+  portalMaterial.uniforms.uTime.value = elapsed;
+  portalMaterial.uniforms.uStrength.value = strength;
+  portalMaterial.uniforms.uPulse.value = pulse;
+  haloMaterial.uniforms.uTime.value = elapsed * 0.86 + 17.0;
+  haloMaterial.uniforms.uStrength.value = strength;
+  haloMaterial.uniforms.uPulse.value = 0.78 + Math.sin(elapsed * 3.1) * 0.08;
+  depthMaterial.uniforms.uTime.value = elapsed * 0.72 + 41.0;
+  depthMaterial.uniforms.uStrength.value = strength;
+  depthMaterial.uniforms.uPulse.value = 0.86 + Math.sin(elapsed * 2.3 + 1.2) * 0.08;
   particleMaterial.opacity = strength * 0.92;
   lightningMaterial.opacity = strength * (0.28 + Math.max(0, Math.sin(elapsed * 19.0)) * 0.72);
   coreLight.intensity = strength * (42 + Math.max(0, Math.sin(elapsed * 5.2)) * 13);
@@ -3242,10 +3327,10 @@ function createDarkSpider(index: number): DarkSpider {
     }
   }
 
-  const { tangentA, tangentB } = tangentBasis(SPIDER_ARRIVAL_NORMAL);
+  const { tangentA, tangentB } = tangentBasis(ANCIENT_TREE_ARCH_NORMAL);
   const angle = (index / 3) * Math.PI * 2 + 0.45;
   const homeDistance = 12 + index * 7;
-  const homeNormal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * homeDistance, Math.sin(angle) * homeDistance);
+  const homeNormal = normalOffset(ANCIENT_TREE_ARCH_NORMAL, tangentA, tangentB, Math.cos(angle) * homeDistance, Math.sin(angle) * homeDistance);
   const forward = tangentA.clone().applyAxisAngle(homeNormal, angle).projectOnPlane(homeNormal).normalize();
   group.scale.setScalar(1.15);
   return {
@@ -3274,13 +3359,13 @@ export function updateDarkSpiders(
   const sunDirection = sunPosition && sunPosition.lengthSq() > 0.000001 ? sunPosition.clone().normalize() : null;
   const lightThreatNormal = lightThreat && lightThreat.radius > 0 ? lightThreat.position.clone().normalize() : null;
   for (const spider of spiders) {
-    const lit = sunDirection ? spider.normal.dot(sunDirection) > 0.08 : false;
-    const orbitA = Math.cos(elapsed * 0.16 + spider.phase) * spider.radius + Math.sin(elapsed * 0.43 + spider.phase) * 4.5;
-    const orbitB = Math.sin(elapsed * 0.19 + spider.phase * 0.7) * spider.radius * 0.72 + Math.cos(elapsed * 0.37 + spider.phase * 1.3) * 3.5;
-    const patrolNormal = normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, orbitA, orbitB);
-    const shelterOrbitA = Math.cos(elapsed * 0.08 + spider.phase) * spider.radius * 0.28;
-    const shelterOrbitB = Math.sin(elapsed * 0.07 + spider.phase * 0.7) * spider.radius * 0.2;
-    const shelterNormal = normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, shelterOrbitA, shelterOrbitB);
+    const lit = sunDirection ? spider.normal.dot(sunDirection) > -0.02 : false;
+    spider.homeNormal.copy(spiderDarkActivityCenter(spider, sunDirection));
+    const orbitSpeed = lit ? 0.34 : 0.22;
+    const orbitA = Math.cos(elapsed * orbitSpeed + spider.phase) * spider.radius + Math.sin(elapsed * 0.67 + spider.phase) * 3.2;
+    const orbitB = Math.sin(elapsed * (orbitSpeed * 1.12) + spider.phase * 0.7) * spider.radius * 0.62 + Math.cos(elapsed * 0.51 + spider.phase * 1.3) * 2.4;
+    const patrolNormal = keepSpiderInShade(normalOffset(spider.homeNormal, spider.tangentA, spider.tangentB, orbitA, orbitB), sunDirection);
+    const shelterNormal = keepSpiderInShade(spider.homeNormal, sunDirection);
     let desiredNormal = lit ? shelterNormal : patrolNormal;
     let avoidingLaser = false;
     if (lightThreat && lightThreatNormal) {
@@ -3297,7 +3382,7 @@ export function updateDarkSpiders(
           away.normalize();
           const retreatMeters = (10 + (lightThreat.strength ?? 1) * 10) * (0.35 + urgency);
           desiredNormal = spider.normal.clone().addScaledVector(away, retreatMeters / PLANET_RADIUS).normalize();
-          desiredNormal.lerp(shelterNormal, 0.32 + urgency * 0.28).normalize();
+          desiredNormal.lerp(shelterNormal, 0.45 + urgency * 0.32).normalize();
         } else {
           desiredNormal = shelterNormal;
         }
@@ -3310,7 +3395,7 @@ export function updateDarkSpiders(
     let moving = false;
     if (tangent.lengthSq() > 0.000001 && distance > 0.00002) {
       tangent.normalize();
-      const speedScale = avoidingLaser ? 2.05 : lit ? 0.7 : 1;
+      const speedScale = avoidingLaser ? 2.05 : lit ? 1.45 : 1;
       const step = Math.min((spider.speed * speedScale * delta) / PLANET_RADIUS, distance);
       spider.normal.multiplyScalar(Math.cos(step)).addScaledVector(tangent, Math.sin(step)).normalize();
       spider.forward.lerp(tangent, 0.08).projectOnPlane(spider.normal).normalize();
@@ -3320,33 +3405,76 @@ export function updateDarkSpiders(
     spider.normal.copy(collisionState.normal);
     spider.forward.projectOnPlane(spider.normal).normalize();
 
-    const legWave = elapsed * (moving ? (avoidingLaser ? 9.8 : lit ? 4.2 : 5.8) : 1.4) + spider.phase;
+    const legWave = elapsed * (moving ? (avoidingLaser ? 11.5 : lit ? 8.4 : 6.8) : 1.6) + spider.phase;
     const climbLift = collisionState.climbHeight;
     for (let i = 0; i < spider.legs.length; i += 1) {
       const leg = spider.legs[i];
       const side = i < 4 ? -1 : 1;
-      const alternating = i % 2 === 0 ? 0 : Math.PI;
-      const phase = legWave + i * 0.42 + alternating;
-      const lift = Math.max(0, Math.sin(phase)) * (0.12 + climbLift * 0.08);
-      leg.rotation.x = Math.sin(phase) * (0.2 + climbLift * 0.07);
-      leg.rotation.y = side * lift;
-      leg.rotation.z = side * (0.1 + Math.cos(phase) * (0.12 + climbLift * 0.05));
+      const slot = i % 4;
+      const tripodPhase = (side < 0 ? slot % 2 : 1 - (slot % 2)) * Math.PI;
+      const phase = legWave + tripodPhase + slot * 0.18;
+      const stride = moving ? 1 : 0.18;
+      const lift = Math.max(0, Math.sin(phase)) * (0.34 + climbLift * 0.12) * stride;
+      const reach = Math.cos(phase) * (0.34 + climbLift * 0.08) * stride;
+      const stance = [-0.34, -0.12, 0.12, 0.34][slot] ?? 0;
+      leg.rotation.x = stance + reach;
+      leg.rotation.y = side * (0.18 + lift * 0.58);
+      leg.rotation.z = side * (0.28 + Math.sin(phase + 0.7) * 0.18 * stride + climbLift * 0.06);
     }
-    spider.visual.position.y = Math.abs(Math.sin(legWave)) * 0.055 + climbLift * 0.16;
-    spider.visual.rotation.x = Math.sin(legWave * 0.5 + spider.phase) * (0.025 + climbLift * 0.02);
-    spider.visual.rotation.z = Math.sin(elapsed * 1.8 + spider.phase) * (0.04 + climbLift * 0.015);
+    spider.visual.position.y = Math.max(0.02, Math.sin(legWave * 2.0) * 0.035) + climbLift * 0.16;
+    spider.visual.rotation.x = Math.sin(legWave + spider.phase) * (moving ? 0.055 : 0.018) + climbLift * 0.02;
+    spider.visual.rotation.z = Math.sin(legWave * 0.72 + spider.phase) * (moving ? 0.075 : 0.025);
     placeObjectOnPlanetNormal(spider.group, spider.normal, 0.34 + climbLift, headingFromForward(spider.normal, spider.forward));
   }
 }
 
 function constrainSpiderTerritory(normal: THREE.Vector3) {
-  const dot = THREE.MathUtils.clamp(SPIDER_ARRIVAL_NORMAL.dot(normal), -1, 1);
+  const dot = THREE.MathUtils.clamp(ANCIENT_TREE_ARCH_NORMAL.dot(normal), -1, 1);
   const distance = Math.acos(dot) * PLANET_RADIUS;
   if (distance <= SPIDER_PATROL_RADIUS) return normal.clone();
-  const tangent = normal.clone().addScaledVector(SPIDER_ARRIVAL_NORMAL, -dot);
-  if (tangent.lengthSq() < 0.000001) return SPIDER_ARRIVAL_NORMAL.clone();
+  const tangent = normal.clone().addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -dot);
+  if (tangent.lengthSq() < 0.000001) return ANCIENT_TREE_ARCH_NORMAL.clone();
   tangent.normalize();
-  return SPIDER_ARRIVAL_NORMAL.clone().multiplyScalar(Math.cos(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).addScaledVector(tangent, Math.sin(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).normalize();
+  return ANCIENT_TREE_ARCH_NORMAL.clone().multiplyScalar(Math.cos(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).addScaledVector(tangent, Math.sin(SPIDER_PATROL_RADIUS / PLANET_RADIUS)).normalize();
+}
+
+function spiderDarkActivityCenter(spider: DarkSpider, sunDirection: THREE.Vector3 | null) {
+  const { tangentA, tangentB } = tangentBasis(ANCIENT_TREE_ARCH_NORMAL);
+  let darkVector = CRASHED_SHIP_SITE_NORMAL
+    .clone()
+    .addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -CRASHED_SHIP_SITE_NORMAL.dot(ANCIENT_TREE_ARCH_NORMAL));
+  if (sunDirection) {
+    const sunTangent = sunDirection.clone().addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -sunDirection.dot(ANCIENT_TREE_ARCH_NORMAL));
+    if (sunTangent.lengthSq() > 0.000001) darkVector = sunTangent.multiplyScalar(-1);
+  }
+  if (darkVector.lengthSq() < 0.000001) darkVector = tangentA.clone();
+  darkVector.normalize();
+  const baseAngle = Math.atan2(darkVector.dot(tangentB), darkVector.dot(tangentA));
+  const phaseSpread = ((spider.phase / 1.9) - 1) * SPIDER_DARK_SPREAD_ANGLE;
+  for (const distance of [SPIDER_DARK_RING_DISTANCE, SPIDER_DARK_RING_DISTANCE + 12, SPIDER_DARK_RING_DISTANCE + 22]) {
+    const angle = baseAngle + phaseSpread;
+    const candidate = normalOffset(ANCIENT_TREE_ARCH_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
+    if (!sunDirection || candidate.dot(sunDirection) < -0.035) return candidate;
+  }
+  const fallback = normalOffset(
+    ANCIENT_TREE_ARCH_NORMAL,
+    tangentA,
+    tangentB,
+    Math.cos(baseAngle + phaseSpread) * (SPIDER_DARK_RING_DISTANCE + 28),
+    Math.sin(baseAngle + phaseSpread) * (SPIDER_DARK_RING_DISTANCE + 28)
+  );
+  return fallback;
+}
+
+function keepSpiderInShade(normal: THREE.Vector3, sunDirection: THREE.Vector3 | null) {
+  const constrained = constrainSpiderTerritory(normal);
+  if (!sunDirection || constrained.dot(sunDirection) < -0.015) return constrained;
+  const { tangentA, tangentB } = tangentBasis(ANCIENT_TREE_ARCH_NORMAL);
+  const sunTangent = sunDirection.clone().addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -sunDirection.dot(ANCIENT_TREE_ARCH_NORMAL));
+  if (sunTangent.lengthSq() < 0.000001) return constrained;
+  const darkVector = sunTangent.normalize().multiplyScalar(-1);
+  const angle = Math.atan2(darkVector.dot(tangentB), darkVector.dot(tangentA));
+  return normalOffset(ANCIENT_TREE_ARCH_NORMAL, tangentA, tangentB, Math.cos(angle) * (SPIDER_DARK_RING_DISTANCE + 16), Math.sin(angle) * (SPIDER_DARK_RING_DISTANCE + 16));
 }
 
 function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
@@ -3409,7 +3537,7 @@ function isSpiderClimbableCollider(collider: CircleCollider) {
 }
 
 function spiderTangentAwayFromArrival(normal: THREE.Vector3) {
-  const away = normal.clone().addScaledVector(SPIDER_ARRIVAL_NORMAL, -normal.dot(SPIDER_ARRIVAL_NORMAL));
+  const away = normal.clone().addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -normal.dot(ANCIENT_TREE_ARCH_NORMAL));
   if (away.lengthSq() > 0.000001) return away;
   const fallback = new THREE.Vector3(1, 0, 0).projectOnPlane(normal);
   if (fallback.lengthSq() > 0.000001) return fallback;

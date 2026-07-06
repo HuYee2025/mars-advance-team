@@ -95,6 +95,7 @@
   <body>
     <main id="app" aria-label="火星先遣队 3D Demo" data-i18n-attr="aria-label:app.aria">
       <div id="scene-root"></div>
+      <div id="solar-overexposure" aria-hidden="true"></div>
       <button id="language-toggle" type="button" aria-label="Switch language"></button>
       <section id="title-screen" aria-label="进入火星基地" data-i18n-attr="aria-label:title.aria">
         <div class="title-copy">
@@ -206,7 +207,7 @@
         </div>
         <div class="scale-readout">
           <strong id="scale-gun-target">未锁定目标</strong>
-          <span data-i18n="scale.instructions">WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）</span>
+          <span id="scale-gun-summary">准星对准可缩放物体。</span>
         </div>
         <div class="scale-actions">
           <button id="scale-gun-shrink" type="button" data-i18n="scale.shrink">缩小</button>
