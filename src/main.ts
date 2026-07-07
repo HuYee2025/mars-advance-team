@@ -36,6 +36,7 @@ import {
   updateMeteors,
   updateRovers,
   updateSolarArrays,
+  type DarkSpider,
   type CircleCollider,
   type ElevatorControl,
   type GreenhouseDoorControl,
@@ -221,36 +222,6 @@ const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
 const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
-const visualShaderNoise = `
-float hash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
-float noise2(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = hash12(i);
-  float b = hash12(i + vec2(1.0, 0.0));
-  float c = hash12(i + vec2(0.0, 1.0));
-  float d = hash12(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-float fbm2(vec2 p) {
-  float value = 0.0;
-  float amp = 0.5;
-  mat2 rot = mat2(0.80, -0.60, 0.60, 0.80);
-  for (int i = 0; i < 5; i++) {
-    value += amp * noise2(p);
-    p = rot * p * 2.04 + 19.1;
-    amp *= 0.5;
-  }
-  return value;
-}
-`;
 const RENDER_PIXEL_RATIO_LIMIT = 1.25;
 const WORMHOLE_ORGANIC_SEGMENT_COUNT = 42;
 const WORMHOLE_ORGANIC_SEGMENT_SPACING = 2.15;
@@ -258,8 +229,10 @@ const WORMHOLE_ORGANIC_FRONT_Z = -8.8;
 const WORMHOLE_ORGANIC_LOOP_LENGTH = WORMHOLE_ORGANIC_SEGMENT_COUNT * WORMHOLE_ORGANIC_SEGMENT_SPACING;
 const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP_LENGTH;
 let sunLight: THREE.DirectionalLight | null = null;
+let sunLightTarget: THREE.Object3D | null = null;
 let sunBody: THREE.Group | null = null;
 const sunWorldScaleVector = new THREE.Vector3();
+const solarShadowTargetPosition = new THREE.Vector3();
 let currentMarsSunState: MarsSunState = computeMarsSunState();
 let solarOverexposureStrength = 0;
 let solarHeatStaminaMultiplier = 1;
@@ -282,12 +255,8 @@ player.userData.callsign = "022号巡检员";
 scene.add(player);
 const PLAYER_BASE_SCALE = 0.76;
 player.scale.setScalar(PLAYER_BASE_SCALE);
-const playerContactShadow = createPlayerContactShadow();
-scene.add(playerContactShadow);
 const wormholeVisual = createWormholeFallVisual();
 scene.add(wormholeVisual.group);
-const stormWindLayer = createStormWindLayer();
-scene.add(stormWindLayer);
 
 const PHOTO_WALL_CAPACITY = 36;
 const CAMERA_MIN_ZOOM = 1;
@@ -316,7 +285,6 @@ const SPAWN_TARGET_Z = expandWorldCoordinate(18);
 const playerNormal = new THREE.Vector3();
 const playerForward = new THREE.Vector3();
 const PLAYER_ALTITUDE = 0.66;
-const SHADOW_SURFACE_ALTITUDE = 0.035;
 const MARS_GRAVITY = 3.71;
 const SUITED_JUMP_SPEED = 4.2;
 const JUMP_FORWARD_BOOST = 2.2;
@@ -432,6 +400,9 @@ const SCALE_GUN_AIM_YAW_SPEED = 1.75;
 const SCALE_GUN_AIM_PITCH_SPEED = 1.18;
 const SCALE_GUN_AIM_PITCH_MIN = -1.05;
 const SCALE_GUN_AIM_PITCH_MAX = 1.18;
+const SPIDER_TOUCH_DAMAGE = 20;
+const SPIDER_TOUCH_COOLDOWN_SECONDS = 1.15;
+const SPIDER_TOUCH_DISTANCE = 3.8;
 const LASER_SWORD_LIGHT_INTENSITY = 6.76;
 const LASER_SWORD_LIGHT_DISTANCE = 20;
 const LASER_SWORD_RAISED_LIGHT_INTENSITY = LASER_SWORD_LIGHT_INTENSITY * 2;
@@ -446,7 +417,7 @@ const mobileStick = { active: false, pointerId: null as number | null, x: 0, y: 
 type ScaleGunTarget = {
   label: string;
   object: THREE.Object3D;
-  kind?: "starlink" | "meteor";
+  kind?: "starlink" | "meteor" | "spider";
 };
 
 type ScaleGunEffect = {
@@ -1542,14 +1513,22 @@ function buildLighting() {
   sun.position.set(-36, 54, 28);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 10;
-  sun.shadow.camera.far = 140;
-  sun.shadow.camera.left = -80;
-  sun.shadow.camera.right = 80;
-  sun.shadow.camera.top = 80;
-  sun.shadow.camera.bottom = -80;
+  sun.shadow.bias = -0.00035;
+  sun.shadow.normalBias = 0.035;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 520;
+  sun.shadow.camera.left = -150;
+  sun.shadow.camera.right = 150;
+  sun.shadow.camera.top = 150;
+  sun.shadow.camera.bottom = -150;
+  sun.shadow.camera.updateProjectionMatrix();
+  const target = new THREE.Object3D();
+  target.name = "Solar shadow target";
+  scene.add(target);
+  sun.target = target;
   scene.add(sun);
   sunLight = sun;
+  sunLightTarget = target;
   sunBody = createVisibleSun(sun.position);
   scene.add(sunBody);
 
@@ -1566,7 +1545,12 @@ function updateSolarLighting() {
   const stormDim = THREE.MathUtils.lerp(1, 0.42, stormStrength);
   const scaleLightBoost = THREE.MathUtils.clamp(visibleSunScale, 0.45, 4);
   solarHeatStaminaMultiplier = visibleSunScale >= 3 ? visibleSunScale : 1;
-  sunLight.position.copy(direction).multiplyScalar(72);
+  const shadowTargetPosition = solarShadowTargetPosition.copy(player.position.lengthSq() > 0.001 ? player.position : scene.position);
+  if (sunLightTarget) {
+    sunLightTarget.position.copy(shadowTargetPosition);
+    sunLightTarget.updateMatrixWorld();
+  }
+  sunLight.position.copy(shadowTargetPosition).addScaledVector(direction, 260);
   sunLight.intensity = EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio * stormDim * scaleLightBoost;
   sunBody.position.copy(direction).multiplyScalar(540);
   const occluded = isSunOccludedByPlanet(sunBody.position);
@@ -1645,7 +1629,7 @@ function createVisibleSun(direction: THREE.Vector3) {
   const orderedSunSprites = [halo, rays, sunDisc, closeBacklight, closeDetail];
   orderedSunSprites.forEach((sprite, index) => {
     sprite.renderOrder = 60 + index;
-    sprite.material.depthTest = false;
+    sprite.material.depthTest = true;
   });
   sunDisc.userData.baseOpacity = 1.45;
   sunDisc.userData.sunPart = "disc";
@@ -1802,71 +1786,6 @@ function createSunCloseDetailTexture() {
   return texture;
 }
 
-function createPlayerContactShadow() {
-  const shadowTexture = createRadialShadowTexture();
-  const material = new THREE.MeshBasicMaterial({
-    map: shadowTexture,
-    color: 0x120906,
-    transparent: true,
-    opacity: 0.42,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-  });
-  const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.72, 32), material);
-  mesh.renderOrder = 2;
-  return mesh;
-}
-
-function createStormWindLayer() {
-  const material = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.BackSide,
-    blending: THREE.NormalBlending,
-    uniforms: {
-      uTime: { value: 0 },
-      uStrength: { value: 0 },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      varying vec3 vWorldDir;
-      void main() {
-        vUv = uv;
-        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-        vWorldDir = normalize(worldPosition.xyz);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-      uniform float uTime;
-      uniform float uStrength;
-      varying vec2 vUv;
-      varying vec3 vWorldDir;
-      ${visualShaderNoise}
-
-      void main() {
-        vec2 flowUv = vec2(vUv.x * 3.2 + uTime * 0.018, vUv.y * 1.8 + sin(uTime * 0.05) * 0.08);
-        float broad = fbm2(flowUv * vec2(2.1, 1.0));
-        float streaks = fbm2(vec2(vUv.x * 18.0 + uTime * 0.18 + broad * 1.4, vUv.y * 4.4 - uTime * 0.035));
-        float latitude = smoothstep(0.12, 0.82, 1.0 - abs(vWorldDir.y));
-        float bands = smoothstep(0.44, 0.84, streaks + broad * 0.38) * latitude;
-        float fineDust = hash12(gl_FragCoord.xy + floor(uTime * 24.0)) * 0.06;
-        float alpha = (bands * 0.24 + fineDust) * uStrength;
-        vec3 color = mix(vec3(0.32, 0.12, 0.06), vec3(0.86, 0.36, 0.15), broad);
-        gl_FragColor = vec4(color, alpha);
-      }
-    `,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(385, 48, 24), material);
-  mesh.name = "Shader storm wind bands";
-  mesh.renderOrder = 18;
-  mesh.visible = false;
-  return mesh;
-}
-
 function createRadialShadowTexture() {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
@@ -2003,12 +1922,6 @@ function createWormholeFallVisual() {
   veil.renderOrder = 29;
   group.add(veil);
 
-  const shaderVeilMaterial = createWormholeShaderVeilMaterial();
-  const shaderVeil = new THREE.Mesh(new THREE.PlaneGeometry(160, 100), shaderVeilMaterial);
-  shaderVeil.position.set(0, 0, -38);
-  shaderVeil.renderOrder = 31;
-  group.add(shaderVeil);
-
   const organicTunnel = createWormholeOrganicTunnel();
   organicTunnel.group.renderOrder = 30;
   group.add(organicTunnel.group);
@@ -2023,64 +1936,10 @@ function createWormholeFallVisual() {
     mars,
     marsMaterial,
     veilMaterial,
-    shaderVeilMaterial,
     organicTunnel: organicTunnel.group,
     organicSegments: organicTunnel.segments,
     organicMaterials: organicTunnel.materials,
   };
-}
-
-function createWormholeShaderVeilMaterial() {
-  return new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-    uniforms: {
-      uTime: { value: 0 },
-      uProgress: { value: 0 },
-      uOpacity: { value: 0 },
-      uDrift: { value: new THREE.Vector2() },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-      uniform float uTime;
-      uniform float uProgress;
-      uniform float uOpacity;
-      uniform vec2 uDrift;
-      varying vec2 vUv;
-      ${visualShaderNoise}
-
-      void main() {
-        vec2 p = (vUv - 0.5) * vec2(1.75, 1.0);
-        p += uDrift * 0.025;
-        float r = length(p);
-        float angle = atan(p.y, p.x);
-        float tunnel = fbm2(vec2(angle * 2.4 + uTime * 0.11, 1.0 / max(r, 0.05) - uTime * 0.34));
-        float cloud = fbm2(p * 4.2 + vec2(uTime * 0.16, -uTime * 0.11));
-        float streak = smoothstep(0.46, 0.9, tunnel + cloud * 0.34) * smoothstep(0.92, 0.12, r);
-        float edgeFlow = smoothstep(0.24, 0.86, r) * smoothstep(1.05, 0.45, r) * tunnel;
-        float grain = hash12(gl_FragCoord.xy + floor(uTime * 30.0)) - 0.5;
-        float marsFade = 1.0 - smoothstep(0.74, 0.94, uProgress);
-        float alpha = (streak * 0.16 + edgeFlow * 0.1 + abs(grain) * 0.035) * uOpacity * marsFade;
-        vec3 blue = vec3(0.18, 0.48, 1.0);
-        vec3 white = vec3(0.86, 0.98, 1.0);
-        vec3 amber = vec3(1.0, 0.36, 0.12);
-        vec3 color = mix(blue, white, streak);
-        color = mix(color, amber, smoothstep(0.68, 0.98, uProgress) * cloud);
-        color += grain * 0.045;
-        gl_FragColor = vec4(max(color, vec3(0.0)), alpha);
-      }
-    `,
-  });
 }
 
 function createWormholeOrganicTunnel() {
@@ -2423,10 +2282,6 @@ function updateWormholeFallVisual(progress: number, drift: THREE.Vector2, delta:
   particlePosition.needsUpdate = true;
 
   wormholeVisual.voidMaterial.opacity = THREE.MathUtils.lerp(1, 0.84, marsPhase);
-  wormholeVisual.shaderVeilMaterial.uniforms.uTime.value = visualTime;
-  wormholeVisual.shaderVeilMaterial.uniforms.uProgress.value = progress;
-  wormholeVisual.shaderVeilMaterial.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.82, 0.36, marsPhase) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
-  wormholeVisual.shaderVeilMaterial.uniforms.uDrift.value.copy(drift);
 
   const organicOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.04) * (1 - THREE.MathUtils.smoothstep(progress, 0.62, 0.74));
   wormholeVisual.organicTunnel.visible = organicOpacity > 0.01;
@@ -3946,6 +3801,40 @@ function currentLaserSwordThreat() {
   };
 }
 
+function currentSpiderPlayerThreat() {
+  const canBeHunted =
+    started &&
+    !wormholeFall &&
+    !dialogueOpen &&
+    !world.habitatDoor.occupied &&
+    !insideGreenhouse &&
+    !insideRocket &&
+    !ridingElevator &&
+    !ridingRover &&
+    !isFlightActive() &&
+    !(laserSwordActive && canUseLaserSword());
+  return { normal: playerNormal, active: canBeHunted };
+}
+
+function updateSpiderTouchDamage() {
+  if (!started || wormholeFall || isFlightActive() || (laserSwordActive && canUseLaserSword())) return;
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  for (const spider of world.darkSpiders) {
+    if (!spider.attacking) continue;
+    const distance = surfaceDistanceBetween(playerNormal, spider.normal);
+    if (distance > SPIDER_TOUCH_DISTANCE) continue;
+    if (elapsedTime < spider.lastDamageAt + SPIDER_TOUCH_COOLDOWN_SECONDS) continue;
+    spider.lastDamageAt = elapsedTime;
+    const damage = SPIDER_TOUCH_DAMAGE * THREE.MathUtils.clamp(spider.damageFactor, SCALE_GUN_MIN_FACTOR, SCALE_GUN_MAX_FACTOR);
+    stamina = Math.max(0, stamina - damage);
+    if (stamina <= 0) {
+      respawnAfterStaminaDepleted();
+      return;
+    }
+    showDialogue("火星蜘蛛", `红眼蜘蛛触碰了宇航服，体能 -${Math.round(damage)}。`, 2);
+  }
+}
+
 function updateHeldGearPose() {
   updateLaserSwordVisual();
   if (!laserSwordActive) return;
@@ -4038,6 +3927,7 @@ function scaleGunTargetSummaryZh(target: ScaleGunTarget) {
   if (label === "太阳") return "直径约 139 万公里，表面约 5,500°C。\n火星平均距太阳约 2.28 亿公里，是基地昼夜与能源的源头。";
   if (target.kind === "starlink") return "参考 Starlink 低轨通信星座，用密集小卫星提供宽带链路。\nARES 版本负责火星基地与轨道中继通信。";
   if (target.kind === "meteor") return "石质近火流星，参考火星上常见的外来陨石发现。\n它沿近火轨道掠过，是雷达里的高速异常目标。";
+  if (target.kind === "spider") return "红眼状态表示火星蜘蛛正在攻击。\n缩放倍率会同步改变它触碰宇航员时造成的体能伤害。";
   if (label.includes("NASA") || label.includes("火星车")) return "参考 NASA Perseverance：六轮、桅杆相机、机械臂和样本缓存系统。\n它代表真实火星探测留下的工程遗产。";
   if (label.includes("太阳能阵列")) return "太阳能阵列把日照转成基地电力，沙尘会降低输出。\n当前基地靠它给氧气站、温室和通信系统供电。";
   if (label.includes("居住舱")) return "参考火星模拟栖息舱，是巡检员生活、休整和照片展示区。\n它维持气压、温度和基础生存环境。";
@@ -4067,6 +3957,7 @@ function scaleGunTargetSummaryEn(target: ScaleGunTarget) {
   if (label === "太阳") return "Diameter about 1.39 million km; surface about 5,500°C.\nMars orbits about 228 million km from it on average.";
   if (target.kind === "starlink") return "Inspired by Starlink low-orbit broadband constellations.\nARES uses it as a Mars orbital relay mesh.";
   if (target.kind === "meteor") return "A rocky near-Mars meteor inspired by real meteorite finds.\nIt is a fast radar anomaly crossing local orbit.";
+  if (target.kind === "spider") return "Red eyes mean the Mars spider is attacking.\nScale changes also change its stamina damage on contact.";
   if (label.includes("NASA") || label.includes("火星车")) return "Inspired by NASA Perseverance: six wheels, mast cameras, arm, and sample cache.\nIt marks the engineering legacy of real Mars exploration.";
   if (label.includes("太阳能阵列")) return "Solar arrays convert sunlight into base power; dust reduces output.\nThey feed oxygen, greenhouse, and communication systems.";
   if (label.includes("居住舱")) return "A Mars habitat-style living and recovery module.\nIt keeps pressure, temperature, and survival basics stable.";
@@ -4447,6 +4338,9 @@ function getScaleGunTargets() {
   for (const meteor of world.meteors) {
     if (meteor.closeFlyby) addTarget("近火流星", meteor.head, "meteor");
   }
+  for (const spider of world.darkSpiders) {
+    if (spider.attacking) addTarget("红眼火星蜘蛛", spider.group, "spider");
+  }
   if (sunBody) addTarget("太阳", sunBody);
   if (fufu.visible) addTarget("福福", fufu);
   return targets;
@@ -4474,12 +4368,20 @@ function fireScaleGun(mode: "shrink" | "grow") {
   effect.factor = nextFactor;
   effect.expiresAt = elapsedTime + SCALE_GUN_DURATION_SECONDS;
   if (scaleGunTarget.kind === "meteor") scaleGunTarget.object.userData.meteorScaleFactor = nextFactor;
+  if (scaleGunTarget.kind === "spider") {
+    const spider = darkSpiderForObject(scaleGunTarget.object);
+    if (spider) spider.damageFactor = nextFactor;
+  }
   scaleGunTarget.object.scale.copy(effect.baseScale).multiplyScalar(nextFactor);
   showDialogue("缩放枪", `${scaleGunTarget.label} ${mode === "grow" ? "放大" : "缩小"}到 ${nextFactor.toFixed(2)}x，60 秒后恢复。`, 2.2);
   playUiBeep();
   if (scaleGunTarget.label === "太阳") awardFunnyScore(`scale_sun_${mode}`, mode === "grow" ? "放大太阳" : "缩小太阳");
   if (scaleGunTarget.kind === "starlink") awardHiddenDiscovery(`starlink:${scaleGunTarget.object.userData.starlinkId ?? scaleGunTarget.object.uuid}`, "星链卫星命中");
   if (scaleGunTarget.kind === "meteor") awardHiddenDiscovery(`meteor:${scaleGunTarget.object.userData.meteorId ?? scaleGunTarget.object.uuid}`, "流星命中");
+}
+
+function darkSpiderForObject(object: THREE.Object3D): DarkSpider | undefined {
+  return world.darkSpiders.find((spider) => spider.group === object);
 }
 
 function getScaleGunEffect(object: THREE.Object3D) {
@@ -4501,6 +4403,10 @@ function restoreExpiredScaleGunEffects() {
     const object = scene.getObjectByProperty("uuid", uuid);
     if (object) {
       if (object.userData.scaleGunKind === "meteor") object.userData.meteorScaleFactor = 1;
+      if (object.userData.scaleGunKind === "spider") {
+        const spider = darkSpiderForObject(object);
+        if (spider) spider.damageFactor = 1;
+      }
       object.scale.copy(effect.baseScale);
     }
     scaleGunEffects.delete(uuid);
@@ -4512,6 +4418,10 @@ function clearScaleGunEffects() {
     const object = scene.getObjectByProperty("uuid", uuid);
     if (object) {
       if (object.userData.scaleGunKind === "meteor") object.userData.meteorScaleFactor = 1;
+      if (object.userData.scaleGunKind === "spider") {
+        const spider = darkSpiderForObject(object);
+        if (spider) spider.damageFactor = 1;
+      }
       object.scale.copy(effect.baseScale);
     }
   }
@@ -4763,7 +4673,8 @@ function animate() {
   updateMarsEngineer(playerRig, wormholeFall ? 0 : speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
   updateHeldGearPose();
   updateLaserSwordWorldLight();
-  updateDarkSpiders(world.darkSpiders, elapsedTime, delta, world.colliders, sunLight?.position ?? null, currentLaserSwordThreat());
+  updateDarkSpiders(world.darkSpiders, elapsedTime, delta, world.colliders, sunLight?.position ?? null, currentLaserSwordThreat(), currentSpiderPlayerThreat());
+  updateSpiderTouchDamage();
   updateWormholePlayerPose(delta);
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
   if (started) {
@@ -4777,7 +4688,6 @@ function animate() {
   }
   updateScaleGun();
   updateCameraSystem();
-  updatePlayerContactShadow();
   updateBackgroundMusicFade();
   updateMonolithSignal();
 
@@ -4960,11 +4870,6 @@ function updateWeather() {
   fog.color.copy(new THREE.Color(0x120a0a).lerp(new THREE.Color(0x8d3a20), stormStrength));
   if (scene.background instanceof THREE.Color) scene.background.copy(clearSkyColor).lerp(stormSkyColor, stormStrength * 0.82);
   renderer.toneMappingExposure = THREE.MathUtils.lerp(1.08, 0.72, stormStrength) * THREE.MathUtils.lerp(1, 1.72, solarOverexposureStrength);
-  stormWindLayer.visible = started && stormStrength > 0.015 && !wormholeFall && !isWormholeWhiteoutActive();
-  if (stormWindLayer.material instanceof THREE.ShaderMaterial) {
-    stormWindLayer.material.uniforms.uTime.value = elapsedTime;
-    stormWindLayer.material.uniforms.uStrength.value = stormStrength;
-  }
 }
 
 function updateStarlink() {
@@ -5652,22 +5557,6 @@ function readMovementInput() {
     turnInput: THREE.MathUtils.clamp(turnInput, -1, 1),
     forwardInput: THREE.MathUtils.clamp(forwardInput, -1, 1),
   };
-}
-
-function updatePlayerContactShadow() {
-  if (wormholeFall || ridingElevator || ridingRover || world.habitatDoor.occupied) {
-    playerContactShadow.visible = false;
-    return;
-  }
-  const shadowNormal = playerNormal.clone();
-  placeObjectOnPlanetNormal(playerContactShadow, shadowNormal, SHADOW_SURFACE_ALTITUDE, headingFromForward(shadowNormal, playerForward));
-  playerContactShadow.rotateX(-Math.PI / 2);
-  const jumpT = THREE.MathUtils.clamp(playerAltitudeOffset / 2.8, 0, 1);
-  const scale = THREE.MathUtils.lerp(1.18, 0.46, jumpT);
-  playerContactShadow.scale.set(scale * 1.1, scale * 0.72, 1);
-  const material = playerContactShadow.material as THREE.MeshBasicMaterial;
-  material.opacity = THREE.MathUtils.lerp(0.5, 0.16, jumpT);
-  playerContactShadow.visible = started;
 }
 
 function updateFootball(delta: number) {
