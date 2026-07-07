@@ -515,21 +515,6 @@ body.is-wormhole-whiteout #wormhole-whiteout {
   will-change: transform, opacity;
 }
 
-#wormhole-whiteout-caption {
-  position: absolute;
-  left: 50%;
-  top: min(68vh, calc(50% + 120px));
-  margin: 0;
-  transform: translate(-50%, -50%);
-  color: #050505;
-  font-size: clamp(24px, 4.8vw, 46px);
-  font-weight: 900;
-  letter-spacing: 0;
-  text-align: center;
-  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.7);
-  opacity: var(--wormhole-whiteout-caption-opacity, 1);
-}
-
 .is-playing .hud-title {
   display: none;
 }
