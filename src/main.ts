@@ -119,7 +119,6 @@ const solarOverexposure = must<HTMLElement>("#solar-overexposure");
 const labelsRoot = must<HTMLDivElement>("#labels");
 const wormholeWhiteoutOverlay = must<HTMLElement>("#wormhole-whiteout");
 const wormholeWhiteoutParticlesRoot = must<HTMLDivElement>("#wormhole-whiteout-particles");
-const wormholeWhiteoutCaption = must<HTMLElement>("#wormhole-whiteout-caption");
 const joystick = must<HTMLDivElement>("#joystick");
 const joystickKnob = must<HTMLDivElement>("#joystick-knob");
 const mobileBoostButton = must<HTMLButtonElement>("#mobile-boost");
@@ -314,7 +313,9 @@ const ANCIENT_PORTAL_PROMPT_SCALE = 1.2;
 const ANCIENT_PORTAL_FLIGHT_PROMPT_MAX_HEIGHT = 230;
 const ANCIENT_PORTAL_CORE_HALF_WIDTH = 10.8;
 const ANCIENT_PORTAL_CORE_HALF_DEPTH = 9.5;
-const WORMHOLE_WHITEOUT_SECONDS = 2;
+const WORMHOLE_WHITEOUT_HOLD_SECONDS = 3;
+const WORMHOLE_WHITEOUT_SCATTER_SECONDS = 0.75;
+const WORMHOLE_WHITEOUT_SECONDS = WORMHOLE_WHITEOUT_HOLD_SECONDS + WORMHOLE_WHITEOUT_SCATTER_SECONDS;
 const ANCIENT_TREE_ARCH_DISCOVERY_RADIUS = 76;
 const FUFU_SURFACE_ALTITUDE = 0.13;
 const MOBILE_FLIGHT_CODE = "UUDDLLRR";
@@ -365,10 +366,6 @@ const FOOTBALL_KICK_POWER = 2.0;
 const FOOTBALL_MAX_SPEED = 33;
 const FOOTBALL_SPAWN_X = expandWorldCoordinate(23);
 const FOOTBALL_SPAWN_Z = expandWorldCoordinate(49);
-const FOOTBALL_GOAL_WIDTH = 4.4;
-const FOOTBALL_GOAL_HEIGHT = 2.25;
-const FOOTBALL_GOAL_DEPTH = 1.35;
-const FOOTBALL_GOAL_SAFE_MARGIN = 5.4;
 const FOOTBALL_GOAL_COOLDOWN_SECONDS = 1.2;
 const FOOTBALL_PICKUP_RADIUS = 2.4;
 const FOOTBALL_CARRY_FORWARD_DISTANCE = 1.35;
@@ -462,8 +459,6 @@ type FootballState = {
 };
 
 type FootballGoalState = {
-  group: THREE.Group;
-  normal: THREE.Vector3;
   goals: number;
   lastScoredAt: number;
 };
@@ -709,7 +704,6 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.close": "收起",
     "interaction.count": "{count} 个可互动项",
     "language.button": "English",
-    "wormhole.whiteoutCaption": "这是……",
   },
   "en-US": {
     "app.aria": "Mars Advance Team 3D Demo",
@@ -780,7 +774,6 @@ const i18n: Record<LanguageCode, Record<string, string>> = {
     "interaction.close": "Close",
     "interaction.count": "{count} actions",
     "language.button": "简体中文",
-    "wormhole.whiteoutCaption": "This is...",
   },
 };
 
@@ -822,6 +815,7 @@ const exactEnglishTexts: Record<string, string> = {
   "暗面蜘蛛": "Dark-side Spider",
   "装备解锁": "Gear Unlocked",
   "你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。": "You obtained the laser sword. Press I to draw or holster it; hold J to raise it, release to lower it. It lights dark areas, and spiders avoid the light.",
+  "尚未获得激光剑。完成远古巨树拱门的时空之门穿越，坠落回火星后即可获得。": "Laser sword not acquired yet. Complete the ancient tree arch time-gate traversal and fall back to Mars to obtain it.",
   "HUYEE 已启动：获得喷气背包、缩放枪和激光剑。按 X 使用缩放枪；按 I 展开或收回激光剑，按住 J 举起。": "HUYEE activated: jetpack, scale gun, and laser sword obtained. Press X to use the scale gun; press I to draw or holster the laser sword, and hold J to raise it.",
   "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
   "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
@@ -1063,6 +1057,7 @@ const runtimeEnglishTexts: Record<string, string> = {
   "居住舱舱门": "Habitat Hatch",
   "点击 ENTER BASE 进入《火星先遣队》。": "Click ENTER BASE to enter Mars Advance Team.",
   "火星足球进球": "Mars football goal",
+  "火星足球穿过古树拱门": "Mars football through ancient arch",
   "搭便车": "Hitch ride",
   "找到福福": "Found Fufu",
   "考虑一下": "Think it over",
@@ -1095,7 +1090,8 @@ const runtimeEnglishTexts: Record<string, string> = {
   "相机": "Camera",
   "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上": "Congratulations! You received a camera\nPress G anytime to use the camera\nPhotos will appear on the habitat wall",
   "相机已解锁": "Camera unlocked",
-  "尚未获得相机。把足球踢进球门可以获得它。": "Camera not acquired yet. Kick the football into the goal to earn it.",
+  "尚未获得相机。把足球踢进古树拱门门洞可以获得它。": "Camera not acquired yet. Kick the football through the ancient tree arch to earn it.",
+  "足球穿过古树拱门门洞。足球已回到出生点。": "The football passed through the ancient tree arch. It has returned to its spawn point.",
   "当前空间太窄，无法使用相机。": "This space is too tight to use the camera.",
   "照片已保存到居住舱电子屏": "Photo saved to the habitat screen",
   "照片电子屏暂无照片": "The photo screen has no photos yet",
@@ -1360,6 +1356,7 @@ let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
 let hasLaserSword = false;
 let laserSwordActive = false;
 let laserSwordRaised = false;
+let lastLaserSwordLockedPromptAt = -Infinity;
 let hasCamera = false;
 let cameraMode = false;
 let cameraZoom = 1;
@@ -1444,8 +1441,8 @@ const elevatorSurfaceBoxes = new WeakMap<THREE.Object3D, THREE.Box3>();
 const roverPreviousPositions = new WeakMap<THREE.Object3D, THREE.Vector3>();
 const staticTextSources = new WeakMap<Text, string>();
 const football = createFootball();
-const footballGoal = createFootballGoal(football.normal.clone().negate(), football.normal);
-scene.add(football.group, football.shadow, footballGoal.group);
+const footballGoal: FootballGoalState = { goals: 0, lastScoredAt: -Infinity };
+scene.add(football.group, football.shadow);
 
 declare global {
   interface Window {
@@ -2535,100 +2532,6 @@ function createFootball(): FootballState {
   return state;
 }
 
-function createFootballGoal(idealNormal: THREE.Vector3, spawnNormal: THREE.Vector3): FootballGoalState {
-  const normal = findSafeFootballGoalNormal(idealNormal.normalize());
-  const group = new THREE.Group();
-  group.name = "Football goal";
-
-  const white = new THREE.MeshStandardMaterial({ color: 0xf4efe1, roughness: 0.54, metalness: 0.08 });
-  const net = new THREE.LineBasicMaterial({ color: 0xcfd8cf, transparent: true, opacity: 0.46 });
-  const postWidth = 0.12;
-  const halfWidth = FOOTBALL_GOAL_WIDTH * 0.5;
-  const postL = new THREE.Mesh(new THREE.BoxGeometry(postWidth, FOOTBALL_GOAL_HEIGHT, postWidth), white);
-  postL.position.set(-halfWidth, FOOTBALL_GOAL_HEIGHT * 0.5, 0);
-  const postR = postL.clone();
-  postR.position.x = halfWidth;
-  const crossbar = new THREE.Mesh(new THREE.BoxGeometry(FOOTBALL_GOAL_WIDTH + postWidth, postWidth, postWidth), white);
-  crossbar.position.set(0, FOOTBALL_GOAL_HEIGHT, 0);
-  const baseL = new THREE.Mesh(new THREE.BoxGeometry(postWidth, postWidth, FOOTBALL_GOAL_DEPTH), white);
-  baseL.position.set(-halfWidth, postWidth * 0.5, FOOTBALL_GOAL_DEPTH * 0.5);
-  const baseR = baseL.clone();
-  baseR.position.x = halfWidth;
-  const backBar = new THREE.Mesh(new THREE.BoxGeometry(FOOTBALL_GOAL_WIDTH, postWidth, postWidth), white);
-  backBar.position.set(0, postWidth * 0.5, FOOTBALL_GOAL_DEPTH);
-  const backTop = backBar.clone();
-  backTop.position.y = FOOTBALL_GOAL_HEIGHT;
-  group.add(postL, postR, crossbar, baseL, baseR, backBar, backTop);
-
-  for (const mesh of [postL, postR, crossbar, baseL, baseR, backBar, backTop]) {
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-  }
-
-  const netLines = new THREE.BufferGeometry();
-  const points: number[] = [];
-  for (let i = 0; i <= 6; i += 1) {
-    const x = THREE.MathUtils.lerp(-halfWidth, halfWidth, i / 6);
-    points.push(x, 0.12, FOOTBALL_GOAL_DEPTH, x, FOOTBALL_GOAL_HEIGHT, FOOTBALL_GOAL_DEPTH);
-  }
-  for (let i = 1; i <= 5; i += 1) {
-    const y = THREE.MathUtils.lerp(0.12, FOOTBALL_GOAL_HEIGHT, i / 5);
-    points.push(-halfWidth, y, FOOTBALL_GOAL_DEPTH, halfWidth, y, FOOTBALL_GOAL_DEPTH);
-  }
-  for (const x of [-halfWidth, halfWidth]) {
-    for (let i = 1; i <= 4; i += 1) {
-      const y = THREE.MathUtils.lerp(0.12, FOOTBALL_GOAL_HEIGHT, i / 4);
-      points.push(x, y, 0, x, y, FOOTBALL_GOAL_DEPTH);
-    }
-  }
-  netLines.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-  const netMesh = new THREE.LineSegments(netLines, net);
-  group.add(netMesh);
-
-  const faceSpawn = directionTowardNormal(normal, spawnNormal);
-  const yaw = faceSpawn.lengthSq() > 0.000001 ? headingFromForward(normal, faceSpawn) : 0;
-  placeObjectOnPlanetNormal(group, normal, 0.05, yaw);
-  return {
-    group,
-    normal,
-    goals: 0,
-    lastScoredAt: -Infinity,
-  };
-}
-
-function findSafeFootballGoalNormal(idealNormal: THREE.Vector3) {
-  const base = idealNormal.clone().normalize();
-  if (isSafeFootballGoalNormal(base)) return base;
-
-  let tangentA = new THREE.Vector3(0, 1, 0).cross(base);
-  if (tangentA.lengthSq() < 0.000001) tangentA = new THREE.Vector3(1, 0, 0).cross(base);
-  tangentA.normalize();
-  const tangentB = base.clone().cross(tangentA).normalize();
-  for (const angleDegrees of [8, 16, 24, 34, 46]) {
-    const angle = THREE.MathUtils.degToRad(angleDegrees);
-    for (let step = 0; step < 16; step += 1) {
-      const theta = (step / 16) * Math.PI * 2;
-      const candidate = base
-        .clone()
-        .multiplyScalar(Math.cos(angle))
-        .addScaledVector(tangentA, Math.cos(theta) * Math.sin(angle))
-        .addScaledVector(tangentB, Math.sin(theta) * Math.sin(angle))
-        .normalize();
-      if (isSafeFootballGoalNormal(candidate)) return candidate;
-    }
-  }
-  return base;
-}
-
-function isSafeFootballGoalNormal(candidate: THREE.Vector3) {
-  for (const collider of world.colliders) {
-    if (collider.enabled && !collider.enabled()) continue;
-    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
-    if (surfaceDistanceBetween(candidate, colliderNormal) < collider.radius + FOOTBALL_GOAL_SAFE_MARGIN) return false;
-  }
-  return true;
-}
-
 function createFootballTexture() {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
@@ -2909,6 +2812,11 @@ function bindInput() {
     if (event.code === "KeyI") {
       event.preventDefault();
       toggleLaserSword();
+      return;
+    }
+    if (event.code === "KeyJ" && !hasLaserSword) {
+      event.preventDefault();
+      showLaserSwordLockedPrompt();
       return;
     }
     if (event.code === "KeyJ" && laserSwordActive) {
@@ -3733,7 +3641,11 @@ function toggleScaleGunAiming(force?: boolean) {
 }
 
 function toggleLaserSword(force?: boolean) {
-  if (!started || !hasLaserSword) return;
+  if (!started) return;
+  if (!hasLaserSword) {
+    showLaserSwordLockedPrompt();
+    return;
+  }
   if (dialogueOpen || exitConfirmOpen || photoViewerOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
   const next = force ?? !laserSwordActive;
   if (next === laserSwordActive) return;
@@ -3741,6 +3653,13 @@ function toggleLaserSword(force?: boolean) {
   laserSwordActive = next;
   if (!laserSwordActive) laserSwordRaised = false;
   updateLaserSwordVisual();
+}
+
+function showLaserSwordLockedPrompt() {
+  if (!started || dialogueOpen || exitConfirmOpen || photoViewerOpen) return;
+  if (elapsedTime - lastLaserSwordLockedPromptAt < 2.2) return;
+  lastLaserSwordLockedPromptAt = elapsedTime;
+  showDialogue("激光剑", "尚未获得激光剑。完成远古巨树拱门的时空之门穿越，坠落回火星后即可获得。", 4.2);
 }
 
 function canUseLaserSword() {
@@ -3996,7 +3915,7 @@ function canUseCamera() {
 function toggleCameraMode(force?: boolean) {
   if (!started) return;
   if (!hasCamera) {
-    showDialogue("相机", "尚未获得相机。把足球踢进球门可以获得它。", 2.8);
+    showDialogue("相机", "尚未获得相机。把足球踢进古树拱门门洞可以获得它。", 2.8);
     return;
   }
   if (!cameraMode && !canUseCamera()) {
@@ -5105,6 +5024,7 @@ function startWormholeWhiteout() {
   verticalVelocity = 0;
   disableActiveJetpackForRespawn();
   backgroundMusic.volume = 0;
+  startWormholeFall({ fromWhiteout: true });
 }
 
 function isWormholeWhiteoutActive() {
@@ -5112,14 +5032,14 @@ function isWormholeWhiteoutActive() {
 }
 
 function updateWormholeWhiteout() {
-  if (wormholeWhiteoutUntil === -Infinity || wormholeFall) return;
+  if (wormholeWhiteoutUntil === -Infinity) return;
   const progress = THREE.MathUtils.clamp((elapsedTime - wormholeWhiteoutStartedAt) / WORMHOLE_WHITEOUT_SECONDS, 0, 1);
   updateWormholeWhiteoutOverlay(progress);
   if (elapsedTime < wormholeWhiteoutUntil) return;
   wormholeWhiteoutUntil = -Infinity;
   wormholeWhiteoutStartedAt = -Infinity;
   wormholeWhiteoutOverlay.setAttribute("aria-hidden", "true");
-  startWormholeFall();
+  if (!wormholeFall) startWormholeFall();
 }
 
 function updateWormholeWhiteoutCamera(delta: number) {
@@ -5139,26 +5059,26 @@ function updateWormholeWhiteoutCamera(delta: number) {
 }
 
 function updateWormholeWhiteoutOverlay(progress: number) {
-  const scatter = THREE.MathUtils.smoothstep(progress, 0.22, 1);
-  const hazeOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.36, 0.98);
-  const captionOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.2, 0.78);
+  const holdRatio = WORMHOLE_WHITEOUT_HOLD_SECONDS / WORMHOLE_WHITEOUT_SECONDS;
+  const scatter = THREE.MathUtils.smoothstep(progress, holdRatio, 1);
+  const hazeOpacity = THREE.MathUtils.lerp(0.78, 0, THREE.MathUtils.smoothstep(progress, holdRatio, 1));
   wormholeWhiteoutOverlay.style.setProperty("--wormhole-whiteout-opacity", hazeOpacity.toFixed(3));
-  wormholeWhiteoutCaption.style.opacity = captionOpacity.toFixed(3);
-  const pulse = 1 + Math.sin(elapsedTime * 16) * 0.025;
+  const pulse = 1 + Math.sin(elapsedTime * 18) * 0.035;
   for (const particle of wormholeWhiteoutParticles) {
     const x = particle.startX + particle.driftX * scatter;
     const y = particle.startY + particle.driftY * scatter;
     const scale = Math.max(0.05, (1 - particle.shrink * scatter) * pulse);
-    const opacity = particle.opacity * Math.pow(1 - scatter, 1.35);
+    const holdFlicker = 0.78 + Math.sin(elapsedTime * (5.5 + particle.shrink * 2.2) + particle.startX) * 0.12;
+    const opacity = particle.opacity * holdFlicker * Math.pow(1 - scatter, 1.35);
     particle.element.style.transform = `translate(-50%, -50%) translate(${x.toFixed(2)}vw, ${y.toFixed(2)}vh) scale(${scale.toFixed(3)})`;
     particle.element.style.opacity = opacity.toFixed(3);
   }
 }
 
-function startWormholeFall() {
+function startWormholeFall(options: { fromWhiteout?: boolean } = {}) {
   const spawnNormal = planetNormal(SPAWN_X, SPAWN_Z, new THREE.Vector3());
   const spawnForward = planetNormal(SPAWN_TARGET_X, SPAWN_TARGET_Z, new THREE.Vector3()).sub(spawnNormal).projectOnPlane(spawnNormal).normalize();
-  wormholeWhiteoutUntil = -Infinity;
+  if (!options.fromWhiteout) wormholeWhiteoutUntil = -Infinity;
   lastWormholeTriggerAt = elapsedTime;
   wormholeFall = {
     startedAt: elapsedTime,
@@ -5206,7 +5126,7 @@ function startWormholeFall() {
   playerAltitudeOffset = 0;
   placePlayerOnPlanet();
   updateWormholeFallVisual(0, wormholeFall.drift, 0);
-  showDialogue("远古巨树拱门", "门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", 4.2);
+  if (!options.fromWhiteout) showDialogue("远古巨树拱门", "门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", 4.2);
 }
 
 function wormholeElapsed() {
@@ -5738,18 +5658,21 @@ function updateFootballVisual(state: FootballState, delta: number) {
 
 function checkFootballGoal() {
   if (elapsedTime - footballGoal.lastScoredAt < FOOTBALL_GOAL_COOLDOWN_SECONDS) return;
-  const local = footballGoal.group.worldToLocal(football.group.position.clone());
-  const insideWidth = Math.abs(local.x) <= FOOTBALL_GOAL_WIDTH * 0.5 + FOOTBALL_RADIUS * 0.55;
-  const insideHeight = local.y >= FOOTBALL_RADIUS * 0.35 && local.y <= FOOTBALL_GOAL_HEIGHT + FOOTBALL_RADIUS * 0.85;
-  const insideDepth = local.z >= -FOOTBALL_RADIUS * 0.7 && local.z <= FOOTBALL_GOAL_DEPTH + FOOTBALL_RADIUS;
-  if (!insideWidth || !insideHeight || !insideDepth) return;
+  if (!isFootballInsideAncientTreeDoorway()) return;
 
   footballGoal.goals += 1;
   footballGoal.lastScoredAt = elapsedTime;
-  awardRepeatableScore(SCORE_FOOTBALL_GOAL, "火星足球进球");
+  awardRepeatableScore(SCORE_FOOTBALL_GOAL, "火星足球穿过古树拱门");
   if (!hasCamera) awardCamera();
-  else showDialogue("火星足球", "进球！足球已回到出生点。", 2.4);
+  else showDialogue("火星足球", "足球穿过古树拱门门洞。足球已回到出生点。", 2.4);
   respawnFootball();
+}
+
+function isFootballInsideAncientTreeDoorway() {
+  if (!ancientTreeArchObject) return false;
+  const position = planetSurfacePointFromNormal(football.normal, football.altitude, new THREE.Vector3());
+  const local = ancientTreeArchObject.worldToLocal(position);
+  return isInsideAncientTreeDoorway(local, 0.82);
 }
 
 function respawnFootball() {
@@ -8826,6 +8749,7 @@ function resetQuestState() {
   hiddenDiscoveries.clear();
   talkedRobotIds.clear();
   shownOperationHelpIds.delete("laserSword.unlock");
+  lastLaserSwordLockedPromptAt = -Infinity;
   setLaserSwordOwned(false);
   clearCoinGroups();
   nextCoinRefreshAt = elapsedTime;
