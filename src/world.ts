@@ -104,6 +104,7 @@ export type MonolithSite = {
 export type DarkSpider = {
   group: THREE.Group;
   visual: THREE.Group;
+  abdomenPivot: THREE.Group;
   legs: THREE.Group[];
   eyes: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[];
   eyeMaterial: THREE.MeshBasicMaterial;
@@ -113,6 +114,7 @@ export type DarkSpider = {
   tangentA: THREE.Vector3;
   tangentB: THREE.Vector3;
   phase: number;
+  attackSlot: number;
   radius: number;
   speed: number;
   attacking: boolean;
@@ -264,6 +266,11 @@ const SPIDER_DARK_RING_DISTANCE = 54;
 const SPIDER_DARK_SPREAD_ANGLE = 0.76;
 const SPIDER_BODY_RADIUS = 2.45;
 const SPIDER_SEPARATION_DISTANCE = 9.5;
+const SPIDER_ATTACK_SEPARATION_DISTANCE = 5.4;
+const SPIDER_ATTACK_ESCORT_DISTANCE = 5.6;
+const SPIDER_NOTICE_DISTANCE = 68;
+const SPIDER_ATTACK_DISENGAGE_DISTANCE = 96;
+const SPIDER_RIDE_HEIGHT = 0.2;
 const TERRAIN_WIDTH_SEGMENTS = 96;
 const TERRAIN_HEIGHT_SEGMENTS = 54;
 const MAINTENANCE_BOT_BUILDING_CLEARANCE = 5.8;
@@ -3314,11 +3321,26 @@ function createDarkSpider(index: number): DarkSpider {
   body.castShadow = true;
   visual.add(body);
 
+  const pedicel = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), shell);
+  pedicel.position.set(0, 0.82, 0.56);
+  pedicel.scale.set(0.72, 0.56, 1.14);
+  visual.add(pedicel);
+
+  const abdomenPivot = new THREE.Group();
+  abdomenPivot.position.set(0, 0.84, 0.68);
+  visual.add(abdomenPivot);
   const abdomen = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7), abdomenMat);
-  abdomen.position.set(0, 0.84, 0.92);
+  abdomen.position.set(0, 0, 0.24);
   abdomen.scale.set(1.04, 0.56, 1.34);
   abdomen.castShadow = true;
-  visual.add(abdomen);
+  abdomenPivot.add(abdomen);
+
+  for (const side of [-1, 1]) {
+    const fang = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.42, 5), shell);
+    fang.position.set(side * 0.2, 0.73, -1.28);
+    fang.rotation.x = Math.PI * 0.74;
+    visual.add(fang);
+  }
 
   const eyes: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[] = [];
   for (const side of [-1, 1]) {
@@ -3341,8 +3363,8 @@ function createDarkSpider(index: number): DarkSpider {
   ] as const;
   abdomenDots.forEach(([x, y, z, radius]) => {
     const dot = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 5), glowDotMat);
-    dot.position.set(x, y, z);
-    visual.add(dot);
+    dot.position.set(x, y - abdomenPivot.position.y, z - abdomenPivot.position.z);
+    abdomenPivot.add(dot);
   });
 
   const legs: THREE.Group[] = [];
@@ -3374,6 +3396,7 @@ function createDarkSpider(index: number): DarkSpider {
   return {
     group,
     visual,
+    abdomenPivot,
     legs,
     eyes,
     eyeMaterial: eyeMat,
@@ -3383,6 +3406,7 @@ function createDarkSpider(index: number): DarkSpider {
     tangentA: tangentA.clone(),
     tangentB: tangentB.clone(),
     phase: index * 1.9,
+    attackSlot: index,
     radius: 14 + index * 5,
     speed: 1.75 + index * 0.22,
     attacking: false,
@@ -3402,6 +3426,7 @@ export function updateDarkSpiders(
 ) {
   const sunDirection = sunPosition && sunPosition.lengthSq() > 0.000001 ? sunPosition.clone().normalize() : null;
   const lightThreatNormal = lightThreat && lightThreat.radius > 0 ? lightThreat.position.clone().normalize() : null;
+  const attackLeader = playerThreat?.active ? nearestSpiderToPlayer(spiders, playerThreat.normal) : null;
   for (const spider of spiders) {
     const lit = sunDirection ? spider.normal.dot(sunDirection) > -0.02 : false;
     spider.homeNormal.copy(spiderDarkActivityCenter(spider, sunDirection));
@@ -3436,31 +3461,37 @@ export function updateDarkSpiders(
     if (!avoidingLaser && playerThreat?.active) {
       const playerDot = THREE.MathUtils.clamp(spider.normal.dot(playerThreat.normal), -1, 1);
       const playerDistance = Math.acos(playerDot) * PLANET_RADIUS;
-      if (playerDistance < SPIDER_PATROL_RADIUS * 0.72) {
+      const detectionDistance = spider.attacking ? SPIDER_ATTACK_DISENGAGE_DISTANCE : SPIDER_NOTICE_DISTANCE;
+      if (playerDistance < detectionDistance) {
         attackingPlayer = true;
-        desiredNormal = playerThreat.normal.clone();
+        desiredNormal = spider === attackLeader ? playerThreat.normal.clone() : spiderAttackEscortNormal(playerThreat.normal, spider);
       }
     }
     spider.attacking = attackingPlayer;
     spider.eyeMaterial.color.set(attackingPlayer ? 0xff3028 : 0x8cff66);
-    desiredNormal = separateSpiderTarget(desiredNormal, spider, spiders);
-    const targetNormal = avoidSpiderObstacles(constrainSpiderTerritory(desiredNormal), colliders, SPIDER_BODY_RADIUS + 0.35);
+    if (!attackingPlayer) desiredNormal = separateSpiderTarget(desiredNormal, spider, spiders);
+    const constrainToTerritory = !attackingPlayer;
+    const movementTarget = constrainToTerritory ? constrainSpiderTerritory(desiredNormal) : desiredNormal;
+    const targetNormal = avoidSpiderObstacles(movementTarget, colliders, SPIDER_BODY_RADIUS + 0.35, constrainToTerritory);
+    const normalBeforeMove = spider.normal.clone();
     const dot = THREE.MathUtils.clamp(spider.normal.dot(targetNormal), -1, 1);
     const tangent = targetNormal.clone().addScaledVector(spider.normal, -dot);
     const distance = Math.acos(dot);
-    let moving = false;
+    let intendedMove = false;
     if (tangent.lengthSq() > 0.000001 && distance > 0.00002) {
       tangent.normalize();
       const speedScale = avoidingLaser ? 2.05 : attackingPlayer ? 2.45 : lit ? 1.45 : 1;
       const step = Math.min((spider.speed * speedScale * delta) / PLANET_RADIUS, distance);
       spider.normal.multiplyScalar(Math.cos(step)).addScaledVector(tangent, Math.sin(step)).normalize();
       spider.forward.lerp(tangent, 0.08).projectOnPlane(spider.normal).normalize();
-      moving = step > 0.000001;
+      intendedMove = step > 0.000001;
     }
-    const collisionState = resolveSpiderObstacleContact(spider.normal, colliders, SPIDER_BODY_RADIUS);
+    const collisionState = resolveSpiderObstacleContact(spider.normal, colliders, SPIDER_BODY_RADIUS, constrainToTerritory);
     spider.normal.copy(collisionState.normal);
-    spider.normal.copy(resolveSpiderSeparation(spider.normal, spider, spiders));
+    spider.normal.copy(resolveSpiderSeparation(spider.normal, spider, spiders, attackingPlayer ? SPIDER_ATTACK_SEPARATION_DISTANCE : SPIDER_SEPARATION_DISTANCE, constrainToTerritory));
     spider.forward.projectOnPlane(spider.normal).normalize();
+    const actualTravel = Math.acos(THREE.MathUtils.clamp(normalBeforeMove.dot(spider.normal), -1, 1)) * PLANET_RADIUS;
+    const moving = intendedMove && actualTravel > Math.max(0.012, delta * 0.16);
 
     const legWave = elapsed * (moving ? (avoidingLaser ? 11.5 : attackingPlayer ? 10.2 : lit ? 8.4 : 6.8) : 1.6) + spider.phase;
     const climbLift = collisionState.climbHeight;
@@ -3478,11 +3509,33 @@ export function updateDarkSpiders(
       leg.rotation.y = side * (0.18 + lift * 0.58);
       leg.rotation.z = side * (0.28 + Math.sin(phase + 0.7) * 0.18 * stride + climbLift * 0.06);
     }
-    spider.visual.position.y = Math.max(0.02, Math.sin(legWave * 2.0) * 0.035) + climbLift * 0.16;
+    spider.visual.position.y = climbLift * 0.08;
     spider.visual.rotation.x = Math.sin(legWave + spider.phase) * (moving ? 0.055 : 0.018) + climbLift * 0.02;
     spider.visual.rotation.z = Math.sin(legWave * 0.72 + spider.phase) * (moving ? 0.075 : 0.025);
-    placeObjectOnPlanetNormal(spider.group, spider.normal, 0.34 + climbLift, headingFromForward(spider.normal, spider.forward));
+    spider.abdomenPivot.rotation.x = -0.11 + Math.sin(legWave * 0.55 + spider.phase) * (moving ? 0.075 : 0.025) + climbLift * 0.08;
+    spider.abdomenPivot.rotation.z = Math.sin(legWave * 0.38 + spider.phase) * (moving ? 0.04 : 0.012);
+    placeObjectOnPlanetNormal(spider.group, spider.normal, SPIDER_RIDE_HEIGHT + climbLift, headingFromForward(spider.normal, spider.forward));
   }
+}
+
+function nearestSpiderToPlayer(spiders: DarkSpider[], playerNormal: THREE.Vector3) {
+  let leader: DarkSpider | null = null;
+  let nearestDistance = Infinity;
+  for (const spider of spiders) {
+    const distance = Math.acos(THREE.MathUtils.clamp(spider.normal.dot(playerNormal), -1, 1)) * PLANET_RADIUS;
+    if (distance < nearestDistance) {
+      leader = spider;
+      nearestDistance = distance;
+    }
+  }
+  return leader;
+}
+
+function spiderAttackEscortNormal(playerNormal: THREE.Vector3, spider: DarkSpider) {
+  const playerToSpider = spider.normal.clone().addScaledVector(playerNormal, -spider.normal.dot(playerNormal));
+  const lane = playerToSpider.lengthSq() > 0.000001 ? playerToSpider.normalize() : spiderPersonalTangent(spider, playerNormal);
+  const distance = SPIDER_ATTACK_ESCORT_DISTANCE + (spider.attackSlot % 2) * 0.7;
+  return playerNormal.clone().multiplyScalar(Math.cos(distance / PLANET_RADIUS)).addScaledVector(lane, Math.sin(distance / PLANET_RADIUS)).normalize();
 }
 
 function constrainSpiderTerritory(normal: THREE.Vector3) {
@@ -3553,19 +3606,19 @@ function separateSpiderTarget(normal: THREE.Vector3, spider: DarkSpider, spiders
   return constrainSpiderTerritory(adjusted);
 }
 
-function resolveSpiderSeparation(normal: THREE.Vector3, spider: DarkSpider, spiders: DarkSpider[]) {
+function resolveSpiderSeparation(normal: THREE.Vector3, spider: DarkSpider, spiders: DarkSpider[], minimumDistance = SPIDER_SEPARATION_DISTANCE, constrainToTerritory = true) {
   const adjusted = normal.clone();
   for (const other of spiders) {
     if (other === spider) continue;
     const dot = THREE.MathUtils.clamp(adjusted.dot(other.normal), -1, 1);
     const distance = Math.acos(dot) * PLANET_RADIUS;
-    if (distance >= SPIDER_SEPARATION_DISTANCE) continue;
+    if (distance >= minimumDistance) continue;
     let away = adjusted.clone().addScaledVector(other.normal, -dot);
     if (away.lengthSq() < 0.000001) away = spiderPersonalTangent(spider, adjusted);
     away.normalize();
-    adjusted.copy(other.normal).multiplyScalar(Math.cos(SPIDER_SEPARATION_DISTANCE / PLANET_RADIUS)).addScaledVector(away, Math.sin(SPIDER_SEPARATION_DISTANCE / PLANET_RADIUS)).normalize();
+    adjusted.copy(other.normal).multiplyScalar(Math.cos(minimumDistance / PLANET_RADIUS)).addScaledVector(away, Math.sin(minimumDistance / PLANET_RADIUS)).normalize();
   }
-  return constrainSpiderTerritory(adjusted);
+  return constrainToTerritory ? constrainSpiderTerritory(adjusted) : adjusted;
 }
 
 function spiderPersonalTangent(spider: DarkSpider, normal: THREE.Vector3) {
@@ -3576,7 +3629,7 @@ function spiderPersonalTangent(spider: DarkSpider, normal: THREE.Vector3) {
   return spiderTangentAwayFromArrival(normal);
 }
 
-function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
+function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number, constrainToTerritory = true) {
   const adjusted = normal.clone();
   for (const collider of colliders) {
     if (collider.dynamicObject || isSpiderClimbableCollider(collider)) continue;
@@ -3592,10 +3645,10 @@ function avoidSpiderObstacles(normal: THREE.Vector3, colliders: CircleCollider[]
     const urgency = 1 - THREE.MathUtils.smoothstep(distance, collider.radius + spiderRadius, steerDistance);
     adjusted.addScaledVector(away, ((steerDistance - distance) / PLANET_RADIUS) * urgency * 0.85).normalize();
   }
-  return constrainSpiderTerritory(adjusted);
+  return constrainToTerritory ? constrainSpiderTerritory(adjusted) : adjusted;
 }
 
-function resolveSpiderObstacleContact(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number) {
+function resolveSpiderObstacleContact(normal: THREE.Vector3, colliders: CircleCollider[], spiderRadius: number, constrainToTerritory = true) {
   const adjusted = normal.clone();
   let climbHeight = 0;
   for (let pass = 0; pass < 3; pass += 1) {
@@ -3623,7 +3676,7 @@ function resolveSpiderObstacleContact(normal: THREE.Vector3, colliders: CircleCo
       adjusted.copy(colliderNormal).multiplyScalar(Math.cos(minDistance / PLANET_RADIUS)).addScaledVector(away, Math.sin(minDistance / PLANET_RADIUS)).normalize();
     }
   }
-  return { normal: constrainSpiderTerritory(adjusted), climbHeight };
+  return { normal: constrainToTerritory ? constrainSpiderTerritory(adjusted) : adjusted, climbHeight };
 }
 
 function colliderSurfaceNormal(collider: CircleCollider) {
