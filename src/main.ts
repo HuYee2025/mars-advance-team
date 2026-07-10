@@ -62,7 +62,7 @@ type InteractionAction = {
     | "fufu"
     | "footballPickup"
     | "robot"
-    | "oxygenSupply"
+    | "robotOxygen"
     | "mission"
     | "photoWall"
     | "hitchRide";
@@ -70,15 +70,6 @@ type InteractionAction = {
 };
 
 type LanguageCode = "zh-CN" | "en-US";
-
-type OxygenSupplyPoint = {
-  label: string;
-  x: number;
-  z: number;
-  radius: number;
-  mapRange: number;
-  normal: THREE.Vector3;
-};
 
 type WormholeFallState = {
   startedAt: number;
@@ -116,6 +107,7 @@ type JetpackSource = "temporary" | "equipment" | null;
 
 const sceneRoot = must<HTMLDivElement>("#scene-root");
 const solarOverexposure = must<HTMLElement>("#solar-overexposure");
+const spiderDamageVignette = must<HTMLElement>("#spider-damage-vignette");
 const labelsRoot = must<HTMLDivElement>("#labels");
 const wormholeWhiteoutOverlay = must<HTMLElement>("#wormhole-whiteout");
 const wormholeWhiteoutParticlesRoot = must<HTMLDivElement>("#wormhole-whiteout-particles");
@@ -200,12 +192,20 @@ const stormSkyColor = new THREE.Color(0x5b2417);
 scene.background = clearSkyColor.clone();
 scene.fog = new THREE.FogExp2(0x120a0a, 0.0014);
 
+const QUALITY_PRESETS = {
+  high: { pixelRatioLimit: 1.25, shadowMapSize: 2048, interfaceIntervalMs: 100 },
+  balanced: { pixelRatioLimit: 1.1, shadowMapSize: 1536, interfaceIntervalMs: 133 },
+  low: { pixelRatioLimit: 1, shadowMapSize: 1024, interfaceIntervalMs: 166 },
+} as const;
+type QualityTier = keyof typeof QUALITY_PRESETS;
+const QUALITY_TIER_ORDER: QualityTier[] = ["high", "balanced", "low"];
+let activeQualityTier: QualityTier = isTouchLike() ? "balanced" : "high";
+
 const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 900);
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: true,
   powerPreference: "high-performance",
-  preserveDrawingBuffer: true,
 });
 const EARTHLIKE_KEY_LIGHT = 7.2;
 const CLEAR_FOG_DENSITY = 0.0014;
@@ -221,7 +221,6 @@ const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
 const ARES_CALENDAR_BASE_YEAR = 2050;
 const ARES_CALENDAR_BASE_SOL = 30;
 const ARES_SOLS_PER_YEAR = 669;
-const RENDER_PIXEL_RATIO_LIMIT = 1.25;
 const WORMHOLE_ORGANIC_SEGMENT_COUNT = 42;
 const WORMHOLE_ORGANIC_SEGMENT_SPACING = 2.15;
 const WORMHOLE_ORGANIC_FRONT_Z = -8.8;
@@ -399,7 +398,9 @@ const SCALE_GUN_AIM_PITCH_MIN = -1.05;
 const SCALE_GUN_AIM_PITCH_MAX = 1.18;
 const SPIDER_TOUCH_DAMAGE = 20;
 const SPIDER_TOUCH_COOLDOWN_SECONDS = 1.15;
+const SPIDER_DAMAGE_GLOBAL_COOLDOWN_SECONDS = 0.78;
 const SPIDER_TOUCH_DISTANCE = 3.8;
+const SPIDER_KNOCKBACK_DISTANCE = 5.4;
 const LASER_SWORD_LIGHT_INTENSITY = 6.76;
 const LASER_SWORD_LIGHT_DISTANCE = 20;
 const LASER_SWORD_RAISED_LIGHT_INTENSITY = LASER_SWORD_LIGHT_INTENSITY * 2;
@@ -542,16 +543,6 @@ const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> =
   lab: "lab",
 };
 
-const SHIP_OXYGEN_SUPPLY_RADIUS = 12.2;
-const WRECK_OXYGEN_SUPPLY_RADIUS = 15.0;
-
-const oxygenSupplyPoints: OxygenSupplyPoint[] = [
-  createOxygenSupplyPoint("01 飞船 登陆飞船", expandWorldCoordinate(132), expandWorldCoordinate(78), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
-  createOxygenSupplyPoint("02 飞船 货运飞船", expandWorldCoordinate(142), expandWorldCoordinate(18), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
-  createOxygenSupplyPoint("03 飞船 返回飞船", expandWorldCoordinate(-118), expandWorldCoordinate(82), SHIP_OXYGEN_SUPPLY_RADIUS, 260),
-  createOxygenSupplyPointFromNormal("坠毁飞船残骸", CRASHED_SHIP_SITE_NORMAL, WRECK_OXYGEN_SUPPLY_RADIUS, 340),
-];
-
 const explorableBuildingIds = new Set<Interactable["id"]>([
   "habitatCheck",
   "greenhouse",
@@ -563,41 +554,6 @@ const explorableBuildingIds = new Set<Interactable["id"]>([
   "storehouse",
   "medical",
 ]);
-
-function createOxygenSupplyPoint(
-  label: string,
-  x: number,
-  z: number,
-  radius: number,
-  mapRange: number,
-  normal = planetNormal(x, z, new THREE.Vector3())
-): OxygenSupplyPoint {
-  return {
-    label,
-    x,
-    z,
-    radius,
-    mapRange,
-    normal: normal.clone().normalize(),
-  };
-}
-
-function createOxygenSupplyPointFromNormal(
-  label: string,
-  normal: THREE.Vector3,
-  radius: number,
-  mapRange: number
-): OxygenSupplyPoint {
-  const projectedY = Math.max(Math.abs(normal.y), 0.001);
-  return createOxygenSupplyPoint(
-    label,
-    (normal.x / projectedY) * PLANET_RADIUS,
-    (normal.z / projectedY) * PLANET_RADIUS,
-    radius,
-    mapRange,
-    normal
-  );
-}
 
 const colliderExplorationRules: Array<{ key: string; match: string; label?: string; interactableId?: Interactable["id"] }> = [
   { key: "habitat", match: "居住舱", interactableId: "habitatCheck" },
@@ -1282,6 +1238,12 @@ let cameraObstructionLift = 0;
 const CAMERA_MIN_DISTANCE = 0.08;
 const CAMERA_MAX_DISTANCE = 280;
 const PERFORMANCE_SAMPLE_INTERVAL_MS = 500;
+const QUALITY_CHANGE_COOLDOWN_MS = 3_000;
+const QUALITY_RECOVERY_COOLDOWN_MS = 8_000;
+const PHOTO_CAPTURE_MAX_EDGE = 1600;
+let lastQualityTierChangeAt = -Infinity;
+let lastInterfaceUpdateAt = -Infinity;
+let lastMapUpdateAt = -Infinity;
 let lastFrameTime = performance.now();
 let performanceSampleStartedAt = lastFrameTime;
 let performanceSampleFrames = 0;
@@ -1316,6 +1278,7 @@ let mapHoldPreviousOpen = false;
 let mapZoom = 1;
 let playerAltitudeOffset = 0;
 let verticalVelocity = 0;
+let lastSpiderDamageAt = -Infinity;
 let grounded = true;
 let rocketDoorOpen = false;
 let insideRocket = false;
@@ -1325,7 +1288,6 @@ let activeAncientPortal = false;
 let activeRobot: THREE.Group | null = null;
 let activeFufu = false;
 let activeFootball = false;
-let activeOxygenSupply: string | null = null;
 let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
@@ -1509,7 +1471,8 @@ function buildLighting() {
   const sun = new THREE.DirectionalLight(0xffd2a3, EARTHLIKE_KEY_LIGHT * currentMarsSunState.irradianceRatio);
   sun.position.set(-36, 54, 28);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  const shadowMapSize = QUALITY_PRESETS[activeQualityTier].shadowMapSize;
+  sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
   sun.shadow.bias = -0.00035;
   sun.shadow.normalBias = 0.035;
   sun.shadow.camera.near = 1;
@@ -3721,6 +3684,7 @@ function currentLaserSwordThreat() {
 }
 
 function currentSpiderPlayerThreat() {
+  const playerGrounded = grounded && playerAltitudeOffset <= 0.06;
   const canBeHunted =
     started &&
     !wormholeFall &&
@@ -3730,28 +3694,49 @@ function currentSpiderPlayerThreat() {
     !insideRocket &&
     !ridingElevator &&
     !ridingRover &&
-    !isFlightActive() &&
+    playerGrounded &&
     !(laserSwordActive && canUseLaserSword());
   return { normal: playerNormal, active: canBeHunted };
 }
 
 function updateSpiderTouchDamage() {
-  if (!started || wormholeFall || isFlightActive() || (laserSwordActive && canUseLaserSword())) return;
+  if (!started || wormholeFall || !grounded || playerAltitudeOffset > 0.06 || (laserSwordActive && canUseLaserSword())) return;
   if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  if (elapsedTime < lastSpiderDamageAt + SPIDER_DAMAGE_GLOBAL_COOLDOWN_SECONDS) return;
   for (const spider of world.darkSpiders) {
     if (!spider.attacking) continue;
     const distance = surfaceDistanceBetween(playerNormal, spider.normal);
     if (distance > SPIDER_TOUCH_DISTANCE) continue;
     if (elapsedTime < spider.lastDamageAt + SPIDER_TOUCH_COOLDOWN_SECONDS) continue;
     spider.lastDamageAt = elapsedTime;
+    lastSpiderDamageAt = elapsedTime;
     const damage = SPIDER_TOUCH_DAMAGE * THREE.MathUtils.clamp(spider.damageFactor, SCALE_GUN_MIN_FACTOR, SCALE_GUN_MAX_FACTOR);
     stamina = Math.max(0, stamina - damage);
+    triggerSpiderDamageFeedback(spider);
     if (stamina <= 0) {
       respawnAfterStaminaDepleted();
       return;
     }
     showDialogue("火星蜘蛛", `红眼蜘蛛触碰了宇航服，体能 -${Math.round(damage)}。`, 2);
   }
+}
+
+function triggerSpiderDamageFeedback(spider: DarkSpider) {
+  spiderDamageVignette.classList.remove("is-active");
+  void spiderDamageVignette.offsetWidth;
+  spiderDamageVignette.classList.add("is-active");
+
+  const previousNormal = playerNormal.clone();
+  let away = playerNormal.clone().addScaledVector(spider.normal, -playerNormal.dot(spider.normal)).projectOnPlane(playerNormal);
+  if (away.lengthSq() < 0.000001) away = playerForward.clone().negate().projectOnPlane(playerNormal);
+  if (away.lengthSq() < 0.000001) return;
+  away.normalize();
+  const angularDistance = SPIDER_KNOCKBACK_DISTANCE / PLANET_RADIUS;
+  playerNormal.multiplyScalar(Math.cos(angularDistance)).addScaledVector(away, Math.sin(angularDistance)).normalize();
+  playerForward.projectOnPlane(playerNormal).normalize();
+  resolveCollisions(previousNormal);
+  playerVelocity.copy(away).multiplyScalar(5.6);
+  placePlayerOnPlanet();
 }
 
 function updateHeldGearPose() {
@@ -4020,8 +4005,7 @@ function updateCameraSystem() {
 
 function captureCameraPhoto() {
   if (!cameraMode) return;
-  renderer.render(scene, camera);
-  const dataUrl = renderer.domElement.toDataURL("image/png");
+  const dataUrl = captureSceneToPngDataUrl();
   const texture = new THREE.TextureLoader().load(dataUrl);
   texture.colorSpace = THREE.SRGBColorSpace;
   cameraPhotos.push({ dataUrl, texture, takenAt: Date.now() });
@@ -4031,6 +4015,41 @@ function captureCameraPhoto() {
   }
   updatePhotoWallFrames();
   showDialogue("相机", "照片已保存到居住舱电子屏", 2.2);
+}
+
+function captureSceneToPngDataUrl() {
+  const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
+  const captureScale = Math.min(1, PHOTO_CAPTURE_MAX_EDGE / Math.max(drawingBufferSize.x, drawingBufferSize.y));
+  const width = Math.max(1, Math.round(drawingBufferSize.x * captureScale));
+  const height = Math.max(1, Math.round(drawingBufferSize.y * captureScale));
+  const target = new THREE.WebGLRenderTarget(width, height, { depthBuffer: true });
+  target.texture.colorSpace = THREE.SRGBColorSpace;
+  const pixels = new Uint8Array(width * height * 4);
+  const previousTarget = renderer.getRenderTarget();
+
+  try {
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+    renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+  } finally {
+    renderer.setRenderTarget(previousTarget);
+    target.dispose();
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("无法创建照片导出画布。");
+  const imageData = context.createImageData(width, height);
+  const rowLength = width * 4;
+  for (let row = 0; row < height; row += 1) {
+    const sourceOffset = row * rowLength;
+    const targetOffset = (height - row - 1) * rowLength;
+    imageData.data.set(pixels.subarray(sourceOffset, sourceOffset + rowLength), targetOffset);
+  }
+  context.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
 }
 
 function createPhotoWall() {
@@ -4582,12 +4601,8 @@ function animate() {
   updateCoinGroup(delta);
   updateHiddenDiscoveries();
   updateHabitatOccupancy();
-  updateLabels();
-  updateNavigationReadout();
-  updateMap();
+  updateInterface(now);
   updateMissionState();
-  updateReadouts();
-  updateMobileFlightButtons();
   const playerFlying = isFlightActive();
   updateMarsEngineer(playerRig, wormholeFall ? 0 : speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
   updateHeldGearPose();
@@ -4627,9 +4642,56 @@ function updatePerformanceReadout(now: number, frameDurationMs: number) {
   if (sampleDuration < PERFORMANCE_SAMPLE_INTERVAL_MS) return;
   const averageFrameMs = performanceSampleFrames > 0 ? performanceSampleFrameMsTotal / performanceSampleFrames : sampleDuration;
   fpsValue.textContent = Math.round(averageFrameMs).toString().padStart(3, "0");
+  updateAdaptiveQuality(now, averageFrameMs);
   performanceSampleStartedAt = now;
   performanceSampleFrames = 0;
   performanceSampleFrameMsTotal = 0;
+}
+
+function updateInterface(now: number) {
+  const interval = QUALITY_PRESETS[activeQualityTier].interfaceIntervalMs;
+  if (now - lastInterfaceUpdateAt >= interval) {
+    lastInterfaceUpdateAt = now;
+    updateLabels();
+    updateNavigationReadout();
+    updateReadouts();
+    updateMobileFlightButtons();
+  }
+  if (mapOpen && now - lastMapUpdateAt >= interval) {
+    lastMapUpdateAt = now;
+    updateMap();
+  }
+}
+
+function updateAdaptiveQuality(now: number, averageFrameMs: number) {
+  const currentIndex = QUALITY_TIER_ORDER.indexOf(activeQualityTier);
+  const highestAllowedIndex = isTouchLike() ? 1 : 0;
+  const canReduceQuality = currentIndex < QUALITY_TIER_ORDER.length - 1;
+  const canRestoreQuality = currentIndex > highestAllowedIndex;
+  const cooldown = averageFrameMs >= 33 ? QUALITY_CHANGE_COOLDOWN_MS : QUALITY_RECOVERY_COOLDOWN_MS;
+  if (now - lastQualityTierChangeAt < cooldown) return;
+
+  if (averageFrameMs >= 33 && canReduceQuality) {
+    applyQualityTier(QUALITY_TIER_ORDER[currentIndex + 1], now);
+  } else if (averageFrameMs <= 22 && canRestoreQuality) {
+    applyQualityTier(QUALITY_TIER_ORDER[currentIndex - 1], now);
+  }
+}
+
+function applyQualityTier(nextTier: QualityTier, now: number) {
+  if (nextTier === activeQualityTier) return;
+  activeQualityTier = nextTier;
+  lastQualityTierChangeAt = now;
+  renderer.setPixelRatio(renderPixelRatio());
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  if (!sunLight) return;
+  const shadowMapSize = QUALITY_PRESETS[nextTier].shadowMapSize;
+  if (sunLight.shadow.mapSize.x === shadowMapSize) return;
+  sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+  sunLight.shadow.map?.dispose();
+  sunLight.shadow.map = null;
+  sunLight.shadow.needsUpdate = true;
 }
 
 function startBackgroundMusic() {
@@ -4857,7 +4919,6 @@ function updateRobotEncounters() {
   const robotPosition = new THREE.Vector3();
   for (const rover of world.rovers) {
     if (rover.userData.kind !== "bot") continue;
-    if (hasTalkedToRobot(rover)) continue;
     rover.getWorldPosition(robotPosition);
     const distance = robotPosition.distanceTo(player.position);
     if (distance < nearestDistance) {
@@ -5109,7 +5170,6 @@ function startWormholeFall(options: { fromWhiteout?: boolean } = {}) {
   activeRobot = null;
   activeFufu = false;
   activeFootball = false;
-  activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
   resetAncientPortal();
@@ -6215,7 +6275,6 @@ function updateMissionState() {
     activeRobot = null;
     activeFufu = false;
     activeFootball = false;
-    activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
     interactionChoiceOpen = false;
@@ -6238,7 +6297,6 @@ function updateMissionState() {
     activeRobot = null;
     activeFufu = false;
     activeFootball = false;
-    activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = [];
     interactionChoiceOpen = false;
@@ -6264,7 +6322,6 @@ function updateMissionState() {
     activeRobot = null;
     activeFufu = false;
     activeFootball = false;
-    activeOxygenSupply = null;
     activeRideRover = null;
     interactionActions = buildInteractionActions();
     if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
@@ -6281,7 +6338,6 @@ function updateMissionState() {
   activeRobot = null;
   activeFufu = false;
   activeFootball = false;
-  activeOxygenSupply = null;
   activeRideRover = ridingRover;
   let bestDistance = Infinity;
   let bestExploreDistance = Infinity;
@@ -6305,7 +6361,6 @@ function updateMissionState() {
   activeFufu = findActiveFufu();
   activeFootball = findActiveFootball();
   activeRobot = findActiveRobot();
-  activeOxygenSupply = findActiveOxygenSupply();
   if (!activeRideRover) activeRideRover = findActiveRideRover();
   interactionActions = buildInteractionActions();
   if (hasAncientPortalPaymentActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "ancientPortalPay");
@@ -6314,7 +6369,7 @@ function updateMissionState() {
   dialogueBox.classList.toggle("is-visible", performance.now() < messageUntil);
 }
 
-function buildInteractionActions() {
+function buildInteractionActions(): InteractionAction[] {
   const actions: InteractionAction[] = [];
   if (wormholeFall || isWormholeWhiteoutActive()) return actions;
   if (isFlightActive()) {
@@ -6323,6 +6378,12 @@ function buildInteractionActions() {
       actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
     }
     return actions;
+  }
+  if (activeRobot) {
+    return [
+      { id: "robotOxygen", label: localizeText("加氧气") },
+      { id: "robot", label: localizeText("对话") },
+    ];
   }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
@@ -6336,8 +6397,6 @@ function buildInteractionActions() {
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
   if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
-  if (activeRobot) actions.push({ id: "robot", label: localizeText("与维修机器人通话") });
-  if (activeOxygenSupply) actions.push({ id: "oxygenSupply", label: `${localizeText("更换氧气背包")}（${localizeText(activeOxygenSupply)}）` });
   const prioritized = prioritizeInteractionActions(actions);
   const hasTwoButtonChoice = prioritized.some((action) => action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
   const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
@@ -6353,7 +6412,7 @@ function prioritizeInteractionActions(actions: InteractionAction[]) {
 
 function interactionActionPriority(action: InteractionAction) {
   const priority: Record<InteractionAction["id"], number> = {
-    oxygenSupply: 0.5,
+    robotOxygen: 0.5,
     habitat: 1,
     greenhouse: 1,
     elevator: 1,
@@ -6633,8 +6692,8 @@ function executeSelectedInteraction() {
     openRobotBriefing(activeRobot);
     return;
   }
-  if (action.id === "oxygenSupply" && activeOxygenSupply) {
-    refillSuitOxygen(activeOxygenSupply);
+  if (action.id === "robotOxygen" && activeRobot) {
+    refillSuitOxygen(activeRobot);
     return;
   }
   if (action.id === "hitchRide" && activeRideRover) {
@@ -6793,22 +6852,6 @@ function rescueFufu() {
   setCurrentMissionText();
 }
 
-function findActiveOxygenSupply() {
-  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return null;
-  if (suitOxygen > SUIT_OXYGEN_WARNING_THRESHOLD) return null;
-
-  let nearest: string | null = null;
-  let nearestDistance = Infinity;
-  for (const point of oxygenSupplyPoints) {
-    const distance = surfaceDistanceBetween(playerNormal, point.normal);
-    if (distance < point.radius && distance < nearestDistance) {
-      nearest = point.label;
-      nearestDistance = distance;
-    }
-  }
-  return nearest;
-}
-
 function resetSuitOxygen() {
   suitOxygen = SUIT_OXYGEN_MAX;
   oxygenWarningShown = false;
@@ -6842,7 +6885,6 @@ function resetRunUiAfterRespawn() {
   activeRobot = null;
   activeFufu = false;
   activeFootball = false;
-  activeOxygenSupply = null;
   activeRideRover = null;
   ridingRover = null;
   resetDialogueState();
@@ -6868,9 +6910,10 @@ function resetRunUiAfterRespawn() {
   setCurrentMissionText();
 }
 
-function refillSuitOxygen(label: string) {
+function refillSuitOxygen(robot: THREE.Group) {
   resetSuitOxygen();
-  showDialogue(label, "氧气背包已更换。剩余氧气 100%。", 2.8);
+  const label = typeof robot.userData.label === "string" ? robot.userData.label : "维修机器人";
+  showDialogue(label, "氧气已补满。剩余氧气 100%。", 2.2);
 }
 
 function currentSolarHeatStaminaMultiplier() {
@@ -7544,6 +7587,7 @@ function updateLabels() {
 
 function updateMap() {
   if (!mapOpen || !started) return;
+  lastMapUpdateAt = performance.now();
 
   mapRadar.querySelectorAll(".map-marker").forEach((node) => node.remove());
   const radarSize = mapRadar.clientWidth || 280;
@@ -7588,18 +7632,20 @@ function updateMap() {
       };
     }),
     ...(showOxygenSupplyTargets
-      ? oxygenSupplyPoints.map((point) => ({
-          label: localizeLabel(point.label),
-          object: null,
-          x: point.x,
-          z: point.z,
-          mapRange: point.mapRange,
-          type: "oxygen",
-          unknown: false,
-          missionTarget: false,
-          oxygenSupplyTarget: true,
-          coinTarget: false,
-        }))
+      ? world.rovers
+          .filter((rover) => rover.userData.kind === "bot")
+          .map((robot) => ({
+            label: localizeLabel(typeof robot.userData.label === "string" ? robot.userData.label : "维修机器人"),
+            object: robot,
+            x: typeof robot.userData.planetX === "number" ? robot.userData.planetX : 0,
+            z: typeof robot.userData.planetZ === "number" ? robot.userData.planetZ : 0,
+            mapRange: 320,
+            type: "oxygen",
+            unknown: false,
+            missionTarget: false,
+            oxygenSupplyTarget: true,
+            coinTarget: false,
+          }))
       : []),
   ];
 
@@ -8750,6 +8796,7 @@ function resetQuestState() {
   talkedRobotIds.clear();
   shownOperationHelpIds.delete("laserSword.unlock");
   lastLaserSwordLockedPromptAt = -Infinity;
+  lastSpiderDamageAt = -Infinity;
   setLaserSwordOwned(false);
   clearCoinGroups();
   nextCoinRefreshAt = elapsedTime;
@@ -9124,7 +9171,7 @@ function onResize() {
 }
 
 function renderPixelRatio() {
-  return Math.min(window.devicePixelRatio || 1, RENDER_PIXEL_RATIO_LIMIT);
+  return Math.min(window.devicePixelRatio || 1, QUALITY_PRESETS[activeQualityTier].pixelRatioLimit);
 }
 
 function isTouchLike() {
