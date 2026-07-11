@@ -10,6 +10,8 @@
     "i18n:audit": "node scripts/i18n-audit.mjs",
     "i18n:audit:strict": "node scripts/i18n-audit.mjs --strict",
     "i18n:audit:update": "node scripts/i18n-audit.mjs --update-baseline",
+    "assets:models": "node scripts/generate-core-glb.mjs",
+    "test": "tsx --test tests/**/*.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },

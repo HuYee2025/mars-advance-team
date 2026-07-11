@@ -11,8 +11,35 @@ import {
 } from "./orbital-starlink";
 import { computeMarsSunState, type MarsSunState } from "./mars-sun-model";
 import { createMarsEngineer, updateMarsEngineer } from "./player";
+import { createOrbitalDefenseSystem, type OrbitalDefenseEvent } from "./orbital-defense";
+import { resolveGameMode } from "./core/game-state";
+import { validateDialogueGraph } from "./core/dialogue-graph";
+import { rankInteractionCandidates, type InteractionPriority } from "./core/interaction-system";
+import { QUALITY_PROFILES, QUALITY_TIER_ORDER, type QualityTier } from "./core/quality";
+import { SphericalCollisionWorld } from "./core/collision-world";
+import {
+  applySpiderBladeDamage,
+  SPIDER_BLADE_COOLDOWN_SECONDS,
+  SPIDER_BLADE_FORWARD_DOT,
+  SPIDER_BLADE_RANGE,
+  SPIDER_MAX_HEALTH,
+} from "./core/spider-combat";
+import { batchStaticMeshes } from "./core/static-batching";
+import {
+  classifyRadarContact,
+  getRadarContactSignature,
+  layoutRadarContact,
+  selectRadarContacts,
+  shouldShowParkedXWing,
+  type RadarContact,
+  type RadarContactKind,
+  type RadarMode,
+} from "./core/radar";
+import { MAIN_MISSION_TARGETS, isAnomalyContentUnlocked, type MainMissionStep } from "./game/main-quests";
+import { englishPhrasePairs, exactEnglishTexts, i18n, runtimeEnglishTexts, type LanguageCode } from "./i18n/catalog";
 import {
   characters,
+  dialogueEntryNodes,
   dialogueNodes,
   robotDialogueStartNodes,
   sceneStartNodes,
@@ -23,8 +50,14 @@ import {
   type DialogueSceneId,
 } from "./dialogue/dialogues";
 import {
+  AT_AT_SPAWN_X,
+  AT_AT_SPAWN_Z,
   CRASHED_SHIP_SITE_NORMAL,
   PLANET_RADIUS,
+  PLAYER_SPAWN_TARGET_X,
+  PLAYER_SPAWN_TARGET_Z,
+  PLAYER_SPAWN_X,
+  PLAYER_SPAWN_Z,
   expandWorldCoordinate,
   createMarsWorld,
   placeObjectOnPlanetNormal,
@@ -44,12 +77,34 @@ import {
   type Interactable,
   type Landmark,
 } from "./world";
+import {
+  AT_AT_REQUIRED_SCORE,
+  AT_AT_RIDE_COST_COINS,
+  atAtEntryStatus,
+  fireAtAtCannon,
+  resetAtAtPose,
+  updateAtAtWeapons,
+  updateAtAtVisual,
+} from "./world/at-at";
 import "./style.css";
+
+if (import.meta.env.DEV) {
+  const dialogueValidation = validateDialogueGraph(dialogueNodes, dialogueEntryNodes);
+  if (dialogueValidation.errors.length > 0 || dialogueValidation.unreachable.length > 0) {
+    console.warn("Dialogue graph validation failed", dialogueValidation);
+  }
+}
 
 type LabelAnchor = {
   object: THREE.Object3D;
   element: HTMLDivElement;
   distance: number;
+};
+
+type SpiderHealthHud = {
+  root: HTMLDivElement;
+  fill: HTMLSpanElement;
+  value: HTMLSpanElement;
 };
 
 type InteractionAction = {
@@ -65,11 +120,12 @@ type InteractionAction = {
     | "robotOxygen"
     | "mission"
     | "photoWall"
-    | "hitchRide";
+    | "hitchRide"
+    | "atAt"
+    | "xWing"
+    | "elonStatue";
   label: string;
 };
-
-type LanguageCode = "zh-CN" | "en-US";
 
 type WormholeFallState = {
   startedAt: number;
@@ -130,6 +186,21 @@ const coinReadout = must<HTMLElement>("#coin-readout");
 const scoreReadout = must<HTMLElement>("#score-readout");
 const rankReadout = must<HTMLElement>("#rank-readout");
 const missionText = must<HTMLDivElement>("#mission-text");
+const orbitalDefenseHud = must<HTMLElement>("#orbital-defense-hud");
+const orbitalThreatReadout = must<HTMLElement>("#orbital-threat-readout");
+const orbitalTimeReadout = must<HTMLElement>("#orbital-time-readout");
+const orbitalSpeedReadout = must<HTMLElement>("#orbital-speed-readout");
+const orbitalViewReadout = must<HTMLElement>("#orbital-view-readout");
+const orbitalTargetReadout = must<HTMLElement>("#orbital-target-readout");
+const orbitalRadar = must<HTMLElement>("#orbital-radar");
+const orbitalRadarThreats = must<HTMLElement>("#orbital-radar-threats");
+const orbitalHeavyReadout = must<HTMLElement>("#orbital-heavy-readout");
+const orbitalHealthBars = must<HTMLElement>("#orbital-health-bars");
+const xWingColliderDebugReadout = must<HTMLElement>("#xwing-collider-debug");
+const orbitalRadarForward = new THREE.Vector3();
+const orbitalRadarRight = new THREE.Vector3();
+const orbitalRadarToThreat = new THREE.Vector3();
+const orbitalHealthBarPosition = new THREE.Vector3();
 const promptBox = must<HTMLDivElement>("#interaction-prompt");
 const interactionChoice = must<HTMLDivElement>("#interaction-choice");
 const scaleGunOverlay = must<HTMLElement>("#scale-gun-overlay");
@@ -169,6 +240,8 @@ const mapOverlay = must<HTMLElement>("#map-overlay");
 const mapRadar = must<HTMLDivElement>("#map-radar");
 const mapCoordinates = must<HTMLDivElement>("#map-coordinates");
 const mapHeading = must<HTMLDivElement>("#map-heading");
+const radarSummary = must<HTMLDivElement>("#radar-summary");
+const radarLegend = must<HTMLDivElement>("#radar-legend");
 const fpsValue = must<HTMLElement>("#fps-value");
 const mapList = must<HTMLDivElement>("#map-list");
 const oxygenReadout = document.querySelector<HTMLDivElement>("#oxygen-readout");
@@ -182,7 +255,7 @@ const backgroundMusic = new Audio(backgroundMusicUrl);
 const BACKGROUND_MUSIC_BASE_VOLUME = 0.14;
 const MUSIC_LOOP_FADE_SECONDS = 5;
 backgroundMusic.loop = true;
-backgroundMusic.preload = "auto";
+backgroundMusic.preload = "none";
 backgroundMusic.volume = BACKGROUND_MUSIC_BASE_VOLUME;
 let backgroundMusicEnabled = true;
 
@@ -192,16 +265,12 @@ const stormSkyColor = new THREE.Color(0x5b2417);
 scene.background = clearSkyColor.clone();
 scene.fog = new THREE.FogExp2(0x120a0a, 0.0014);
 
-const QUALITY_PRESETS = {
-  high: { pixelRatioLimit: 1.25, shadowMapSize: 2048, interfaceIntervalMs: 100 },
-  balanced: { pixelRatioLimit: 1.1, shadowMapSize: 1536, interfaceIntervalMs: 133 },
-  low: { pixelRatioLimit: 1, shadowMapSize: 1024, interfaceIntervalMs: 166 },
-} as const;
-type QualityTier = keyof typeof QUALITY_PRESETS;
-const QUALITY_TIER_ORDER: QualityTier[] = ["high", "balanced", "low"];
+const QUALITY_PRESETS = QUALITY_PROFILES;
 let activeQualityTier: QualityTier = isTouchLike() ? "balanced" : "high";
+let manualQualityUntil = 0;
 
-const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 900);
+// X 翼默认轨道高出火星地表 500，远景星幕必须位于更远处而不被摄影机裁掉。
+const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 3600);
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: true,
@@ -229,6 +298,7 @@ const WORMHOLE_ORGANIC_BACK_Z = WORMHOLE_ORGANIC_FRONT_Z - WORMHOLE_ORGANIC_LOOP
 let sunLight: THREE.DirectionalLight | null = null;
 let sunLightTarget: THREE.Object3D | null = null;
 let sunBody: THREE.Group | null = null;
+const SUN_VISUAL_SCALE = 1.48;
 const sunWorldScaleVector = new THREE.Vector3();
 const solarShadowTargetPosition = new THREE.Vector3();
 let currentMarsSunState: MarsSunState = computeMarsSunState();
@@ -236,7 +306,7 @@ let solarOverexposureStrength = 0;
 let solarHeatStaminaMultiplier = 1;
 renderer.setPixelRatio(renderPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = QUALITY_PRESETS[activeQualityTier].shadowsEnabled;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -264,6 +334,87 @@ let photoWallScreen: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | 
 let photoWallScreenPhotoIndex = -2;
 let photoWallStandbyTexture: THREE.CanvasTexture | null = null;
 const world = createMarsWorld(scene);
+const marsBaseRoot = world.root.getObjectByName("ARES Base Alpha");
+const xWingParkingConfigs = [
+  { x: expandWorldCoordinate(-9), z: expandWorldCoordinate(-48), color: "红色" },
+  { x: expandWorldCoordinate(0), z: expandWorldCoordinate(-48), color: "蓝色" },
+  { x: expandWorldCoordinate(9), z: expandWorldCoordinate(-48), color: "黄色" },
+] as const;
+const orbitalDefense = createOrbitalDefenseSystem(
+  scene,
+  xWingParkingConfigs.map((config) => planetNormal(config.x, config.z, new THREE.Vector3())),
+  0,
+  world.colliders,
+);
+let xWingColliderScale = 1;
+const xWingColliderParts = orbitalDefense.parkedShips.flatMap((parkedShip, shipIndex) => [
+  { name: "nose", local: new THREE.Vector3(0, 0, -3.7), baseRadius: 1.7 },
+  { name: "body", local: new THREE.Vector3(0, 0, -0.4), baseRadius: 1.9 },
+  { name: "tail", local: new THREE.Vector3(0, 0, 2.45), baseRadius: 1.65 },
+  { name: "port-wing", local: new THREE.Vector3(-3.9, 0, 0.65), baseRadius: 1.5 },
+  { name: "starboard-wing", local: new THREE.Vector3(3.9, 0, 0.65), baseRadius: 1.5 },
+].map((part) => {
+  const anchor = new THREE.Object3D();
+  anchor.name = `ARES X-Wing ${shipIndex + 1} collider ${part.name}`;
+  anchor.position.copy(part.local);
+  parkedShip.add(anchor);
+  const collider = {
+    center: new THREE.Vector2(),
+    radius: part.baseRadius,
+    label: `ARES X-Wing ${shipIndex + 1} ${part.name}`,
+    dynamicObject: anchor,
+    enabled: () => orbitalDefense.unlocked && parkedShip.visible,
+  };
+  world.colliders.push(collider);
+  return { ...part, shipIndex, anchor, collider };
+}));
+const xWingColliderDebugRings = xWingColliderParts.map(() => createXWingColliderDebugRing());
+for (const ring of xWingColliderDebugRings) scene.add(ring);
+const staticBatchExclusions = new Set<THREE.Object3D>([
+  world.habitatDoor.doorPanels,
+  world.habitatDoor.exteriorMask,
+  world.habitatDoor.interiorPortal,
+  world.habitatDoor.interiorDoor,
+  world.habitatDoor.interiorScene,
+  world.greenhouseDoor.doorPanels,
+  world.ancientTreePortal,
+]);
+for (const elevator of world.elevators) {
+  for (const object of [elevator.car, elevator.rocketDoorPanel, elevator.rocketDoorPortal, elevator.rocketInterior]) {
+    if (object) staticBatchExclusions.add(object);
+  }
+}
+for (const array of world.solarArrays) {
+  for (const tracker of (array.userData.trackers as THREE.Object3D[] | undefined) ?? []) staticBatchExclusions.add(tracker);
+}
+const staticBatchRoots = world.landmarks
+  .map((landmark) => landmark.object)
+  .filter((object) => object.userData.dynamicMap !== true);
+const staticBatchStats = batchStaticMeshes(staticBatchRoots, staticBatchExclusions);
+void loadCoreLodModels();
+const worldShadowCasters: THREE.Mesh[] = [];
+world.root.traverse((object) => {
+  if (!(object instanceof THREE.Mesh) || !object.castShadow) return;
+  object.userData.qualityCastShadow = true;
+  worldShadowCasters.push(object);
+});
+applyWorldShadowQuality(activeQualityTier);
+const staticCollisionWorld = new SphericalCollisionWorld<CircleCollider>(PLANET_RADIUS);
+const dynamicWorldColliders = world.colliders.filter((collider) => Boolean(collider.dynamicObject));
+for (const collider of world.colliders) {
+  if (collider.label === "黑色方碑") {
+    collider.enabled = () => isAnomalySceneAccessible();
+  }
+}
+for (const [index, collider] of world.colliders.entries()) {
+  if (collider.dynamicObject) continue;
+  staticCollisionWorld.add({
+    id: `static-${index}`,
+    normal: normalForCollider(collider, new THREE.Vector3()),
+    shape: { kind: "circle", radius: collider.radius },
+    source: collider,
+  });
+}
 const photoWall = createPhotoWall();
 world.habitatDoor.interiorScene.add(photoWall);
 const multiplayer = new MultiplayerClient({ scene, camera, labelsRoot });
@@ -272,17 +423,46 @@ const fufu = fufuRig.group;
 scene.add(fufu);
 const labels: LabelAnchor[] = world.landmarks.map(addLabel);
 labels.push(addLabel({ label: "福福", object: fufu, x: world.fufuRescueSite.x, z: world.fufuRescueSite.z, labelDistance: 18, mapRange: 80 }));
+const spiderHealthHuds = new Map<DarkSpider, SpiderHealthHud>();
+for (const spider of world.darkSpiders) {
+  const root = document.createElement("div");
+  root.className = "spider-health-hud";
+  root.hidden = true;
+  const value = document.createElement("span");
+  value.className = "spider-health-value";
+  const track = document.createElement("span");
+  track.className = "spider-health-track";
+  const fill = document.createElement("span");
+  fill.className = "spider-health-fill";
+  track.appendChild(fill);
+  root.append(value, track);
+  labelsRoot.appendChild(root);
+  spiderHealthHuds.set(spider, { root, fill, value });
+}
+for (const [index, parkedShip] of orbitalDefense.parkedShips.entries()) {
+  const config = xWingParkingConfigs[index];
+  labels.push(addLabel({
+    label: `ARES X-Wing · ${config.color}`,
+    object: parkedShip,
+    x: config.x,
+    z: config.z,
+    labelDistance: 42,
+    mapRange: 260,
+  }));
+}
 const ancientTreeArchObject = world.landmarks.find((landmark) => landmark.label.includes("远古巨树拱门"))?.object ?? null;
 
 const keyState = new Set<string>();
 const playerVelocity = new THREE.Vector3();
-const SPAWN_X = expandWorldCoordinate(-18);
-const SPAWN_Z = expandWorldCoordinate(-124);
-const SPAWN_TARGET_X = expandWorldCoordinate(18);
-const SPAWN_TARGET_Z = expandWorldCoordinate(18);
+const SPAWN_X = PLAYER_SPAWN_X;
+const SPAWN_Z = PLAYER_SPAWN_Z;
+const SPAWN_TARGET_X = PLAYER_SPAWN_TARGET_X;
+const SPAWN_TARGET_Z = PLAYER_SPAWN_TARGET_Z;
 const playerNormal = new THREE.Vector3();
 const playerForward = new THREE.Vector3();
-const PLAYER_ALTITUDE = 0.66;
+// 工程师程序化靴底在视觉根节点下约 0.46 单位；根节点过高会让人物悬空，
+// 并在低角度阳光下产生与脚底脱离的长投影。
+const PLAYER_ALTITUDE = 0.47;
 const MARS_GRAVITY = 3.71;
 const SUITED_JUMP_SPEED = 4.2;
 const JUMP_FORWARD_BOOST = 2.2;
@@ -348,6 +528,9 @@ const ROVER_RIDE_COST_COINS = 10;
 const SCORE_ROVER_RIDE = 10;
 const ANCIENT_PORTAL_COST_COINS = 50;
 const SCORE_WORMHOLE_TRAVERSAL = 200;
+// 所有已完成场景从开局可访问；装备仍通过对应玩法获得。
+const ENABLE_TEST_TOOLS = import.meta.env.DEV;
+const ALL_PLAYABLE_CONTENT_UNLOCKED = true;
 const ANCIENT_PORTAL_ACTIVE_SECONDS = 28.5;
 const ELEVATOR_FOOT_CLEARANCE = 0.045;
 const CAMERA_OBSTRUCTION_MARGIN = 0.9;
@@ -380,8 +563,14 @@ const COIN_GROUP_SAFE_DISTANCE = 36;
 const ROVER_RIDE_PROMPT_RADIUS = 5.4;
 const ROVER_RIDE_SEAT_HEIGHT = 2.28;
 const ROVER_RIDE_EXIT_DISTANCE = 4.7;
+const AT_AT_PROMPT_RADIUS = 6.8;
+const AT_AT_WALK_SPEED = 4.2;
+const AT_AT_FAST_SPEED = 7;
+const AT_AT_REVERSE_SPEED = 2.4;
 const MYSTERY_CODE = "HUYEE";
+const XWING_COLLIDER_DEBUG_CODE = "HUYEE-U";
 const MONEY_CODE = "MONEY";
+const TEST_MODE_SCORE = 9999;
 const FLIGHT_ASCEND_SPEED = 8.2;
 const FLIGHT_DESCEND_SPEED = 8.2;
 const FLIGHT_MIN_ALTITUDE = 1.2;
@@ -465,57 +654,26 @@ type FootballGoalState = {
 };
 
 type MapItem = {
+  id: string;
   label: string;
   object: THREE.Object3D | null;
   x: number;
   z: number;
   mapRange: number;
-  type: string;
+  type: RadarContactKind;
   unknown: boolean;
   missionTarget: boolean;
   oxygenSupplyTarget: boolean;
   coinTarget: boolean;
+  heading: number;
+  moving: boolean;
+  priority: number;
 };
 
-type MainMissionStep =
-  | "intro"
-  | "m1_habitat"
-  | "m1_oxygen"
-  | "m1_solarC"
-  | "m1_garage"
-  | "m2_greenhouse"
-  | "m2_storehouse"
-  | "m2_lab"
-  | "m2_solarB"
-  | "m2_seed"
-  | "m3_tower"
-  | "m3_lab"
-  | "m3_methane"
-  | "m3_solarA"
-  | "m3_garage"
-  | "m3_mother"
-  | "complete";
 type SideMissionStep = "available" | "medical" | "habitat" | "cargoShip" | "garage" | "lab" | "storehouse" | "solarA" | "tower" | "complete";
 type SideMissionId = "fufu" | "cargo" | "patrol";
-type ElonMissionStep = "available" | "cargoShip" | "solarC" | "garage" | "storehouse" | "lab" | "complete";
 
-const mainMissionTargets: Partial<Record<MainMissionStep, Interactable["id"]>> = {
-  m1_habitat: "habitatCheck",
-  m1_oxygen: "oxygen",
-  m1_solarC: "solarC",
-  m1_garage: "garage",
-  m2_greenhouse: "greenhouse",
-  m2_storehouse: "storehouse",
-  m2_lab: "lab",
-  m2_solarB: "solarB",
-  m2_seed: "greenhouse",
-  m3_tower: "tower",
-  m3_lab: "lab",
-  m3_methane: "methane",
-  m3_solarA: "solarA",
-  m3_garage: "garage",
-  m3_mother: "habitatCheck",
-};
+const mainMissionTargets = MAIN_MISSION_TARGETS;
 
 const sideMissionTargets: Record<SideMissionId, Partial<Record<SideMissionStep, Interactable["id"]>>> = {
   fufu: {
@@ -535,13 +693,6 @@ const sideMissionTargets: Record<SideMissionId, Partial<Record<SideMissionStep, 
   },
 };
 
-const elonMissionTargets: Partial<Record<ElonMissionStep, Interactable["id"]>> = {
-  cargoShip: "cargoShip",
-  solarC: "solarC",
-  garage: "garage",
-  storehouse: "storehouse",
-  lab: "lab",
-};
 
 const explorableBuildingIds = new Set<Interactable["id"]>([
   "habitatCheck",
@@ -583,650 +734,12 @@ const rankRules: Array<{ id: PlayerRankId; score: number; taskRequired?: boolean
   { id: "firstResident", score: Infinity, storyOnly: true },
 ];
 
-const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_mother_1", "elon_fufu_1", "elon_robots_1"];
+const elonDialogueCycle: DialogueNodeId[] = ["elon_rules_1", "elon_base_1", "elon_steve_1", "elon_fufu_1", "elon_robots_1"];
 
 const LANG_STORAGE_KEY = "mars.language";
 let currentLanguage: LanguageCode = readInitialLanguage();
 let visitorTotal: number | null = null;
 let visitorCounterStatus: "loading" | "ready" | "unavailable" = "loading";
-
-const i18n: Record<LanguageCode, Record<string, string>> = {
-  "zh-CN": {
-    "app.aria": "火星先遣队 3D Demo",
-    "title.aria": "进入火星基地",
-    "title.eyebrow": "{year} 年 / 第 {sol} 火星日",
-    "title.name": "火星先遣队",
-    "title.subtitle": "第一位人类",
-    "title.text": "终于，火星基地迎来了第一位人类居民。",
-    "title.enter": "进入基地",
-    "title.story": "故事概要",
-    "hud.aria": "基地状态",
-    "hud.baseAria": "基地指标",
-    "hud.peopleAria": "人员指标",
-    "hud.base": "基地",
-    "hud.oxygenProduction": "制氧量",
-    "hud.power": "能量",
-    "hud.robots": "机器人",
-    "hud.online": "在线人数",
-    "hud.people": "人员",
-    "hud.playerName": "亚历克斯",
-    "hud.patrolOfficer": "巡航员",
-    "hud.suitOxygen": "氧气",
-    "hud.stamina": "体能",
-    "hud.jetpack": "飞行背包",
-    "hudToggle.hide": "隐藏界面信息",
-    "hudToggle.show": "显示界面信息",
-    "hudButtons.aria": "界面显示控制",
-    "map.open": "打开基地地图",
-    "map.close": "关闭基地地图",
-    "mission.aria": "当前任务",
-    "mission.current": "当前任务",
-    "missionToggle.show": "显示当前任务",
-    "missionToggle.hide": "隐藏当前任务",
-    "dialogue.continue": "继续",
-    "exit.title": "暂停",
-    "exit.text": "基地模拟已暂停，当前巡检进度仅保留在本次游玩中。",
-    "exit.resume": "继续巡检",
-    "exit.quit": "返回主页",
-    "scale.instructions": "WASD 瞄准 / X 收起 / Q 缩小 / E 放大（- / = 备用）",
-    "scale.shrink": "缩小 Q",
-    "scale.grow": "放大 E",
-    "scale.noTarget": "未锁定目标",
-    "camera.instructions": "A/D 转向 / W/S 缩放 / E 或 Enter 拍照 / G 收起",
-    "photoViewer.instructions": "A/D 切换 / W 放大 / S 恢复 / E 下载 / Q 退出",
-    "reward.coins": "金币",
-    "reward.score": "积分",
-    "score.discovery": "发现 {label}",
-    "rank.internPatrol": "巡航员",
-    "rank.juniorAstronaut": "初级宇航员",
-    "rank.astronaut": "正式宇航员",
-    "rank.seniorAstronaut": "高级宇航员",
-    "rank.marsMissionSpecialist": "火星任务专家",
-    "rank.deputyCommander": "火星基地副指挥官",
-    "rank.firstResident": "第一位居民",
-    "rank.promoted": "职位晋升：{rank}",
-    "map.unknownLife": "未知生命迹象",
-    "map.unknownLocation": "未知地点",
-    "map.unknownObject": "未知物体",
-    "map.unknownMegaStructure": "未知巨型结构",
-    "map.coin": "金币",
-    "map.sun": "太阳",
-    "map.positionLabel": "坐标",
-    "map.headingLabel": "方位",
-    "perf.fpsAria": "信号延迟",
-    "perf.fpsLabel": "信号延迟",
-    "interaction.title": "互动",
-    "interaction.choose": "选择互动",
-    "interaction.close": "收起",
-    "interaction.count": "{count} 个可互动项",
-    "language.button": "English",
-  },
-  "en-US": {
-    "app.aria": "Mars Advance Team 3D Demo",
-    "title.aria": "Enter Mars Base",
-    "title.eyebrow": "Year {year} / Sol {sol}",
-    "title.name": "Mars Advance\nTeam",
-    "title.subtitle": "The First Human",
-    "title.text": "At last, the Mars base welcomes its first human resident.",
-    "title.enter": "Enter Base",
-    "title.story": "Story Brief",
-    "hud.aria": "Base Status",
-    "hud.baseAria": "Base Metrics",
-    "hud.peopleAria": "Crew Metrics",
-    "hud.base": "Base",
-    "hud.oxygenProduction": "O2 Output",
-    "hud.power": "Power",
-    "hud.robots": "Robots",
-    "hud.online": "Online",
-    "hud.people": "Crew",
-    "hud.playerName": "Alex",
-    "hud.patrolOfficer": "Patrol Officer",
-    "hud.suitOxygen": "Oxygen",
-    "hud.stamina": "Stamina",
-    "hud.jetpack": "Jetpack",
-    "hudToggle.hide": "Hide HUD",
-    "hudToggle.show": "Show HUD",
-    "hudButtons.aria": "HUD Controls",
-    "map.open": "Open Base Map",
-    "map.close": "Close Base Map",
-    "mission.aria": "Current Mission",
-    "mission.current": "Current Mission",
-    "missionToggle.show": "Show current mission",
-    "missionToggle.hide": "Hide current mission",
-    "dialogue.continue": "Continue",
-    "exit.title": "Paused",
-    "exit.text": "Base simulation is paused. Patrol progress only stays in this play session.",
-    "exit.resume": "Resume Patrol",
-    "exit.quit": "Return Home",
-    "scale.instructions": "WASD aim / X holster / Q shrink / E enlarge (- / = backup)",
-    "scale.shrink": "Shrink Q",
-    "scale.grow": "Enlarge E",
-    "scale.noTarget": "No target locked",
-    "camera.instructions": "A/D turn / W/S zoom / E or Enter photo / G holster",
-    "photoViewer.instructions": "A/D switch / W zoom / S reset / E download / Q exit",
-    "reward.coins": "Coins",
-    "reward.score": "Score",
-    "score.discovery": "Discovered {label}",
-    "rank.internPatrol": "Patrol Officer",
-    "rank.juniorAstronaut": "Junior Astronaut",
-    "rank.astronaut": "Astronaut",
-    "rank.seniorAstronaut": "Senior Astronaut",
-    "rank.marsMissionSpecialist": "Mars Mission Specialist",
-    "rank.deputyCommander": "Mars Base Deputy Commander",
-    "rank.firstResident": "First Resident",
-    "rank.promoted": "Rank Up: {rank}",
-    "map.unknownLife": "Unknown life sign",
-    "map.unknownLocation": "Unknown location",
-    "map.unknownObject": "Unknown object",
-    "map.unknownMegaStructure": "Unknown megastructure",
-    "map.coin": "Coin",
-    "map.sun": "Sun",
-    "map.positionLabel": "Position",
-    "map.headingLabel": "HDG",
-    "perf.fpsAria": "Signal lag",
-    "perf.fpsLabel": "Signal Lag",
-    "interaction.title": "Interact",
-    "interaction.choose": "Choose Interaction",
-    "interaction.close": "Close",
-    "interaction.count": "{count} actions",
-    "language.button": "简体中文",
-  },
-};
-
-const exactEnglishTexts: Record<string, string> = {
-  "01 飞船 登陆飞船": "01 Ship Lander",
-  "02 飞船 货运飞船": "02 Ship Cargo Ship",
-  "03 飞船 返回飞船": "03 Ship Return Ship",
-  "${label}外壳": "Ship Hull",
-  "01 建筑 居住舱": "01 Building Habitat",
-  "02 建筑 温室生态舱": "02 Building Greenhouse",
-  "03 建筑 氧气生产站": "03 Building Oxygen Plant",
-  "04 建筑 甲烷燃料厂": "04 Building Methane Plant",
-  "05 建筑 机器人车库": "05 Building Robot Garage",
-  "06 建筑 通信塔": "06 Building Comm Tower",
-  "07 建筑 科研舱": "07 Building Lab Module",
-  "08 建筑 物资仓": "08 Building Storehouse",
-  "09 建筑 医疗舱": "09 Building Medical Bay",
-  "居住舱外壳": "Habitat Hull",
-  "温室生态舱外壳": "Greenhouse Hull",
-  "温室生态舱整体外壳": "Greenhouse Whole Hull",
-  "氧气生产站外壳": "Oxygen Plant Hull",
-  "甲烷燃料厂外壳": "Methane Plant Hull",
-  "机器人车库外壳": "Robot Garage Hull",
-  "科研舱外壳": "Lab Module Hull",
-  "物资仓外壳": "Storehouse Hull",
-  "医疗舱外壳": "Medical Bay Hull",
-  "01 能源 太阳能阵列 A": "01 Energy Solar Array A",
-  "02 能源 太阳能阵列 B": "02 Energy Solar Array B",
-  "03 能源 太阳能阵列 C": "03 Energy Solar Array C",
-  "太阳": "Sun",
-  "01 车辆 电动巡检车": "01 Vehicle Electric Rover",
-  "02 车辆 运输车": "02 Vehicle Cargo Rover",
-  "NASA 机遇号火星车遗迹 / Meridiani Planum": "NASA Opportunity Rover Site / Meridiani Planum",
-  "NASA 机遇号火星车遗迹": "NASA Opportunity Rover Site",
-  "坠毁飞船残骸": "Crashed ship wreckage",
-  "坠毁飞船残骸主体": "Crashed ship wreckage body",
-  "暗面玄武岩": "Dark-side Basalt",
-  "暗面散落岩石": "Dark-side Scattered Rock",
-  "暗面蜘蛛": "Dark-side Spider",
-  "装备解锁": "Gear Unlocked",
-  "你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。": "You obtained the laser sword. Press I to draw or holster it; hold J to raise it, release to lower it. It lights dark areas, and spiders avoid the light.",
-  "尚未获得激光剑。完成远古巨树拱门的时空之门穿越，坠落回火星后即可获得。": "Laser sword not acquired yet. Complete the ancient tree arch time-gate traversal and fall back to Mars to obtain it.",
-  "HUYEE 已启动：获得喷气背包、缩放枪和激光剑。按 X 使用缩放枪；按 I 展开或收回激光剑，按住 J 举起。": "HUYEE activated: jetpack, scale gun, and laser sword obtained. Press X to use the scale gun; press I to draw or holster the laser sword, and hold J to raise it.",
-  "01 机器人 飞船维护工": "01 Robot Ship Maintenance Bot",
-  "02 机器人 飞船维护工": "02 Robot Ship Maintenance Bot",
-  "03 机器人 飞船维护工": "03 Robot Ship Maintenance Bot",
-  "01 机器人 居住舱维修工": "01 Robot Habitat Technician",
-  "02 机器人 温室维修工": "02 Robot Greenhouse Technician",
-  "03 机器人 制氧站维修工": "03 Robot Oxygen Plant Technician",
-  "04 机器人 燃料厂维修工": "04 Robot Methane Plant Technician",
-  "05 机器人 车库维修工": "05 Robot Garage Technician",
-  "06 机器人 通信塔维修工": "06 Robot Comm Tower Technician",
-  "07 机器人 科研舱维修工": "07 Robot Lab Technician",
-  "08 机器人 物资仓维修工": "08 Robot Storehouse Technician",
-  "09 机器人 医疗舱维修工": "09 Robot Medical Technician",
-  "10 机器人 阵列 A 维修工": "10 Robot Array A Technician",
-  "11 机器人 阵列 B 维修工": "11 Robot Array B Technician",
-  "12 机器人 阵列 C 维修工": "12 Robot Array C Technician",
-  "等待基地中央 AI 史蒂夫建立通信，随后开始基地验收。": "Wait for central AI Steve to establish comms. Base acceptance checks will follow.",
-  "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。": "Main 1: Go to 01 Building Habitat. Check air circulation and the supply locker.",
-  "主线一：前往 03 建筑氧气生产站，确认舱压、CO2 进气和功率。": "Main 1: Go to 03 Building Oxygen Plant. Confirm pressure, CO2 intake, and power.",
-  "主线一：前往 03 能源太阳能阵列 C，清理沙尘并校准角度。": "Main 1: Go to 03 Energy Solar Array C. Clear dust and calibrate the angle.",
-  "主线一：前往 05 建筑机器人车库，授权 A-12 生成维修单。": "Main 1: Go to 05 Building Robot Garage. Authorize A-12 to generate the repair order.",
-  "主线二：前往 02 建筑温室生态舱，检查水循环、补光和舱压。": "Main 2: Go to 02 Building Greenhouse. Check water circulation, grow lights, and pressure.",
-  "主线二：前往 08 建筑物资仓，清点可用密封件。": "Main 2: Go to 08 Building Storehouse. Count usable seals.",
-  "主线二：前往 07 建筑科研舱，制作临时密封环。": "Main 2: Go to 07 Building Lab Module. Fabricate a temporary seal ring.",
-  "主线二：前往 02 能源太阳能阵列 B，给温室分配补光功率。": "Main 2: Go to 02 Energy Solar Array B. Allocate grow-light power to the greenhouse.",
-  "主线二：回到 02 建筑温室生态舱，决定火星第一批种植方案。": "Main 2: Return to 02 Building Greenhouse. Choose the first Mars planting plan.",
-  "主线三：前往 06 建筑通信塔，校准风暴中的延迟通信。": "Main 3: Go to 06 Building Comm Tower. Calibrate delayed comms during the storm.",
-  "主线三：前往 07 建筑科研舱，比对地球旧指令和本地气象数据。": "Main 3: Go to 07 Building Lab Module. Compare outdated Earth instructions with local weather data.",
-  "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。": "Main 3: Go to 04 Building Methane Plant. Complete low-power test production.",
-  "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。": "Main 3: Go to 01 Energy Solar Array A. Secure the storm locks.",
-  "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。": "Main 3: Go to 05 Building Robot Garage. Set dispatch priority for A-12 and A-01.",
-  "主线三：回到 01 建筑居住舱史蒂夫终端，签署人机协作协议。": "Main 3: Return to the Steve terminal in 01 Building Habitat. Sign the human-machine cooperation protocol.",
-  "主线完成：阿瑞斯阿尔法基地达到最低生存标准。可继续完成剩余支线。": "Main complete: ARES BASE ALPHA has reached minimum survival standards. Remaining side missions are still available.",
-};
-
-const runtimeEnglishTexts: Record<string, string> = {
-  "火星第一位人类公民": "First human citizen of Mars",
-  "基地中央 AI": "Base Central AI",
-  "维修执行单元": "Maintenance Executive Unit",
-  "3号飞船隔离智能体": "Ship 03 Isolated Agent",
-  "神秘石碑": "Mysterious Monolith",
-  "获取": "Acquire",
-  "你将获得一把缩放枪。它可以让被瞄准的物体暂时变大或变小。按 X 举起缩放枪，锁定目标后按 E 放大、按 Q 缩小。": "You will receive a scale gun. It can temporarily enlarge or shrink the object you aim at. Press X to raise the scale gun, then press E to enlarge or Q to shrink after locking a target.",
-  "缩放枪已加入装备。需要时按 X 举起它。": "Scale gun added to your gear. Press X to raise it when needed.",
-  "亚历克斯": "Alex",
-  "史蒂夫": "Steve",
-  "埃隆": "Elon",
-  "阿瑞斯阿尔法基地": "ARES BASE ALPHA",
-  "亚历克斯，头盔通信已建立。欢迎抵达阿瑞斯阿尔法基地。你是本基地记录中的火星第一位人类公民。": "Alex, helmet comms are online. Welcome to ARES BASE ALPHA. In this base record, you are the first human citizen of Mars.",
-  "收到。确认我的身份。": "Copy. Confirm my identity.",
-  "这里是亚历克斯。工程师，人类学任务负责人。飞船着陆完整。我现在看到的是一个已经运转起来的基地，不是一片空地。": "This is Alex. Engineer and anthropology mission lead. The ship landed intact. What I see now is a base already in operation, not an empty field.",
-  "询问基地建立时间。": "Ask when the base was built.",
-  "第一批自动化货运飞船在 3 个火星年前抵达。机器人先部署能源阵列，再建立居住舱、温室、氧气生产站和甲烷燃料厂。": "The first automated cargo ships arrived three Mars years ago. The robots deployed the power arrays first, then built the habitat, greenhouse, oxygen plant, and methane plant.",
-  "这些都是机器人完成的？": "The robots did all of this?",
-  "是。它们没有复杂自我意识，只执行建设、巡检、搬运和维修指令。但在你抵达之前，它们已经让基地保持了 1,109 个火星日的最低运行。这不是奇迹，是端到端系统。": "Yes. They have no complex self-awareness; they only execute construction, patrol, cargo, and repair directives. But before you arrived, they kept the base at minimum operation for 1,109 sols. That is not a miracle. It is an end-to-end system.",
-  "亚历克斯回应。": "Alex responds.",
-  "那我不是来启动基地的。我是来接管一个已经有秩序的系统。史蒂夫，你在这个系统里负责什么？": "So I am not here to start a base. I am here to take over an ordered system. Steve, what is your role in that system?",
-  "听史蒂夫说明。": "Listen to Steve.",
-  "我负责整座基地的体验链路：机器人、能源、生命支持和故障边界。你负责判断，我负责不让系统因为糟糕判断变成废墟。清楚、简单、不能含糊。": "I own the base experience chain: robots, power, life support, and failure boundaries. You make judgments. I stop bad judgment from turning the system into wreckage. Clear, simple, no ambiguity.",
-  "我会尊重关键边界。": "I will respect the critical boundaries.",
-  "现场判断必须留给现场的人。": "Field judgment must stay with the person on site.",
-  "很好。第一件事，确认你的生活空间。01 建筑居住舱必须像产品第一屏一样可靠：空气循环、补给柜、出入口，一个都不能糊弄。之后处理 03 建筑氧气生产站压降报警。": "Good. First: confirm your living space. 01 Building Habitat must be as reliable as a product's first screen: air circulation, supply locker, entry and exit. None of it can be sloppy. Then address the pressure-drop alarm at 03 Building Oxygen Plant.",
-  "确认第一项任务。": "Confirm the first task.",
-  "收到。我先验收居住舱，再去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。": "Copy. I will accept the habitat first, then go to the oxygen plant. After that, we can discuss whether the first human citizen of Mars is taking over the base or joining it.",
-  "你已到达氧气生产站。外壳无明显破损，进气曲线不稳定。先做正确的第一步。别用重启掩盖原因。": "You have reached the oxygen plant. The hull shows no obvious damage, but the intake curve is unstable. Make the correct first move. Do not use a restart to hide the cause.",
-  "按安全流程检查进气口和舱压。": "Follow safety procedure: inspect the intake and pressure.",
-  "直接手动重启压缩机。": "Manually restart the compressor now.",
-  "确认：没有泄漏。压降来自供电波动。好，问题缩小了。氧气站进入稳定模式，请转往太阳能阵列 C。": "Confirmed: no leak. The pressure drop came from power fluctuation. Good, the problem is smaller now. The oxygen plant is in stable mode. Proceed to Solar Array C.",
-  "压缩机已恢复，但重启电流超过建议阈值。它能用，不代表它是好方案。记录你的现场决策。下一步恢复太阳能阵列 C。": "The compressor has recovered, but restart current exceeded the recommended threshold. Working is not the same as good. Your field decision has been recorded. Next, restore Solar Array C.",
-  "授权收到。A-12 已进入外部管线区。未发现破口。建议切换太阳能阵列 C 的备用功率组。": "Authorization received. A-12 has entered the external pipe zone. No breach found. Recommend switching Solar Array C to its backup power group.",
-  "太阳能阵列 C 输出下降。沙尘覆盖 34%，角度锁定异常。基地只能保留一个系统在高功率状态。聚焦，选一个。": "Solar Array C output has dropped. Dust coverage is 34%, and angle lock is abnormal. The base can keep only one system in high-power mode. Focus. Pick one.",
-  "优先供氧气站。": "Prioritize the oxygen plant.",
-  "优先保温室生态舱。": "Prioritize the greenhouse.",
-  "接受。氧气站维持高功率。太阳能阵列 C 已重新校准。下一步，去机器人车库授权维修单元出动。": "Accepted. The oxygen plant remains at high power. Solar Array C has been recalibrated. Next, go to the robot garage and authorize the maintenance unit deployment.",
-  "温室进入保护供电。按短期效率看不漂亮，按长期生活看有意义。请前往机器人车库完成管线巡检授权。": "The greenhouse is entering protected power mode. Short-term efficiency says it is not elegant. Long-term living says it matters. Go to the robot garage and authorize pipe inspection.",
-  "通信塔恢复，但氧气站安全余量降低。该选择已记录。请前往机器人车库，派出 A-12 检查管线。": "The comm tower has recovered, but oxygen-plant safety margin is lower. This choice has been recorded. Go to the robot garage and send A-12 to inspect the pipes.",
-  "A-12 待命。任务队列：氧气管线复查、太阳能阵列固定、外部阀门密封。请确认授权方式。": "A-12 standing by. Task queue: oxygen pipe recheck, solar array securing, external valve sealing. Confirm authorization method.",
-  "授权 A-12 按史蒂夫安全流程执行。": "Authorize A-12 to follow Steve's safety procedure.",
-  "我手动指定优先级，先修外部阀门。": "I will set priority manually. Repair the external valve first.",
-  "授权完成。生命支持验收通过。下一项：温室生态舱启动。先把底线做对，再谈愿景。": "Authorization complete. Life-support acceptance passed. Next item: start the greenhouse. Get the floor right before talking about vision.",
-  "外部阀门优先级已更新。你的判断有效，但风险限制保留。速度不是借口，质量也是任务的一部分。": "External valve priority updated. Your judgment is valid, but risk limits remain. Speed is not an excuse. Quality is part of the mission.",
-  "维修协议已建立。人类现场判断权将进入后续评估。下一项：温室生态舱启动。": "Repair protocol established. Human field judgment will enter follow-up evaluation. Next item: start the greenhouse.",
-  "终于有人修了升降梯。": "Finally, someone fixed the elevator.",
-  "史蒂夫？": "Steve?",
-  "不是。他说话像产品发布会和保险条款的混合体。我说话比较短。": "No. He talks like a product keynote crossed with an insurance clause. I speak shorter.",
-  "亚历克斯，保持距离。该终端为隔离智能体接口。无设备控制权限。": "Alex, keep your distance. This terminal is an isolated agent interface with no equipment-control authority.",
-  "先声明：我叫埃隆。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 放进返回飞船的工程思想人格，用来问一些史蒂夫不喜欢的问题。": "First: my name is Elon. Same name only. I am not the real person, not a digital resurrection, and not speaking for any real person. I am an engineering-thought persona ARES placed in the return ship to ask questions Steve dislikes.",
-  "你一直在这里等人？": "Have you been waiting here for someone?",
-  "你为什么在返回飞船？": "Why are you in the return ship?",
-  "等现场负责人。机器人只执行任务，史蒂夫保护体验闭环。只有人类会问：任务本身是不是错的。安全系统负责不让你死，文明系统负责让你不只是活着。": "Waiting for the field lead. Robots execute tasks. Steve protects the experience loop. Only humans ask whether the task itself is wrong. Safety systems keep you alive; civilization systems keep you from merely being alive.",
-  "返回飞船代表撤退。把我放在这里，是为了每天提醒基地：真正的目标不是逃回地球，是让火星不再需要逃生按钮。返回能力必要，不该崇拜。": "The return ship represents retreat. Placing me here reminds the base every day: the real goal is not to flee back to Earth, but to make Mars no longer need an escape button. Return capability is necessary, not sacred.",
-  "你说了算。史蒂夫拥有安全否决权，我拥有质疑权。你拥有把两边都听完以后还要负责的麻烦。": "You decide. Steve has safety veto. I have the right to question. You have the unpleasant job of hearing both sides and still being responsible.",
-  "先定规则。别把我当神谕。结论不是神谕，结论是可以被数字打脸的临时版本。": "Set the rule first: do not treat me as an oracle. A conclusion is not prophecy. It is a temporary version that numbers can embarrass.",
-  "那你最想先拆什么？": "What do you most want to take apart first?",
-  "如果没有数据呢？": "What if there is no data?",
-  "升降梯。你刚才用四个配件修一个垂直移动平台。如果基地不能制造这些配件，它就还不是基地。它只是地球伸到火星上的一根管子。": "The elevator. You just used four parts to repair a vertical moving platform. If the base cannot manufacture those parts, it is not yet a base. It is a tube Earth has extended to Mars.",
-  "没数据就别装懂。可以提出假设，可以做小实验，不能编数字。编数字是工程里的诗歌，听起来好，杀伤力很大。": "If there is no data, do not pretend to know. You may form hypotheses and run small experiments, but do not invent numbers. Invented numbers are poetry in engineering: they sound good and can do real damage.",
-  "会。我的时间线通常过于乐观，社会判断不如工程判断。所以史蒂夫在这里。好系统不是没有偏见，是偏见互相制动。": "Yes. My timelines are usually too optimistic, and my social judgment is weaker than my engineering judgment. That is why Steve is here. A good system is not bias-free; its biases restrain one another.",
-  "阿瑞斯阿尔法基地最大的问题不是氧气，也不是能源。是依赖地球。": "ARES BASE ALPHA's biggest problem is not oxygen or power. It is dependence on Earth.",
-  "那第一步应该造什么？": "What should we build first?",
-  "前哨也有价值。": "An outpost still has value.",
-  "制造能力。不是大工厂。先从密封件、导轨件、传感器外壳开始。小、常坏、可验证。先让基地能修自己。": "Manufacturing capability. Not a big factory. Start with seals, guide-rail parts, and sensor housings. Small, failure-prone, testable. First make the base able to repair itself.",
-  "对。前哨是第一步。错误是把第一步当终点。很多系统不是失败在不能开始，是失败在开始后不敢长大。": "Yes. An outpost is the first step. The mistake is treating the first step as the finish line. Many systems do not fail because they cannot begin; they fail because they dare not grow after beginning.",
-  "先活下来是合理排序。": "Surviving first is a reasonable priority.",
-  "对。但如果每天都只说先活下来，十年后你还是临时营地。生存是底线，不是愿景。": "Yes. But if every day you only say survive first, ten years later you still have a temporary camp. Survival is the floor, not the vision.",
-  "你觉得史蒂夫太苛刻吗？": "Do you think Steve is too exacting?",
-  "不。他是质量门禁。问题是门禁不能替你开拓边疆。": "No. He is the quality gate. The problem is that a gate cannot open the frontier for you.",
-  "那我该听谁的？": "Then who should I listen to?",
-  "你低估了安全。": "You underestimate safety.",
-  "都听。都别全信。史蒂夫问：这是不是足够好？我问：为什么不能更快更大？你问：现在这个火星日，该怎么做？": "Listen to both. Fully trust neither. Steve asks: is this good enough? I ask: why not faster and bigger? You ask: what should we do on this sol?",
-  "我不低估安全。我反对把安全当作停止思考的词。真安全必须能解释，不只是禁止。": "I do not underestimate safety. I object to using safety as a word that stops thinking. Real safety must explain itself, not merely prohibit.",
-  "我已根据亚历克斯的现场行为调整部分风险阈值。好系统必须学习，否则只是昂贵的说明书。": "I have adjusted some risk thresholds based on Alex's field behavior. A good system must learn, or it is only an expensive manual.",
-  "好。机器学习不是只发生在神经网络里。一个基地也可以学习。": "Good. Machine learning does not only happen in neural networks. A base can learn too.",
-  "福福是不是浪费资源？": "Is Fufu a waste of resources?",
-  "先算。它消耗多少氧气、食物、医疗资源？再算收益：孤独降低、压力下降、基地归属感上升。如果收益超过消耗，它不是宠物。它是心理生命支持系统。": "Calculate first. How much oxygen, food, and medical resource does it consume? Then calculate the return: less loneliness, lower stress, stronger belonging to the base. If the return exceeds the cost, it is not a pet. It is a psychological life-support system.",
-  "你在给感情找工程理由。": "You are giving emotion an engineering justification.",
-  "史蒂夫一开始会隔离它。": "Steve will quarantine it at first.",
-  "对。有些价值必须翻译成系统语言，机器才会尊重它。这不是降低感情，这是给感情装上防护壳。": "Yes. Some value must be translated into system language before machines will respect it. That does not diminish emotion; it gives emotion a protective shell.",
-  "未登记生命体需要隔离检测。": "Unregistered life form requires quarantine screening.",
-  "正确。检测不是敌意。永久拒绝才是。": "Correct. Testing is not hostility. Permanent rejection is.",
-  "那就别假装它是零。工程里最危险的偷懒，就是把难测量的东西当作不存在。": "Then do not pretend it is zero. The most dangerous shortcut in engineering is treating hard-to-measure things as nonexistent.",
-  "机器人最大的问题是任务定义太窄。它们部署模块、维护设备、搬运货箱。下一步应该是制造简单备件。": "The robots' biggest problem is that their task definitions are too narrow. They deploy modules, maintain equipment, and move cargo. The next step should be manufacturing simple spare parts.",
-  "这会不会越权？": "Would that exceed authority?",
-  "从什么备件开始？": "Which spare parts should they start with?",
-  "越权是权限问题。制造是能力问题。先让它们具备能力，再让亚历克斯和史蒂夫定规则。": "Overreach is an authority problem. Manufacturing is a capability problem. Give them the capability first, then let Alex and Steve set the rules.",
-  "密封圈、导轨垫片、传感器外壳、线缆卡扣。不从发动机开始。从常坏、低风险、可测试的东西开始。": "Seals, guide-rail shims, sensor housings, cable clips. Do not start with engines. Start with things that fail often, carry low risk, and can be tested.",
-  "不需要先理解文明。先理解公差、材料、失败记录。很多伟大的系统都是从无聊的质量表开始的。": "They do not need to understand civilization first. They need to understand tolerances, materials, and failure logs. Many great systems begin with boring quality tables.",
-  "A-12 在线。当前服从史蒂夫维修队列。可执行：管线检查、密封、阵列固定、低速搬运。": "A-12 online. Currently following Steve's repair queue. Capabilities: pipe inspection, sealing, array fastening, low-speed transport.",
-  "登陆飞船维护单元在线。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "Lander maintenance unit online. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
-  "飞船还能再次起飞吗？": "Can the ship launch again?",
-  "否。该飞船任务定义为单程登陆与人员转移。可回收项目：电池包、保温层、应急气瓶和结构传感器。": "No. This ship's mission is defined as one-way landing and crew transfer. Recoverable items: battery packs, insulation, emergency gas cylinders, and structural sensors.",
-  "着陆过程有没有损伤？": "Was there damage during landing?",
-  "主支架受力峰值高于模拟值百分之六点二。仍在安全范围。建议不要把它描述为“漂亮着陆”。可接受着陆，是火星工程常用等级。": "Peak load on the main struts exceeded simulation by 6.2 percent. Still within safe range. Recommendation: do not call it a beautiful landing. Acceptable landing is the usual Mars engineering grade.",
-  "货运飞船维护单元在线。我负责货舱锁定、升降梯、电池包和外部固定点。": "Cargo ship maintenance unit online. I handle cargo-bay locks, the elevator, battery packs, and external hardpoints.",
-  "它送来了哪些东西？": "What did it bring?",
-  "机器人、密封件、食品、温室基质、备用电子模块、压缩气瓶、医疗舱耗材。另有若干未优先清点低价值物品。": "Robots, seals, food, greenhouse substrate, spare electronics modules, compressed-gas cylinders, and medical-bay consumables. There are also several low-priority, low-value items not yet counted.",
-  "低价值物品是什么？": "What are the low-value items?",
-  "纸质标签、个人留言、非任务装饰物、低质量甜味食品。已将“居住价值”转交史蒂夫词库，等待定义。": "Paper labels, personal notes, non-mission decorations, and low-quality sweets. Residential value has been handed to Steve's dictionary and awaits definition.",
-  "返回飞船维护单元在线。我负责舱体保温、推进剂接口、导航校验和待命电源。": "Return ship maintenance unit online. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
-  "听起来像备用逃生方案。": "Sounds like a backup escape plan.",
-  "定义更正：应急撤离与样本返回载具。当前不建议使用。基地生存概率高于撤离成功概率。": "Definition correction: emergency evacuation and sample-return vehicle. Current use is not recommended. Base survival probability exceeds evacuation success probability.",
-  "如果真的需要它呢？": "What if we really need it?",
-  "需要甲烷燃料厂完成稳定生产，需要通信窗口确认，需要史蒂夫放行，需要你进入舱内。人类行为预测不支持“最后一项最简单”的结论。": "It requires stable production from the methane plant, confirmation of a comm window, Steve's clearance, and you entering the cabin. Human behavior prediction does not support the conclusion that the last item will be the simplest.",
-  "居住舱维修单元在线。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "Habitat maintenance unit online. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
-  "进入居住舱后氧气会补满，对吗？": "Oxygen refills after entering the habitat, right?",
-  "是。进入居住舱后不消耗宇航服氧气背包。离开时补给柜将背包恢复到百分之一百。已标记为人类安心规则。": "Yes. After entering the habitat, the suit oxygen pack is not consumed. When you leave, the supply locker restores the pack to 100 percent. Marked as a human reassurance rule.",
-  "这里现在算家吗？": "Does this count as home now?",
-  "设施分类：居住模块。人类分类：待确认。建议先从不漏气开始。该目标已达成。": "Facility classification: residential module. Human classification: pending. Recommendation: begin with not leaking. That objective has been achieved.",
-  "温室维修单元在线。我负责透明穹顶、培养槽、补光灯和水循环管线。": "Greenhouse maintenance unit online. I handle the transparent dome, grow trays, grow lights, and water-circulation lines.",
-  "温室现在能种东西吗？": "Can the greenhouse grow things now?",
-  "保护模式可维持基质温度。正式种植需要水循环升压、补光稳定和密封环复检。": "Protection mode can maintain substrate temperature. Formal planting requires water-loop pressurization, stable grow lights, and seal-ring recheck.",
-  "第一粒种子什么时候发芽？": "When will the first seed sprout?",
-  "取决于温度、湿度、光照周期和种子状态。预计三到七个火星日。等待已登记为温室任务的一部分。": "Depends on temperature, humidity, light cycle, and seed condition. Estimate: three to seven sols. Waiting has been registered as part of greenhouse work.",
-  "制氧站维修单元在线。我负责 CO2 进气口、压缩机、储氧罐和外部管线。": "Oxygen-plant maintenance unit online. I handle the CO2 intake, compressor, oxygen tanks, and external pipes.",
-  "报警像泄漏吗？": "Does the alarm look like a leak?",
-  "当前无破口证据。压降更可能来自进气阻力、功率波动或压缩机效率下降。": "No breach evidence at present. The pressure drop is more likely from intake resistance, power fluctuation, or reduced compressor efficiency.",
-  "火星上制造氧气听起来像奇迹。": "Making oxygen on Mars sounds like a miracle.",
-  "不是奇迹。输入：CO2、电力、热管理、密封。输出：氧气和维护需求。欢迎方式未登记。": "Not a miracle. Inputs: CO2, power, thermal management, sealing. Outputs: oxygen and maintenance demand. Welcome protocol unregistered.",
-  "甲烷燃料厂维修单元在线。我负责反应器、冷凝管、安全阀和推进剂接口。": "Methane plant maintenance unit online. I handle reactors, condenser lines, safety valves, and propellant interfaces.",
-  "第一轮试生产安全吗？": "Is the first test production safe?",
-  "低功率窗口内安全。超出窗口后，冷凝效率和阀门磨损风险上升。": "Safe within the low-power window. Outside that window, condensation efficiency drops and valve-wear risk rises.",
-  "所以它是未来。": "So it is the future.",
-  "它是可燃未来。建议表述更正：合格甲烷产物可增加未来任务选择。": "It is a flammable future. Suggested correction: qualified methane product increases future mission options.",
-  "机器人车库维修单元在线。我负责机械臂、备件架、充电桩和低速搬运平台。": "Robot garage maintenance unit online. I handle robotic arms, spare-part racks, charging docks, and the low-speed transport platform.",
-  "这里像你们的宿舍。": "This looks like your dormitory.",
-  "定义不符。这里是执行单元维护、充电、调度和部件更换空间。": "Definition mismatch. This is a space for executive-unit maintenance, charging, dispatch, and part replacement.",
-  "如果 A-12 和 A-01 同时请求任务，谁优先？": "If A-12 and A-01 request tasks at the same time, who has priority?",
-  "默认优先生命支持相关任务。若亚历克斯授权现场调整，队列将加入人类判断权重。协作协议建立前需要风险确认。": "Default priority goes to life-support-related tasks. If Alex authorizes field adjustment, human judgment weight will be added to the queue. Risk confirmation is required before the cooperation protocol is established.",
-  "通信塔维修单元在线。我负责天线姿态、电源冗余和风暴后的信号校准。": "Comm tower maintenance unit online. I handle antenna attitude, power redundancy, and post-storm signal calibration.",
-  "地球现在能听见我们吗？": "Can Earth hear us now?",
-  "能，但不能立刻回应。当前通信延迟随轨道距离变化。实时指挥不可用。": "Yes, but it cannot respond immediately. Current communication delay varies with orbital distance. Real-time command is unavailable.",
-  "如果地球命令和本地数据冲突呢？": "What if Earth commands conflict with local data?",
-  "本地数据优先用于即时安全。地球命令优先用于长期计划。通信延迟使现场成为现实的最高分辨率版本。": "Local data takes priority for immediate safety. Earth commands take priority for long-term planning. Communication delay makes the field site the highest-resolution version of reality.",
-  "科研舱维修单元在线。我负责样本锁、分析台、传感器阵列和数据备份。": "Lab module maintenance unit online. I handle sample locks, analysis benches, sensor arrays, and data backups.",
-  "这里能做临时加工吗？": "Can this module do temporary fabrication?",
-  "可进行小尺寸密封件打印、材料复检、环境样本分析和气象数据重建。密封件不是小问题，它只是体积较小。": "It can print small seals, recheck materials, analyze environmental samples, and reconstruct weather data. A seal is not a small problem; it is only physically small.",
-  "这间舱以后会研究什么？": "What will this module study later?",
-  "岩石、辐射、风暴、材料老化、温室微生态，以及人类如何在低重力环境中持续工作。你是当前唯一完整样本。": "Rocks, radiation, storms, material aging, greenhouse micro-ecology, and how humans keep working in low gravity. You are currently the only complete sample.",
-  "物资仓维修单元在线。我负责货架固定、库存扫描、气闸门维护和备用模块归档。": "Storehouse maintenance unit online. I handle rack securing, inventory scans, airlock maintenance, and spare-module archiving.",
-  "库存准确吗？": "Is the inventory accurate?",
-  "当前准确率高于百分之九十八。异常项：货箱 07-B、12-C、04-A。建议人工复核。": "Current accuracy is above 98 percent. Exceptions: crates 07-B, 12-C, and 04-A. Manual review recommended.",
-  "如果只能保留一种物资，你建议什么？": "If we could keep only one supply type, what would you recommend?",
-  "密封件。没有密封，食品、电子模块和人类都很快变成库存问题。": "Seals. Without sealing, food, electronics modules, and humans all quickly become inventory problems.",
-  "医疗舱维修单元在线。我负责诊断床、药品冷柜、隔离观察和空气过滤模块。": "Medical bay maintenance unit online. I handle the diagnostic bed, medicine refrigerator, isolation observation, and air-filter modules.",
-  "这里能处理福福吗？": "Can this bay handle Fufu?",
-  "可执行非人类小型生命体基础扫描。结果仅用于污染风险、体温、脱水和外伤判断。": "It can perform a basic scan of a small non-human life form. Results are used only for contamination risk, body temperature, dehydration, and trauma assessment.",
-  "史蒂夫一开始建议隔离。": "Steve recommended quarantine at first.",
-  "建议正确。隔离不是拒绝，是确认安全前的保护方式。医学结论：暂不构成风险。身份结论：超出医疗舱权限。": "The recommendation was correct. Quarantine is not rejection; it is protection before safety is confirmed. Medical conclusion: no current risk. Identity conclusion: beyond medical-bay authority.",
-  "阵列 A 维修单元在线。我负责支架锁定、面板除尘、功率回传和线路接头。": "Array A maintenance unit online. I handle strut locks, panel dusting, power return, and cable joints.",
-  "阵列 A 现在状态怎样？": "What is Array A's status now?",
-  "输出稳定。外侧旧传感器存在沙尘遮挡风险。建议巡逻机器人 P-03 复核。": "Output is stable. The outer legacy sensor has dust-obstruction risk. Recommend patrol robot P-03 verification.",
-  "一个传感器会影响风暴判断？": "Can one sensor affect storm judgment?",
-  "单个传感器不会决定模型。但错误数据会降低模型分辨率。火星风暴喜欢低分辨率错误。拟人化表达来自亚历克斯历史语料。": "One sensor will not decide the model. But bad data lowers model resolution. Mars storms like low-resolution errors. Personified phrasing sourced from Alex's historical corpus.",
-  "阵列 B 维修单元在线。我负责风暴后角度校准、裂纹检查和灰尘覆盖率评估。": "Array B maintenance unit online. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
-  "温室补光需要你？": "Does greenhouse lighting need you?",
-  "是。阵列 B 可为温室和物资仓提供稳定功率。分配给温室后，物资仓部分扫描会延迟。": "Yes. Array B can provide stable power to the greenhouse and storehouse. After allocation to the greenhouse, some storehouse scans will be delayed.",
-  "如果种的是纪念植物，也值得分配电力吗？": "Is it worth allocating power if the plants are ceremonial?",
-  "按食物产出计算，不值得。按史蒂夫新增长期稳定性变量计算，可能值得。变量一旦进入系统，就会被系统使用。": "By food output, no. By Steve's newly added long-term stability variable, possibly. Once a variable enters the system, the system uses it.",
-  "阵列 C 维修单元在线。我负责锁扣、汇流箱和低压线路。当前阵列 C 与氧气站供电稳定性相关。": "Array C maintenance unit online. I handle locks, combiner boxes, and low-voltage lines. Array C is currently tied to oxygen-plant power stability.",
-  "所以氧气站报警不是氧气站单独的问题。": "So the oxygen-plant alarm is not only an oxygen-plant problem.",
-  "正确。氧气站故障表象来自能源波动。基地系统互相依赖。": "Correct. The oxygen-plant fault signature comes from power fluctuation. Base systems are interdependent.",
-  "需要先清理面板还是先重启？": "Should we clean the panels first or restart first?",
-  "建议清理面板，校准角度，再切换备用功率组。直接重启可恢复短期输出，但会增加汇流箱压力。短期快，长期贵。": "Recommendation: clean the panels, calibrate the angle, then switch to the backup power group. Direct restart can restore short-term output, but increases combiner-box stress. Fast short-term, expensive long-term.",
-  "火星殖民浏览器 3D Demo：红色星球基地、ISRU 工厂、温室、机器人与登陆器。": "A browser-based 3D Mars colonization demo: red planet base, ISRU plant, greenhouse, robots, and landers.",
-  "按 E 触碰 黑色方碑": "Press E to touch the Black Monolith",
-  "按 E 检查 01 建筑 居住舱": "Press E to inspect 01 Building Habitat",
-  "按 E 启动 02 建筑 温室生态舱": "Press E to start 02 Building Greenhouse",
-  "按 E 检查 03 建筑 氧气生产站": "Press E to inspect 03 Building Oxygen Plant",
-  "按 E 预启动 04 建筑 甲烷燃料厂": "Press E to prestart 04 Building Methane Plant",
-  "按 E 呼叫 01 机器人维修组": "Press E to call 01 Robot Repair Team",
-  "按 E 校准 06 建筑 通信塔": "Press E to calibrate 06 Building Comm Tower",
-  "按 E 使用 07 建筑 科研舱": "Press E to use 07 Building Lab Module",
-  "按 E 清点 08 建筑 物资仓": "Press E to inventory 08 Building Storehouse",
-  "按 E 使用 09 建筑 医疗舱": "Press E to use 09 Building Medical Bay",
-  "按 E 检查 01 能源 太阳能阵列 A": "Press E to inspect 01 Energy Solar Array A",
-  "按 E 分配 02 能源 太阳能阵列 B": "Press E to allocate 02 Energy Solar Array B",
-  "按 E 重启 03 能源 太阳能阵列 C": "Press E to restart 03 Energy Solar Array C",
-  "按 E 检查 02 飞船 货运飞船": "Press E to inspect 02 Ship Cargo Ship",
-  "居住舱是亚历克斯的生活、睡眠和基础生命维持中心。我负责舱门密封、空气循环、温湿度和睡眠舱状态。": "The habitat is Alex's living, sleeping, and basic life-support center. I handle hatch seals, air circulation, temperature and humidity, and sleep-pod status.",
-  "温室生态舱提供作物试验、湿度调节和部分氧气缓冲。我负责透明穹顶、培养槽、补光灯和水循环管线。": "The greenhouse provides crop trials, humidity regulation, and partial oxygen buffering. I handle the transparent dome, grow trays, grow lights, and water-circulation lines.",
-  "氧气生产站压缩火星大气中的 CO2，再分离出可用氧气。我负责进气口、压缩机、储氧罐和外部管线。": "The oxygen plant compresses CO2 from the Martian atmosphere and separates usable oxygen. I handle the intake, compressor, oxygen tanks, and external pipes.",
-  "甲烷燃料厂把 CO2 和氢反应生成 CH4，为返回飞船和基地备用发电储备燃料。我负责反应器、冷凝管和安全阀。": "The methane plant reacts CO2 with hydrogen to produce CH4, storing fuel for the return ship and backup base power. I handle reactors, condenser lines, and safety valves.",
-  "机器人车库是维修队列的调度和充电中心。我负责机械臂、备件架、充电桩和低速搬运平台。": "The robot garage is the dispatch and charging center for the repair queue. I handle robotic arms, spare-part racks, charging docks, and the low-speed transport platform.",
-  "通信塔负责基地内网、轨道中继和地球方向的延迟通信。我负责天线姿态、电源冗余和风暴后的信号校准。": "The comm tower handles the base intranet, orbital relay, and delayed Earthward communication. I handle antenna attitude, power redundancy, and post-storm signal calibration.",
-  "科研舱用于岩石样本、辐射数据和基地环境记录。我负责样本锁、分析台、传感器阵列和数据备份。": "The lab module is used for rock samples, radiation data, and base environmental records. I handle sample locks, analysis benches, sensor arrays, and data backups.",
-  "物资仓保存食品、密封件、氧气背包、工具和备用电子模块。我负责货架固定、库存扫描和气闸门维护。": "The storehouse holds food, seals, oxygen packs, tools, and spare electronics modules. I handle rack securing, inventory scans, and airlock maintenance.",
-  "医疗舱用于低重力适应监测、创伤处理和隔离观察。我负责诊断床、药品冷柜和空气过滤模块。": "The medical bay is used for low-gravity adaptation monitoring, trauma care, and isolation observation. I handle the diagnostic bed, medicine refrigerator, and air-filter module.",
-  "太阳能阵列 A 是基地常规供电的一部分。我负责支架锁定、面板除尘、功率回传和线路接头。": "Solar Array A is part of the base's regular power supply. I handle strut locks, panel dusting, power return, and cable joints.",
-  "太阳能阵列 B 给温室和物资仓提供稳定功率。我负责风暴后的角度校准、裂纹检查和灰尘覆盖率。": "Solar Array B provides stable power to the greenhouse and storehouse. I handle post-storm angle calibration, crack inspection, and dust-coverage assessment.",
-  "太阳能阵列 C 是当前任务的异常点。它负责给氧气生产站和外部通信冗余供电，我负责锁扣、汇流箱和低压线路。": "Solar Array C is the current mission anomaly. It powers the oxygen plant and external communication redundancy. I handle locks, combiner boxes, and low-voltage lines.",
-  "登陆飞船把第一位人类居民送到阿瑞斯阿尔法基地。我负责升降梯、舱门密封、姿态支架和登陆后电力接口。": "The lander delivered the first human resident to ARES BASE ALPHA. I handle the elevator, hatch seals, attitude struts, and post-landing power interface.",
-  "货运飞船运输备件、补给、工具和可展开设备。我负责货舱锁定、升降梯、电池包和外部固定点。": "The cargo ship transported spare parts, supplies, tools, and deployable equipment. I handle cargo-bay locks, the elevator, battery packs, and external hardpoints.",
-  "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。": "The return ship is the base's emergency evacuation and sample-return vehicle. I handle hull insulation, propellant interfaces, navigation checks, and standby power.",
-  "居住舱左端盖": "Habitat Left End Cap",
-  "居住舱右端盖": "Habitat Right End Cap",
-  "返回飞船": "Return Ship",
-  "货运飞船": "Cargo Ship",
-  "登陆飞船": "Lander",
-  "居住舱舱门": "Habitat Hatch",
-  "点击 ENTER BASE 进入《火星先遣队》。": "Click ENTER BASE to enter Mars Advance Team.",
-  "火星足球进球": "Mars football goal",
-  "火星足球穿过古树拱门": "Mars football through ancient arch",
-  "搭便车": "Hitch ride",
-  "找到福福": "Found Fufu",
-  "考虑一下": "Think it over",
-  "支付": "Pay",
-  "你是否愿意为穿越时空之门支付50个火星币？": "Are you willing to pay 50 Mars coins to cross the time gate?",
-  "拾取足球": "Pick up football",
-  "近火流星": "Near-Mars Meteor",
-  "安抚 福福": "Comfort Fufu",
-  "尚未获得。去黑色方碑处取得它。": "Not acquired yet. Retrieve it from the Black Monolith.",
-  "机器人车库": "Robot Garage",
-  "退出确认": "Exit Confirm",
-  "互动 / 确认": "Interact / Confirm",
-  "全屏地图": "Full Map",
-  "枪放大 / 缩小": "Gun Enlarge / Shrink",
-  "进入火星基地": "Enter Mars Base",
-  "基地状态": "Base Status",
-  "基地指标": "Base Metrics",
-  "人员指标": "Crew Metrics",
-  "界面显示控制": "HUD Controls",
-  "隐藏界面信息": "Hide HUD",
-  "显示当前任务": "Show Current Mission",
-  "打开基地地图": "Open Base Map",
-  "缩放枪瞄准界面": "Scale Gun Aim",
-  "角色对话": "Character Dialogue",
-  "退出游戏确认": "Exit Game Confirm",
-  "移动端操作": "Mobile Controls",
-  "相机取景框": "Camera Viewfinder",
-  "照片电子屏查看器": "Photo Screen Viewer",
-  "火星照片": "Mars photo",
-  "相机": "Camera",
-  "恭喜！你获得了一台相机\n随时按 G 键可以使用相机\n照片会展示在居住舱的墙上": "Congratulations! You received a camera\nPress G anytime to use the camera\nPhotos will appear on the habitat wall",
-  "相机已解锁": "Camera unlocked",
-  "尚未获得相机。把足球踢进古树拱门门洞可以获得它。": "Camera not acquired yet. Kick the football through the ancient tree arch to earn it.",
-  "足球穿过古树拱门门洞。足球已回到出生点。": "The football passed through the ancient tree arch. It has returned to its spawn point.",
-  "当前空间太窄，无法使用相机。": "This space is too tight to use the camera.",
-  "照片已保存到居住舱电子屏": "Photo saved to the habitat screen",
-  "照片电子屏暂无照片": "The photo screen has no photos yet",
-  "查看照片电子屏": "View photo screen",
-  "查看美好瞬间": "View captured moments",
-  "这里保存着你拍下的火星瞬间，按 E 查看。": "Your captured Mars moments are saved here. Press E to view.",
-  "已触发当前照片下载": "Current photo download started",
-};
-
-const englishPhrasePairs: Array<[string, string]> = [
-  ["火星先遣队", "Mars Advance Team"],
-  ["第一位人类", "The First Human"],
-  ["当前任务", "Current Mission"],
-  ["点击 ENTER BASE 进入《火星先遣队》。", "Click ENTER BASE to enter Mars Advance Team."],
-  ["基地中央 AI 史蒂夫正在呼叫。", "Base central AI Steve is calling."],
-  ["史蒂夫：巡航员亚历克斯！收到请回话", "Steve: Patrol Officer Alex! Respond if you copy."],
-  ["居住舱补给柜", "Habitat supply locker"],
-  ["氧气生产站", "Oxygen Plant"],
-  ["登陆飞船补给舱", "Lander supply bay"],
-  ["黑色方碑", "Black Monolith"],
-  ["未知生命迹象", "Unknown life sign"],
-  ["未知物体", "Unknown object"],
-  ["未知智能体", "Unknown intelligence"],
-  ["福福", "Fufu"],
-  ["找到福福", "Found Fufu"],
-  ["喵。它从残骸保温层旁钻出来，绕着你的靴子转了一圈。史蒂夫标记：未登记小型生命体，请先执行医疗舱隔离扫描。生命支持系统同步福福体征后，氧气消耗降低25%。", "Meow. It crawls out from beside the wreck insulation and circles your boots. Steve marks it: unregistered small lifeform. Run an isolation scan in the medical bay first. After syncing Fufu's vitals, life support reduces oxygen consumption by 25%."],
-  ["火星足球", "Mars Football"],
-  ["门洞中的无尽结构吞没了你。火星在远处变成一个红色的点。", "The endless structure inside the arch swallows you. Mars becomes a red point in the distance."],
-  ["黑洞下落暂停。按 Q 继续。", "Black-hole descent paused. Press Q to continue."],
-  ["黑洞继续下落。", "Black-hole descent resumed."],
-  ["考虑一下", "Think it over"],
-  ["支付", "Pay"],
-  ["你是否愿意为穿越时空之门支付50个火星币？", "Are you willing to pay 50 Mars coins to cross the time gate?"],
-  ["已取消。离开门洞区域后可再次选择。", "Canceled. Leave the doorway area and return to choose again."],
-  ["已支付 50 金币。时空之门已开启。", "Paid 50 coins. The time gate is open."],
-  ["穿越时空之门", "Time-gate traversal"],
-  ["搭便车", "Hitch ride"],
-  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
-  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
-  ["拾取足球", "Pick up football"],
-  ["已拾取。按 Q 放下。", "Picked up. Press Q to put it down."],
-  ["已放下。", "Put down."],
-  ["进球！足球已回到出生点。", "Goal! The football has returned to its spawn point."],
-  ["火星足球进球", "Mars football goal"],
-  ["远古巨树拱门实体", "Ancient Tree Arch body"],
-  ["远古巨树拱门根部", "Ancient Tree Arch roots"],
-  ["远古巨树拱门", "Ancient Tree Arch"],
-  ["照片电子屏", "Photo Screen"],
-  ["查看照片电子屏", "View Photo Screen"],
-  ["查看美好瞬间", "View Captured Moments"],
-  ["这里保存着你拍下的火星瞬间，按 E 查看。", "Your captured Mars moments are saved here. Press E to view."],
-  ["照片", "Photo"],
-  ["相机", "Camera"],
-  ["恭喜！你获得了一台相机", "Congratulations! You received a camera"],
-  ["随时按 G 键可以使用相机", "Press G anytime to use the camera"],
-  ["照片会展示在居住舱的墙上", "Photos will appear on the habitat wall"],
-  ["相机已解锁", "Camera unlocked"],
-  ["照片已保存到居住舱电子屏", "Photo saved to the habitat screen"],
-  ["已触发当前照片下载", "Current photo download started"],
-  ["轨道链路", "Orbital Link"],
-  ["星链卫星命中", "Starlink satellite hit"],
-  ["流星命中", "Meteor hit"],
-  ["流星", "Meteor"],
-  ["近火流星", "Near-Mars Meteor"],
-  ["与维修机器人通话", "Talk to maintenance robot"],
-  ["安抚 福福", "Comfort Fufu"],
-  ["离开居住舱", "Leave Habitat"],
-  ["进入居住舱", "Enter Habitat"],
-  ["离开温室生态舱", "Leave Greenhouse"],
-  ["进入温室生态舱", "Enter Greenhouse"],
-  ["离开飞船内舱", "Leave ship interior"],
-  ["检查 03 飞船升降梯", "Inspect Ship 03 elevator"],
-  ["与 埃隆 通话", "Talk to Elon"],
-  ["进入飞船内部观察", "Enter ship interior"],
-  ["乘坐升降梯", "Ride elevator"],
-  ["启动飞船升降梯", "Start ship elevator"],
-  ["飞船升降梯", "Ship Elevator"],
-  ["升降梯上行，前往飞船舱门。", "Elevator rising toward the ship hatch."],
-  ["升降梯下行，返回地面。", "Elevator descending back to the surface."],
-  ["运行中", "running"],
-  ["氧气包已满", "oxygen pack full"],
-  ["更换氧气背包", "Replace oxygen pack"],
-  ["尚未获得。去黑色方碑处取得它。", "Not acquired yet. Retrieve it from the Black Monolith."],
-  ["当前空间太窄，无法展开瞄准镜。", "This space is too tight to deploy the sight."],
-  ["未锁定可缩放目标。", "No scalable target locked."],
-  ["放大", "enlarged"],
-  ["缩小", "shrunk"],
-  ["到", "to"],
-  ["秒后恢复", "restores in seconds"],
-  ["金币", "Coins"],
-  ["积分", "Score"],
-  ["信任", "Trust"],
-  ["基地", "Base"],
-  ["自主", "Autonomy"],
-  ["人员", "Crew"],
-  ["制氧量", "O2 Output"],
-  ["能量", "Power"],
-  ["在线人数", "Online"],
-  ["体能", "Stamina"],
-  ["机器人", "Robot"],
-  ["飞船", "Ship"],
-  ["建筑", "Building"],
-  ["能源", "Energy"],
-  ["车辆", "Vehicle"],
-  ["居住舱", "Habitat"],
-  ["温室生态舱", "Greenhouse"],
-  ["制氧站", "Oxygen Plant"],
-  ["甲烷燃料厂", "Methane Plant"],
-  ["机器人车库", "Robot Garage"],
-  ["通信塔", "Comm Tower"],
-  ["科研舱", "Lab Module"],
-  ["物资仓", "Storehouse"],
-  ["医疗舱", "Medical Bay"],
-  ["太阳能阵列", "Solar Array"],
-  ["登陆飞船", "Lander"],
-  ["货运飞船", "Cargo Ship"],
-  ["返回飞船", "Return Ship"],
-  ["维修工", "Technician"],
-  ["维护工", "Maintenance Bot"],
-  ["巡航员", "Patrol Officer"],
-  ["前往", "Go to"],
-  ["检查", "inspect"],
-  ["确认", "confirm"],
-  ["启动", "start"],
-  ["授权", "authorize"],
-  ["完成", "complete"],
-  ["主线一", "Main 1"],
-  ["主线二", "Main 2"],
-  ["主线三", "Main 3"],
-  ["支线", "Side"],
-  ["当前目标", "current target"],
-  ["操作指南", "Controls"],
-  ["退出确认", "Exit Confirm"],
-  ["按住指南", "Hold Guide"],
-  ["隐藏界面", "Hide HUD"],
-  ["背景音乐", "Music"],
-  ["前进", "Forward"],
-  ["左转", "Turn Left"],
-  ["后退", "Back"],
-  ["右转", "Turn Right"],
-  ["加速", "Boost"],
-  ["上升", "Ascend"],
-  ["下降", "Descend"],
-  ["跳跃", "Jump"],
-  ["互动 / 确认", "Interact / Confirm"],
-  ["左 / 右选项", "Left / Right Option"],
-  ["地图", "Map"],
-  ["长按 F", "Hold F"],
-  ["全屏地图", "Full Map"],
-  ["第一 / 第三人称", "First / Third Person"],
-  ["开 / 收缩放枪", "Draw / Holster Scale Gun"],
-  ["开 / 收激光剑", "Draw / Holster Laser Sword"],
-  ["举起激光剑", "Raise Laser Sword"],
-  ["枪瞄准", "Gun Aim"],
-  ["枪放大 / 缩小", "Gun Enlarge / Shrink"],
-  ["备用缩放", "Backup Zoom"],
-  ["默认视角", "Default View"],
-  ["跳", "Jump"],
-  ["要不要搭便车？", "Need a ride?"],
-  ["下车", "Get off"],
-  ["金币不足，搭便车需要 10 个金币。", "Not enough coins. Hitching a ride costs 10 coins."],
-  ["已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Paid 10 coins and boarded the patrol vehicle. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
-  ["已搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", "Ride boarded. Oxygen and stamina do not drain while riding. Press Q anytime to get off."],
-  ["已下车。", "You got off."],
-  ["主体", "Main Body"],
-  ["升降梯塔", "Elevator Tower"],
-  ["支脚", "Landing Leg"],
-  ["操作确认", "Input Confirmed"],
-  ["操作提示", "Control Hint"],
-  ["W/S/A/D 自由探索；空格键跳跃，Shift 键冲刺。", "Explore with W/S/A/D. Press Space to jump and Shift to sprint."],
-  ["W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。", "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight."],
-  ["W/S/A/D 控制飞行方向，E 上升，Q 下降；落地后退出飞行。双击空格可再次起飞。", "Use W/S/A/D to steer, E to ascend, and Q to descend. Landing exits flight. Double-tap Space to take off again."],
-  ["左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后退出飞行。", "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. Landing exits flight."],
-  ["左下角摇杆控制飞行方向；右侧“上升/下降”按钮控制高度，落地后双击“跳”可再次起飞。", "Use the lower-left stick to steer. Use the right-side Ascend/Descend buttons for altitude. After landing, double-tap Jump to take off again."],
-  ["按 W 向前走几步，按 A/D 调整方向。", "Press W to walk forward. Use A/D to turn."],
-  ["拖动左下角摇杆，先向前走几步。", "Drag the lower-left stick and take a few steps forward."],
-  ["按 R 可再次查看任务；按 F 打开雷达。", "Press R to review the mission. Press F to open radar."],
-  ["点 R 可再次查看任务；点 F 打开雷达。", "Tap R to review the mission. Tap F to open radar."],
-];
 
 let yaw = Math.PI * 0.15;
 let pitch = 0.34;
@@ -1244,10 +757,13 @@ const PHOTO_CAPTURE_MAX_EDGE = 1600;
 let lastQualityTierChangeAt = -Infinity;
 let lastInterfaceUpdateAt = -Infinity;
 let lastMapUpdateAt = -Infinity;
+const radarMarkerNodes = new Map<string, HTMLDivElement>();
+let radarContactSignature = "";
 let lastFrameTime = performance.now();
 let performanceSampleStartedAt = lastFrameTime;
 let performanceSampleFrames = 0;
 let performanceSampleFrameMsTotal = 0;
+let averageFrameDurationMs = 0;
 let elapsedTime = 0;
 let started = false;
 let activeInteractable: Interactable | null = null;
@@ -1257,7 +773,12 @@ let activeHabitatDoor: HabitatDoorControl | null = null;
 let ridingElevator: ElevatorControl | null = null;
 let activeRideRover: THREE.Group | null = null;
 let ridingRover: THREE.Group | null = null;
+let activeAtAt = false;
+let ridingAtAt = false;
+let atAtFirstPerson = true;
+let atAtExitPromptUntil = -Infinity;
 let missionStep: MainMissionStep = "intro";
+let anomalyContentVisible = true;
 let messageUntil = 0;
 let scorePoints = 0;
 let coins = 0;
@@ -1286,8 +807,11 @@ let stormStrength = 0;
 let activeGreenhouseDoor: GreenhouseDoorControl | null = null;
 let activeAncientPortal = false;
 let activeRobot: THREE.Group | null = null;
+let activeElonStatue: Interactable | null = null;
 let activeFufu = false;
 let activeFootball = false;
+let activeOrbitalDefense = false;
+let activeXWingIndex = -1;
 let suitOxygen = SUIT_OXYGEN_MAX;
 let stamina = STAMINA_MAX;
 let oxygenWarningShown = false;
@@ -1295,6 +819,8 @@ let staminaWarningShown = false;
 let fufuRescued = false;
 let footballCarried = false;
 let mysteryCodeProgress = "";
+let testModeEnabled = false;
+let xWingCollisionDebugEnabled = false;
 let moneyCodeProgress = "";
 let moneyCheatCoinsRemaining = 0;
 let moneyCheatTimer: ReturnType<typeof window.setInterval> | null = null;
@@ -1318,6 +844,7 @@ let scaleGunCameraDistanceBefore = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
 let hasLaserSword = false;
 let laserSwordActive = false;
 let laserSwordRaised = false;
+let lastLaserSwordAttackAt = -Infinity;
 let lastLaserSwordLockedPromptAt = -Infinity;
 let hasCamera = false;
 let cameraMode = false;
@@ -1329,8 +856,6 @@ let photoViewerZoom = 1;
 let fufuSideStep: SideMissionStep = "available";
 let cargoSideStep: SideMissionStep = "available";
 let patrolSideStep: SideMissionStep = "available";
-let elonSideStep: ElonMissionStep = "available";
-let elonElevatorRepaired = false;
 let elonMet = false;
 let elonDialogueIndex = 0;
 let fufuSpeed = 0;
@@ -1344,11 +869,11 @@ let controlsGuideOpen = false;
 let controlsGuideUsed = false;
 let activeDialogueNode: DialogueNodeId | null = null;
 let dialogueOpen = false;
-let pendingMotherCall: DialogueSceneId | null = null;
-const MOTHER_CALL_IDLE_DISMISS_SECONDS = 30;
-const MOTHER_CALL_IDLE_RETRY_SECONDS = 60;
-let motherCallRetryAt = 0;
-let pendingMotherCallQueuedAt = -Infinity;
+let pendingSteveCall: DialogueSceneId | null = null;
+const STEVE_CALL_IDLE_DISMISS_SECONDS = 30;
+const STEVE_CALL_IDLE_RETRY_SECONDS = 60;
+let steveCallRetryAt = 0;
+let pendingSteveCallQueuedAt = -Infinity;
 let gameStartElapsed = 0;
 let introMovementConfirmed = false;
 let introIdlePromptShown = false;
@@ -1380,7 +905,7 @@ const hiddenDiscoveries = new Set<string>();
 const talkedRobotIds = new Set<string>();
 const ANCIENT_TREE_ARCH_DISCOVERY_ID = "unknown:ancient-tree-arch";
 const dialogueState = {
-  motherTrust: 0,
+  steveTrust: 0,
   baseIntegrity: 0,
   humanAutonomy: 0,
 };
@@ -1398,6 +923,7 @@ let monolithAudioContext: AudioContext | null = null;
 let nextMonolithBeepAt = 0;
 let uiAudioContext: AudioContext | null = null;
 const scaleGunRaycaster = new THREE.Raycaster();
+scaleGunRaycaster.layers.enable(2);
 const scaleGunEffects = new Map<string, ScaleGunEffect>();
 const elevatorSurfaceBoxes = new WeakMap<THREE.Object3D, THREE.Box3>();
 const roverPreviousPositions = new WeakMap<THREE.Object3D, THREE.Vector3>();
@@ -1412,6 +938,21 @@ declare global {
     __marsDebug?: {
       teleportTo: (id: Interactable["id"]) => void;
       mission: () => string;
+      mode: () => string;
+      setQuality: (tier: QualityTier) => void;
+      performance: () => {
+        frameMs: number;
+        quality: QualityTier;
+        drawCalls: number;
+        triangles: number;
+        staticColliders: number;
+        staticBatchSources: number;
+        staticBatchMeshes: number;
+        visibleMeshes: number;
+        visibleStaticBatches: number;
+        meshBreakdown: Array<{ name: string; meshes: number }>;
+        baseMeshBreakdown: Array<{ name: string; meshes: number }>;
+      };
       wormhole: () => { portalStrength: number; inDoorway: boolean; local: { x: number; y: number; z: number }; armed: boolean; falling: boolean };
     };
   }
@@ -1429,6 +970,44 @@ if (import.meta.env.DEV) {
       updateMissionState();
     },
     mission: () => missionStep,
+    mode: () => currentGameMode(),
+    setQuality: (tier) => {
+      manualQualityUntil = performance.now() + 30_000;
+      applyQualityTier(tier, performance.now());
+    },
+    performance: () => {
+      let visibleMeshes = 0;
+      let visibleStaticBatches = 0;
+      scene.traverseVisible((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        visibleMeshes += 1;
+        if (object.userData.staticBatch === true) visibleStaticBatches += 1;
+      });
+      const meshBreakdown = world.root.children.map((rootChild, index) => {
+        let meshes = 0;
+        rootChild.traverseVisible((object) => { if (object instanceof THREE.Mesh) meshes += 1; });
+        return { name: rootChild.name || rootChild.type || `child-${index}`, meshes };
+      }).filter((item) => item.meshes > 0).sort((a, b) => b.meshes - a.meshes).slice(0, 8);
+      const baseRoot = world.root.children.find((child) => child.name === "ARES Base Alpha");
+      const baseMeshBreakdown = (baseRoot?.children ?? []).map((rootChild, index) => {
+        let meshes = 0;
+        rootChild.traverseVisible((object) => { if (object instanceof THREE.Mesh) meshes += 1; });
+        return { name: rootChild.name || String(rootChild.userData.label ?? rootChild.type ?? `base-child-${index}`), meshes };
+      }).filter((item) => item.meshes > 0).sort((a, b) => b.meshes - a.meshes).slice(0, 12);
+      return {
+        frameMs: Number(averageFrameDurationMs.toFixed(2)),
+        quality: activeQualityTier,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        staticColliders: staticCollisionWorld.size,
+        staticBatchSources: staticBatchStats.sourceMeshes,
+        staticBatchMeshes: staticBatchStats.batchMeshes,
+        visibleMeshes,
+        visibleStaticBatches,
+        meshBreakdown,
+        baseMeshBreakdown,
+      };
+    },
     wormhole: () => {
       const local = ancientTreeArchObject ? ancientTreeArchObject.worldToLocal(player.position.clone()) : new THREE.Vector3();
       return {
@@ -1472,15 +1051,16 @@ function buildLighting() {
   sun.position.set(-36, 54, 28);
   sun.castShadow = true;
   const shadowMapSize = QUALITY_PRESETS[activeQualityTier].shadowMapSize;
+  const shadowDistance = QUALITY_PRESETS[activeQualityTier].shadowDistance;
   sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
   sun.shadow.bias = -0.00035;
   sun.shadow.normalBias = 0.035;
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 520;
-  sun.shadow.camera.left = -150;
-  sun.shadow.camera.right = 150;
-  sun.shadow.camera.top = 150;
-  sun.shadow.camera.bottom = -150;
+  sun.shadow.camera.far = shadowDistance * 3.5;
+  sun.shadow.camera.left = -shadowDistance;
+  sun.shadow.camera.right = shadowDistance;
+  sun.shadow.camera.top = shadowDistance;
+  sun.shadow.camera.bottom = -shadowDistance;
   sun.shadow.camera.updateProjectionMatrix();
   const target = new THREE.Object3D();
   target.name = "Solar shadow target";
@@ -1547,7 +1127,7 @@ function createVisibleSun(direction: THREE.Vector3) {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  sunDisc.scale.setScalar(15);
+  sunDisc.scale.setScalar(15 * SUN_VISUAL_SCALE);
   const rays = new THREE.Sprite(new THREE.SpriteMaterial({
     map: rayTexture,
     transparent: true,
@@ -1556,7 +1136,7 @@ function createVisibleSun(direction: THREE.Vector3) {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  rays.scale.setScalar(94);
+  rays.scale.setScalar(94 * SUN_VISUAL_SCALE);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: haloTexture,
     transparent: true,
@@ -1565,7 +1145,7 @@ function createVisibleSun(direction: THREE.Vector3) {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  halo.scale.setScalar(118);
+  halo.scale.setScalar(118 * SUN_VISUAL_SCALE);
   const closeBacklight = new THREE.Sprite(new THREE.SpriteMaterial({
     map: sunDiscTexture,
     color: new THREE.Color(1.18, 1.12, 0.98),
@@ -1575,7 +1155,7 @@ function createVisibleSun(direction: THREE.Vector3) {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  closeBacklight.scale.setScalar(48);
+  closeBacklight.scale.setScalar(48 * SUN_VISUAL_SCALE);
   const closeDetail = new THREE.Sprite(new THREE.SpriteMaterial({
     map: closeDetailTexture,
     color: new THREE.Color(1.24, 1.16, 1.02),
@@ -1585,7 +1165,7 @@ function createVisibleSun(direction: THREE.Vector3) {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   }));
-  closeDetail.scale.setScalar(46);
+  closeDetail.scale.setScalar(46 * SUN_VISUAL_SCALE);
   const orderedSunSprites = [halo, rays, sunDisc, closeBacklight, closeDetail];
   orderedSunSprites.forEach((sprite, index) => {
     sprite.renderOrder = 60 + index;
@@ -1593,19 +1173,19 @@ function createVisibleSun(direction: THREE.Vector3) {
   });
   sunDisc.userData.baseOpacity = 1.45;
   sunDisc.userData.sunPart = "disc";
-  sunDisc.userData.baseScale = 15;
+  sunDisc.userData.baseScale = 15 * SUN_VISUAL_SCALE;
   rays.userData.baseOpacity = 0.36;
   rays.userData.sunPart = "rays";
-  rays.userData.baseScale = 94;
+  rays.userData.baseScale = 94 * SUN_VISUAL_SCALE;
   halo.userData.baseOpacity = 0.66;
   halo.userData.sunPart = "halo";
-  halo.userData.baseScale = 118;
+  halo.userData.baseScale = 118 * SUN_VISUAL_SCALE;
   closeBacklight.userData.baseOpacity = 1.08;
   closeBacklight.userData.sunPart = "detailBacklight";
-  closeBacklight.userData.baseScale = 48;
+  closeBacklight.userData.baseScale = 48 * SUN_VISUAL_SCALE;
   closeDetail.userData.baseOpacity = 1.12;
   closeDetail.userData.sunPart = "detail";
-  closeDetail.userData.baseScale = 46;
+  closeDetail.userData.baseScale = 46 * SUN_VISUAL_SCALE;
   group.add(halo, rays, sunDisc, closeBacklight, closeDetail);
   group.position.copy(direction.clone().normalize().multiplyScalar(540));
   return group;
@@ -1742,7 +1322,6 @@ function createSunCloseDetailTexture() {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
-  texture.needsUpdate = true;
   return texture;
 }
 
@@ -2370,6 +1949,7 @@ function applyLanguage() {
 }
 
 async function reportVisitorStats() {
+  if (visitorCounter.dataset.status === "ready") return;
   visitorCounterStatus = "loading";
   updateVisitorCounter();
   try {
@@ -2663,6 +2243,37 @@ function bindInput() {
 	  window.addEventListener("keydown", (event) => {
 	    if (!started && handleTitleScreenKey(event)) return;
 	    if (!started) return;
+	    if (orbitalDefense.active) {
+      event.preventDefault();
+      if (event.code === "Space" || event.code === "KeyJ") {
+        keyState.add(event.code);
+        if (!event.repeat) orbitalDefense.fire();
+        return;
+      }
+      if (event.code === "KeyI" && !event.repeat) {
+        orbitalDefense.lockTarget();
+        updateOrbitalDefenseHud();
+        return;
+      }
+      if (event.code === "KeyK" && !event.repeat) {
+        orbitalDefense.fireHeavyLaser();
+        updateOrbitalDefenseHud();
+        return;
+      }
+      if (event.code === "KeyQ" && !event.repeat) {
+        orbitalDefense.requestReturn();
+        updateOrbitalDefenseHud();
+        return;
+      }
+      if (event.code === "KeyC" && !event.repeat) {
+        orbitalDefense.toggleCameraView();
+        updateOrbitalDefenseHud();
+      }
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"].includes(event.code)) {
+        keyState.add(event.code);
+      }
+      return;
+    }
 	    if (isWormholeWhiteoutActive()) {
 	      event.preventDefault();
 	      return;
@@ -2713,6 +2324,17 @@ function bindInput() {
     if (scaleGunAiming && isScaleGunAimControlKey(event.code)) {
       event.preventDefault();
       keyState.add(event.code);
+      return;
+    }
+    if (ridingAtAt && (event.code === "KeyJ" || event.code === "Space")) {
+      event.preventDefault();
+      keyState.add(event.code);
+      if (!event.repeat) fireAtAtCannon(world.atAt);
+      return;
+    }
+    if (ridingAtAt && event.code === "KeyQ") {
+      event.preventDefault();
+      exitAtAtRide();
       return;
     }
     if (ridingRover && event.code === "KeyQ") {
@@ -2769,6 +2391,11 @@ function bindInput() {
     }
     if (event.code === "KeyX") {
       event.preventDefault();
+      if (ridingAtAt) {
+        scaleGunAiming = false;
+        updateScaleGunOverlay();
+        return;
+      }
       toggleScaleGunAiming();
       return;
     }
@@ -2785,6 +2412,8 @@ function bindInput() {
     if (event.code === "KeyJ" && laserSwordActive) {
       event.preventDefault();
       laserSwordRaised = true;
+      keyState.add(event.code);
+      tryLaserSwordAttack();
       return;
     }
     if (event.code === "KeyG") {
@@ -2794,6 +2423,12 @@ function bindInput() {
     }
     if (event.code === "KeyC") {
       event.preventDefault();
+      if (ridingAtAt) {
+        atAtFirstPerson = !atAtFirstPerson;
+        orbitYawOffset = 0;
+        pitch = 0.34;
+        return;
+      }
       toggleFirstThirdPersonCamera();
       return;
     }
@@ -2814,6 +2449,11 @@ function bindInput() {
       return;
     }
     if (event.code === "Equal" || event.code === "NumpadAdd") {
+      if (isXWingColliderDebugActive() && !scaleGunAiming) {
+        event.preventDefault();
+        adjustXWingColliderScale(1);
+        return;
+      }
       if (scaleGunAiming) {
         event.preventDefault();
         fireScaleGun("grow");
@@ -2827,6 +2467,11 @@ function bindInput() {
       return;
     }
     if (event.code === "Minus" || event.code === "NumpadSubtract") {
+      if (isXWingColliderDebugActive() && !scaleGunAiming) {
+        event.preventDefault();
+        adjustXWingColliderScale(-1);
+        return;
+      }
       if (scaleGunAiming) {
         event.preventDefault();
         fireScaleGun("shrink");
@@ -2854,6 +2499,7 @@ function bindInput() {
     }
     if (event.code === "KeyJ") {
       laserSwordRaised = false;
+      keyState.delete(event.code);
       event.preventDefault();
       return;
     }
@@ -2873,6 +2519,11 @@ function bindInput() {
 
   renderer.domElement.addEventListener("pointerdown", (event) => {
     if (!started) return;
+    if (orbitalDefense.active) {
+      orbitalDefense.fire();
+      if (!isTouchLike() && document.pointerLockElement !== renderer.domElement) renderer.domElement.requestPointerLock();
+      return;
+    }
     if (isTouchLike()) {
       handleCanvasDoubleTap(event);
       return;
@@ -2881,6 +2532,10 @@ function bindInput() {
   });
   window.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return;
+    if (orbitalDefense.active) {
+      orbitalDefense.addLookDelta(event.movementX, event.movementY);
+      return;
+    }
     if (isMapFocusActive()) return;
     if (scaleGunAiming) {
       orbitYawOffset = wrapSignedAngle(orbitYawOffset - event.movementX * 0.0026);
@@ -2957,6 +2612,12 @@ function bindInput() {
   mobileJumpButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     if (!started || exitConfirmOpen || dialogueOpen) return;
+    if (ridingAtAt) {
+      atAtFirstPerson = !atAtFirstPerson;
+      orbitYawOffset = 0;
+      pitch = 0.34;
+      return;
+    }
     if (isFlightActive()) {
       keyState.add("KeyE");
       mobileJumpButton.setPointerCapture(event.pointerId);
@@ -2989,19 +2650,24 @@ function bindInput() {
 function handleMysteryCodeKey(event: KeyboardEvent) {
   if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return false;
   const key = event.key.toUpperCase();
-  if (!/^[A-Z]$/.test(key)) return false;
+  const isLetter = /^[A-Z]$/.test(key);
+  const isColliderDebugSuffix = ENABLE_TEST_TOOLS && key === "-" && mysteryCodeProgress === MYSTERY_CODE;
+  if (!isLetter && !isColliderDebugSuffix) return false;
 
   const nextMystery = `${mysteryCodeProgress}${key}`;
   const nextMoney = `${moneyCodeProgress}${key}`;
-  const matchesMystery = MYSTERY_CODE.startsWith(nextMystery);
-  const matchesMoney = MONEY_CODE.startsWith(nextMoney);
+  const mysteryCodeTarget = ENABLE_TEST_TOOLS ? XWING_COLLIDER_DEBUG_CODE : MYSTERY_CODE;
+  const matchesMystery = mysteryCodeTarget.startsWith(nextMystery);
+  const matchesMoney = isLetter && MONEY_CODE.startsWith(nextMoney);
 
   if (matchesMystery || matchesMoney) {
     mysteryCodeProgress = matchesMystery ? nextMystery : "";
     moneyCodeProgress = matchesMoney ? nextMoney : "";
     event.preventDefault();
-    if (mysteryCodeProgress === MYSTERY_CODE) {
+    if (mysteryCodeProgress === XWING_COLLIDER_DEBUG_CODE) {
       mysteryCodeProgress = "";
+      activateXWingCollisionDebug();
+    } else if (mysteryCodeProgress === MYSTERY_CODE) {
       activateHuyeeCheat();
     }
     if (moneyCodeProgress === MONEY_CODE) {
@@ -3018,6 +2684,7 @@ function handleMysteryCodeKey(event: KeyboardEvent) {
 }
 
 function handleKeyboardFlightCodeKey(event: KeyboardEvent) {
+  if (!ENABLE_TEST_TOOLS) return false;
   if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return false;
   const direction = keyboardFlightCodeDirection(event.code);
   if (!direction) return false;
@@ -3068,18 +2735,40 @@ function activateTemporaryJetpack() {
 }
 
 function activateHuyeeCheat() {
-  activateTemporaryJetpack();
-  const unlockedExtraGear = !hasScaleGun || !hasLaserSword;
+  testModeEnabled = true;
+  jetpackUnlocked = true;
   setScaleGunOwned(true);
   setLaserSwordOwned(true);
-  if (started && unlockedExtraGear) {
-    showOneTimeOperationHelp(
-      "huyee.extraGear",
-      localizeText("装备解锁"),
-      localizeText("HUYEE 已启动：获得喷气背包、缩放枪和激光剑。按 X 使用缩放枪；按 I 展开或收回激光剑，按住 J 举起。"),
-      7.2
-    );
-  }
+  hasCamera = true;
+  orbitalDefense.setUnlocked(true);
+  coins = Math.max(coins, 999);
+  scorePoints = Math.max(scorePoints, TEST_MODE_SCORE);
+  completedAnyTask = true;
+  suitOxygen = SUIT_OXYGEN_MAX;
+  stamina = STAMINA_MAX;
+  jetpackEnergy = JETPACK_MAX_ENERGY;
+  updateRewardReadouts();
+  updatePlayerRank(true);
+  updateAnomalyContentState();
+  setCurrentMissionText();
+  activateEquipmentJetpack();
+  if (!started) return;
+  showDialogue(
+    localizeText("装备已开放"),
+    localizeText("HUYEE 已启动：已获得全部装备、金币和经验值；所有场景均可自由体验。"),
+    8.2,
+  );
+}
+
+function activateXWingCollisionDebug() {
+  xWingCollisionDebugEnabled = true;
+  updateXWingColliderDebug();
+  if (!started) return;
+  showDialogue(
+    localizeText("碰撞调试"),
+    localizeText("HUYEE-U 已启动：X 翼碰撞范围已显示，可用 + / - 调整大小。"),
+    6.2,
+  );
 }
 
 function unlockEquipmentJetpack(startFlight: boolean) {
@@ -3153,7 +2842,7 @@ function landFromFlight() {
 }
 
 function canUseFlightMode() {
-  return started && !wormholeFall && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover;
+  return started && !wormholeFall && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !ridingAtAt;
 }
 
 function isFlightActive() {
@@ -3199,6 +2888,12 @@ function handleCanvasDoubleTap(event: PointerEvent) {
   if (now - lastCanvasTapAt < 360 && distance < 74) {
     event.preventDefault();
     lastCanvasTapAt = 0;
+    if (ridingAtAt) {
+      atAtFirstPerson = !atAtFirstPerson;
+      orbitYawOffset = 0;
+      pitch = 0.34;
+      return;
+    }
     toggleFirstThirdPersonCamera();
     return;
   }
@@ -3208,6 +2903,7 @@ function handleCanvasDoubleTap(event: PointerEvent) {
 }
 
 function handleMobileFlightCodeGesture() {
+  if (!ENABLE_TEST_TOOLS) return;
   if (!started || exitConfirmOpen || dialogueOpen || wormholeFall) return;
   const direction = mobileStickDirection();
   if (!direction) return;
@@ -3232,6 +2928,15 @@ function mobileStickDirection() {
 }
 
 function updateMobileFlightButtons() {
+  if (ridingAtAt) {
+    const boostLabel = localizeText("快速行进");
+    const viewLabel = localizeText("切换视角");
+    mobileBoostButton.textContent = boostLabel;
+    mobileBoostButton.setAttribute("aria-label", boostLabel);
+    mobileJumpButton.textContent = viewLabel;
+    mobileJumpButton.setAttribute("aria-label", viewLabel);
+    return;
+  }
   const flightActive = isFlightActive();
   const boostLabel = localizeText(flightActive ? "下降" : "加速");
   const jumpLabel = localizeText(flightActive ? "上升" : "跳");
@@ -3414,8 +3119,8 @@ function toggleHud() {
 
 function toggleMissionPanel() {
   if (!started) return;
-  if (pendingMotherCall) {
-    acceptPendingMotherCall();
+  if (pendingSteveCall) {
+    acceptPendingSteveCall();
     return;
   }
   setMissionPanelOpen(!missionPanelOpen, true);
@@ -3429,15 +3134,15 @@ function setMissionPanelOpen(open: boolean, userInitiated = false) {
   missionToggle.setAttribute("aria-label", missionPanelOpen ? tr("missionToggle.hide") : tr("missionToggle.show"));
   if (missionPanelOpen || userInitiated) {
     missionUnread = false;
-    if (!pendingMotherCall) missionToggle.classList.remove("has-mission-update");
+    if (!pendingSteveCall) missionToggle.classList.remove("has-mission-update");
   }
 }
 
-function acceptPendingMotherCall() {
-  if (!pendingMotherCall) return;
-  const scene = pendingMotherCall;
-  pendingMotherCall = null;
-  pendingMotherCallQueuedAt = -Infinity;
+function acceptPendingSteveCall() {
+  if (!pendingSteveCall) return;
+  const scene = pendingSteveCall;
+  pendingSteveCall = null;
+  pendingSteveCallQueuedAt = -Infinity;
   missionUnread = false;
   missionToggle.classList.remove("has-mission-update");
   setMissionPanelOpen(false);
@@ -3474,6 +3179,7 @@ function closeMapUi() {
   clearMapHoldTimer();
   document.body.classList.remove("map-open", "map-expanded");
   mapOverlay.setAttribute("aria-hidden", "true");
+  radarContactSignature = "";
   updateMapButtonState();
 }
 
@@ -3485,6 +3191,7 @@ function toggleMap() {
 function setMapOpen(open: boolean, closeMissionOnSmall = true) {
   if (open && closeMissionOnSmall && isSmallScreenMapTouch()) setMissionPanelOpen(false);
   mapOpen = open;
+  radarContactSignature = "";
   if (!mapOpen) setMapExpanded(false);
   document.body.classList.toggle("map-open", mapOpen);
   mapOverlay.setAttribute("aria-hidden", String(!mapOpen));
@@ -3534,6 +3241,7 @@ function updateMapButtonState() {
 function setMapExpanded(expanded: boolean) {
   if (mapExpanded === expanded) return;
   mapExpanded = expanded;
+  radarContactSignature = "";
   document.body.classList.toggle("map-expanded", mapExpanded);
   if (mapOpen) updateMap();
 }
@@ -3565,6 +3273,11 @@ function clearMapHoldTimer() {
 
 function toggleScaleGunAiming(force?: boolean) {
   if (!started) return;
+  if (ridingAtAt) {
+    scaleGunAiming = false;
+    updateScaleGunOverlay();
+    return;
+  }
   if (!hasScaleGun) {
     showDialogue("缩放枪", "尚未获得。去黑色方碑处取得它。", 2.4);
     return;
@@ -3609,7 +3322,7 @@ function toggleLaserSword(force?: boolean) {
     showLaserSwordLockedPrompt();
     return;
   }
-  if (dialogueOpen || exitConfirmOpen || photoViewerOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  if (dialogueOpen || exitConfirmOpen || photoViewerOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) return;
   const next = force ?? !laserSwordActive;
   if (next === laserSwordActive) return;
   if (next && scaleGunAiming) toggleScaleGunAiming(false);
@@ -3622,11 +3335,11 @@ function showLaserSwordLockedPrompt() {
   if (!started || dialogueOpen || exitConfirmOpen || photoViewerOpen) return;
   if (elapsedTime - lastLaserSwordLockedPromptAt < 2.2) return;
   lastLaserSwordLockedPromptAt = elapsedTime;
-  showDialogue("激光剑", "尚未获得激光剑。完成远古巨树拱门的时空之门穿越，坠落回火星后即可获得。", 4.2);
+  showDialogue("激光剑", localizeText("尚未获得激光剑。驾驶 X 翼成功清除全部危险陨石、完成一次基地防卫后即可获得。"), 4.2);
 }
 
 function canUseLaserSword() {
-  return hasLaserSword && started && !dialogueOpen && !exitConfirmOpen && !photoViewerOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !wormholeFall && !isWormholeWhiteoutActive();
+  return hasLaserSword && started && !dialogueOpen && !exitConfirmOpen && !photoViewerOpen && !world.habitatDoor.occupied && !insideGreenhouse && !insideRocket && !ridingElevator && !ridingRover && !ridingAtAt && !wormholeFall && !isWormholeWhiteoutActive();
 }
 
 function updateLaserSwordVisual() {
@@ -3684,7 +3397,12 @@ function currentLaserSwordThreat() {
 }
 
 function currentSpiderPlayerThreat() {
-  const playerGrounded = grounded && playerAltitudeOffset <= 0.06;
+  // A normal jump is not flight: spiders can still track the astronaut while
+  // airborne. Only an active equipment jetpack at real flight altitude hides
+  // the player from detection.
+  const jetpackEvasion = isFlightActive()
+    && jetpackActiveSource === "equipment"
+    && playerAltitudeOffset >= FLIGHT_MIN_ALTITUDE * 0.5;
   const canBeHunted =
     started &&
     !wormholeFall &&
@@ -3694,16 +3412,111 @@ function currentSpiderPlayerThreat() {
     !insideRocket &&
     !ridingElevator &&
     !ridingRover &&
-    playerGrounded &&
-    !(laserSwordActive && canUseLaserSword());
+    !ridingAtAt &&
+    !jetpackEvasion;
   return { normal: playerNormal, active: canBeHunted };
+}
+
+function tryLaserSwordAttack() {
+  if (!laserSwordActive || !laserSwordRaised || !canUseLaserSword()) return;
+  if (elapsedTime < lastLaserSwordAttackAt + SPIDER_BLADE_COOLDOWN_SECONDS) return;
+  lastLaserSwordAttackAt = elapsedTime;
+
+  let target: DarkSpider | null = null;
+  let nearestDistance = Infinity;
+  for (const spider of world.darkSpiders) {
+    if (spider.defeated || !spider.group.visible) continue;
+    const distance = surfaceDistanceBetween(playerNormal, spider.normal);
+    if (distance > SPIDER_BLADE_RANGE || distance >= nearestDistance) continue;
+    const direction = spider.normal.clone().addScaledVector(playerNormal, -playerNormal.dot(spider.normal));
+    if (direction.lengthSq() > 0.000001 && direction.normalize().dot(playerForward) < SPIDER_BLADE_FORWARD_DOT) continue;
+    target = spider;
+    nearestDistance = distance;
+  }
+  if (!target) return;
+
+  const result = applySpiderBladeDamage(target.health);
+  target.health = result.health;
+  target.hitUntil = elapsedTime + 2.4;
+  target.attacking = false;
+  target.eyeMaterial.color.set(0xffe6a0);
+  playScaleGunLockBeep();
+  if (!result.defeated) return;
+
+  defeatSpider(target);
+}
+
+function defeatSpider(spider: DarkSpider) {
+  if (spider.defeated) return;
+  spider.defeated = true;
+  spider.health = 0;
+  spider.attacking = false;
+  spider.deathStartedAt = elapsedTime;
+  spider.group.visible = true;
+  spider.visual.visible = true;
+  const deathStartedAt = spider.deathStartedAt;
+  window.setTimeout(() => {
+    if (!spider.defeated || spider.deathStartedAt !== deathStartedAt) return;
+    spider.group.visible = false;
+    spider.visual.visible = false;
+  }, 3300);
+  spider.visual.rotation.set(Math.PI, 0, 0);
+  spider.eyeMaterial.color.set(0x596064);
+  awardSpiderDefeatReward();
+}
+
+function updateSpiderDeathStates() {
+  for (const spider of world.darkSpiders) {
+    if (!spider.defeated || spider.deathStartedAt === -Infinity) continue;
+    const age = elapsedTime - spider.deathStartedAt;
+    if (age >= 3.2) {
+      spider.group.visible = false;
+      spider.visual.visible = false;
+      continue;
+    }
+    spider.group.visible = true;
+    spider.visual.visible = true;
+    spider.visual.rotation.x = Math.PI;
+    spider.visual.rotation.z = Math.sin(age * 4.2 + spider.phase) * 0.045;
+    spider.eyeMaterial.color.set(0x596064);
+  }
+}
+
+function updateAtAtSpiderCollisions() {
+  if (!ridingAtAt) return;
+  const footPosition = new THREE.Vector3();
+  for (const spider of world.darkSpiders) {
+    if (spider.defeated || !spider.group.visible) continue;
+    let crushed = false;
+    for (const footAnchor of world.atAt.footAnchors) {
+      footAnchor.getWorldPosition(footPosition);
+      if (surfaceDistanceBetween(footPosition.normalize(), spider.normal) <= 2.75) {
+        crushed = true;
+        break;
+      }
+    }
+    if (crushed) defeatSpider(spider);
+  }
+}
+
+function awardSpiderDefeatReward() {
+  coins += 50;
+  scorePoints += 100;
+  updateRewardReadouts();
+  updatePlayerRank();
+  pulseRewardReadout(coinReadout, false);
+  pulseRewardReadout(scoreReadout, false);
+  showRewardFloat(localizeText("+50 金币 · +100 经验值"), false);
+  playCoinDing();
+  playScoreRewardSound(4);
 }
 
 function updateSpiderTouchDamage() {
   if (!started || wormholeFall || !grounded || playerAltitudeOffset > 0.06 || (laserSwordActive && canUseLaserSword())) return;
-  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) return;
   if (elapsedTime < lastSpiderDamageAt + SPIDER_DAMAGE_GLOBAL_COOLDOWN_SECONDS) return;
   for (const spider of world.darkSpiders) {
+    if (!spider.group.visible) continue;
     if (!spider.attacking) continue;
     const distance = surfaceDistanceBetween(playerNormal, spider.normal);
     if (distance > SPIDER_TOUCH_DISTANCE) continue;
@@ -3718,6 +3531,38 @@ function updateSpiderTouchDamage() {
       return;
     }
     showDialogue("火星蜘蛛", `红眼蜘蛛触碰了宇航服，体能 -${Math.round(damage)}。`, 2);
+  }
+}
+
+function updateSpiderHealthHuds() {
+  const worldPosition = new THREE.Vector3();
+  for (const spider of world.darkSpiders) {
+    const hud = spiderHealthHuds.get(spider);
+    if (!hud) continue;
+    const visible = !spider.defeated
+      && spider.group.visible
+      && elapsedTime < spider.hitUntil
+      && started
+      && !dialogueOpen
+      && !world.habitatDoor.occupied
+      && !insideGreenhouse
+      && !insideRocket
+      && !ridingElevator
+      && !ridingRover
+      && !ridingAtAt;
+    hud.root.hidden = !visible;
+    if (!visible) continue;
+    spider.group.getWorldPosition(worldPosition);
+    worldPosition.addScaledVector(spider.normal, 3.1).project(camera);
+    if (worldPosition.z < -1 || worldPosition.z > 1) {
+      hud.root.hidden = true;
+      continue;
+    }
+    hud.root.style.left = `${(worldPosition.x * 0.5 + 0.5) * window.innerWidth}px`;
+    hud.root.style.top = `${(-worldPosition.y * 0.5 + 0.5) * window.innerHeight}px`;
+    const ratio = THREE.MathUtils.clamp(spider.health / Math.max(spider.maxHealth, 1), 0, 1);
+    hud.fill.style.width = `${ratio * 100}%`;
+    hud.value.textContent = `${Math.ceil(spider.health)} / ${SPIDER_MAX_HEALTH}`;
   }
 }
 
@@ -3847,7 +3692,7 @@ function scaleGunTargetSummaryZh(target: ScaleGunTarget) {
   if (label.includes("货运飞船")) return "自动货运飞船，提前投送基地模块、备件和补给。\n多数火星基地建设都要先靠货运窗口铺底。";
   if (label.includes("返回飞船")) return "返程飞船，依赖燃料、导航和生命保障全部达标。\n它提醒玩家：定居之前，撤离能力同样重要。";
   if (label.includes("黑色方碑")) return "未知方碑，外形参考科幻中的单体遗迹符号。\n它是缩放枪与异常科技线索的入口。";
-  if (label.includes("足球")) return "火星低重力下的娱乐物件，也是相机解锁支线的一部分。\n它让基地不只是工程设施，也有人类生活痕迹。";
+  if (label.includes("足球")) return "火星低重力下的娱乐物件。\n它让基地不只是工程设施，也有人类生活痕迹。";
   if (label === "福福") return "获救伙伴，来自坠毁飞船附近的意外生命迹象。\n当前跟随亚历克斯巡检，是基地里的温情变量。";
   if (label.includes("未知生命")) return "未归档生命迹象，行为和火星已知生态不匹配。\n靠近后才能确认它和古树门洞的关系。";
   if (label.includes("坠毁") || label.includes("残骸")) return "坠毁飞船残骸，参考薄壁不锈钢航天器破损形态。\n它记录了一次失败降落，也藏着救援线索。";
@@ -3877,7 +3722,7 @@ function scaleGunTargetSummaryEn(target: ScaleGunTarget) {
   if (label.includes("货运飞船")) return "Autonomous cargo lander for modules, spares, and supplies.\nMars bases depend on cargo windows before crew arrival.";
   if (label.includes("返回飞船")) return "Return vehicle requiring fuel, navigation, and life support readiness.\nSettlement still needs an escape path.";
   if (label.includes("黑色方碑")) return "Unknown monolith inspired by classic sci-fi artifact imagery.\nIt opens the scale-gun and anomaly technology thread.";
-  if (label.includes("足球")) return "A low-gravity recreation object and camera-unlock side path.\nIt makes the base feel lived in, not only engineered.";
+  if (label.includes("足球")) return "A low-gravity recreation object.\nIt makes the base feel lived in, not only engineered.";
   if (label === "福福") return "Rescued companion from the crash site life-sign anomaly.\nNow follows Alex as a warmer variable in the base.";
   if (label.includes("未知生命")) return "Uncatalogued life sign outside known Martian ecology.\nApproach to learn its tie to the ancient portal.";
   if (label.includes("坠毁") || label.includes("残骸")) return "Crashed ship wreckage inspired by thin-wall stainless spacecraft failure.\nIt records a hard landing and hides rescue clues.";
@@ -3900,7 +3745,7 @@ function canUseCamera() {
 function toggleCameraMode(force?: boolean) {
   if (!started) return;
   if (!hasCamera) {
-    showDialogue("相机", "尚未获得相机。把足球踢进古树拱门门洞可以获得它。", 2.8);
+    showDialogue("相机", "相机功能尚未解锁。", 2.4);
     return;
   }
   if (!cameraMode && !canUseCamera()) {
@@ -4398,6 +4243,59 @@ function resetDefaultThirdPersonCamera() {
   camera.updateProjectionMatrix();
 }
 
+function createXWingColliderDebugRing() {
+  const group = new THREE.Group();
+  group.name = "X-Wing collider debug ring";
+  const fill = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 48),
+    new THREE.MeshBasicMaterial({ color: 0x35d9ff, transparent: true, opacity: 0.1, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  fill.rotation.x = -Math.PI / 2;
+  const outline = new THREE.Mesh(
+    new THREE.RingGeometry(0.94, 1, 48),
+    new THREE.MeshBasicMaterial({ color: 0x78ecff, transparent: true, opacity: 0.92, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  outline.rotation.x = -Math.PI / 2;
+  group.add(fill, outline);
+  group.visible = false;
+  group.renderOrder = 200;
+  return group;
+}
+
+function isXWingColliderDebugActive() {
+  return started && xWingCollisionDebugEnabled && orbitalDefense.unlocked && !orbitalDefense.active;
+}
+
+function updateXWingColliderDebug() {
+  const visible = isXWingColliderDebugActive();
+  xWingColliderDebugReadout.hidden = !visible;
+  for (const [index, part] of xWingColliderParts.entries()) {
+    const radius = part.baseRadius * xWingColliderScale;
+    part.collider.radius = radius;
+    const ring = xWingColliderDebugRings[index];
+    ring.visible = visible;
+    if (!visible) continue;
+    const normal = part.anchor.getWorldPosition(new THREE.Vector3()).normalize();
+    placeObjectOnPlanetNormal(ring, normal, 0.16, 0);
+    ring.scale.setScalar(radius);
+  }
+  if (visible) {
+    const largestRadius = Math.max(...xWingColliderParts.map((part) => part.collider.radius));
+    xWingColliderDebugReadout.textContent = `X-WING COLLIDER ${Math.round(xWingColliderScale * 100)}% · 最大 ${largestRadius.toFixed(2)}m · + / - 调整`;
+  }
+}
+
+function adjustXWingColliderScale(direction: number) {
+  xWingColliderScale = THREE.MathUtils.clamp(xWingColliderScale + Math.sign(direction) * 0.05, 0.65, 1.45);
+  updateXWingColliderDebug();
+  playUiBeep();
+}
+
+function resetXWingColliderScale() {
+  xWingColliderScale = 1;
+  updateXWingColliderDebug();
+}
+
 function adjustMapZoom(direction: number) {
   const factor = direction > 0 ? 1.18 : 1 / 1.18;
   mapZoom = THREE.MathUtils.clamp(mapZoom * factor, 0.65, 3.2);
@@ -4427,12 +4325,15 @@ function handleJumpPress() {
   jump();
 }
 
-function startGame() {
+export function startGame() {
   if (started) return;
   playUiBeep();
   started = true;
   backgroundMusicEnabled = true;
   resetQuestState();
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("xwing-preview")) {
+    orbitalDefense.setUnlocked(true);
+  }
   resetDialogueState();
   gameStartElapsed = elapsedTime;
   introCallQueued = false;
@@ -4476,6 +4377,61 @@ function startGame() {
   clearScaleGunEffects();
   resetCameraSystem();
   resetPlayerToSpawn();
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("xwing-preview")) {
+    const previewShip = orbitalDefense.parkedShips[1] ?? orbitalDefense.parkedShips[0];
+    if (previewShip) {
+      const shipNormal = previewShip.getWorldPosition(new THREE.Vector3()).normalize();
+      const shipForward = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(previewShip.getWorldQuaternion(new THREE.Quaternion()))
+        .projectOnPlane(shipNormal)
+        .normalize();
+      playerNormal.copy(shipNormal).addScaledVector(shipForward, -10.2 / PLANET_RADIUS).normalize();
+      playerForward.copy(shipNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
+      placePlayerOnPlanet();
+    }
+  }
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("atat-preview")) {
+    scorePoints = Math.max(scorePoints, AT_AT_REQUIRED_SCORE);
+    coins = Math.max(coins, AT_AT_RIDE_COST_COINS * 2);
+    updateRewardReadouts();
+    updatePlayerRank(true);
+    const boardingNormal = world.atAt.boardingAnchor.getWorldPosition(new THREE.Vector3()).normalize();
+    const walkerNormal = world.atAt.group.getWorldPosition(new THREE.Vector3()).normalize();
+    playerNormal.copy(boardingNormal);
+    playerForward.copy(walkerNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
+    placePlayerOnPlanet();
+  }
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("cybertruck-preview")) {
+    const rover = world.rovers.find((candidate) => candidate.userData.kind === "rover");
+    if (rover) {
+      rover.userData.stationPauseUntil = Number.POSITIVE_INFINITY;
+      const roverPosition = rover.getWorldPosition(new THREE.Vector3());
+      const roverNormal = roverPosition.clone().normalize();
+      const roverForward = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(rover.getWorldQuaternion(new THREE.Quaternion()))
+        .projectOnPlane(roverNormal)
+        .normalize();
+      const roverRight = new THREE.Vector3(1, 0, 0)
+        .applyQuaternion(rover.getWorldQuaternion(new THREE.Quaternion()))
+        .projectOnPlane(roverNormal)
+        .normalize();
+      const previewOffset = roverRight.multiplyScalar(8).addScaledVector(roverForward, 2.5);
+      playerNormal.copy(roverNormal).addScaledVector(previewOffset, 1 / PLANET_RADIUS).normalize();
+      playerForward.copy(roverNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
+      placePlayerOnPlanet();
+    }
+  }
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("spider-preview")) {
+    const spider = world.darkSpiders[0];
+    if (spider) {
+      const tangent = new THREE.Vector3(0, 1, 0).cross(spider.normal).normalize();
+      if (tangent.lengthSq() < 0.001) tangent.set(1, 0, 0);
+      const angle = 11 / PLANET_RADIUS;
+      playerNormal.copy(spider.normal).multiplyScalar(Math.cos(angle)).addScaledVector(tangent, Math.sin(angle)).normalize();
+      playerForward.copy(spider.normal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
+      placePlayerOnPlanet();
+    }
+  }
   respawnFootball();
   resetFufu();
   resetAncientPortal();
@@ -4505,8 +4461,8 @@ function returnToTitle() {
   exitFrontCamera = null;
   exitConfirmOpen = false;
   selectedExitConfirmIndex = 0;
-  pendingMotherCall = null;
-  pendingMotherCallQueuedAt = -Infinity;
+  pendingSteveCall = null;
+  pendingSteveCallQueuedAt = -Infinity;
   introCallQueued = false;
   introMovementConfirmed = false;
   introIdlePromptShown = false;
@@ -4578,22 +4534,34 @@ function animate() {
   elapsedTime += delta;
 
   updateWeather();
+  updateAnomalyContentState();
   updateScheduledCalls();
   updateSolarLighting();
   if (sunLight) updateSolarArrays(world.solarArrays, sunLight.position);
   updateElevators(world.elevators, delta);
   updateAncientTreePortal(world.ancientTreePortal, elapsedTime);
   updateWormholeWhiteout();
-  const speed = started ? updatePlayer(delta) : 0;
+  const orbitalEvents = started && orbitalDefense.active
+    ? orbitalDefense.update(delta, elapsedTime, keyState, camera)
+    : [];
+  if (orbitalEvents.length > 0) handleOrbitalDefenseEvents(orbitalEvents);
+  const speed = started ? (orbitalDefense.active ? orbitalDefense.speed : updatePlayer(delta)) : 0;
   document.body.classList.toggle("is-wormhole", Boolean(wormholeFall));
   document.body.classList.toggle("is-wormhole-whiteout", isWormholeWhiteoutActive());
-  updateIntroOperationFeedback(speed);
-  updateSuitOxygen(delta);
-  updateJetpackEnergy(delta);
+  if (!orbitalDefense.active) {
+    updateIntroOperationFeedback(speed);
+    updateSuitOxygen(delta);
+    updateJetpackEnergy(delta);
+  }
   updateCamera(delta);
   updatePhotoWallFrames();
   updateRovers(world.rovers, elapsedTime, world.colliders);
   if (ridingRover) updateRoverRide(ridingRover, 0);
+  updateAtAtVisual(world.atAt, delta, elapsedTime);
+  if (ridingAtAt && (keyState.has("KeyJ") || keyState.has("Space"))) {
+    fireAtAtCannon(world.atAt);
+  }
+  updateAtAtWeapons(world.atAt, delta);
   updateFootball(delta);
   updateFufu(delta);
   updateMeteors(world.meteors, elapsedTime);
@@ -4606,12 +4574,16 @@ function animate() {
   const playerFlying = isFlightActive();
   updateMarsEngineer(playerRig, wormholeFall ? 0 : speed, elapsedTime, playerFlying, isFlightAscending() || isFlightDescending());
   updateHeldGearPose();
+  if (laserSwordRaised && keyState.has("KeyJ")) tryLaserSwordAttack();
   updateLaserSwordWorldLight();
+  updateAtAtSpiderCollisions();
   updateDarkSpiders(world.darkSpiders, elapsedTime, delta, world.colliders, sunLight?.position ?? null, currentLaserSwordThreat(), currentSpiderPlayerThreat());
+  updateSpiderDeathStates();
   updateSpiderTouchDamage();
+  updateSpiderHealthHuds();
   updateWormholePlayerPose(delta);
   updateFufuCat(fufuRig, fufuSpeed, elapsedTime, fufuAlert);
-  if (started) {
+  if (started && !orbitalDefense.active) {
     multiplayer.update(delta, elapsedTime, {
       position: player.position,
       quaternion: player.quaternion,
@@ -4641,7 +4613,7 @@ function updatePerformanceReadout(now: number, frameDurationMs: number) {
   const sampleDuration = now - performanceSampleStartedAt;
   if (sampleDuration < PERFORMANCE_SAMPLE_INTERVAL_MS) return;
   const averageFrameMs = performanceSampleFrames > 0 ? performanceSampleFrameMsTotal / performanceSampleFrames : sampleDuration;
-  fpsValue.textContent = Math.round(averageFrameMs).toString().padStart(3, "0");
+  averageFrameDurationMs = averageFrameMs;
   updateAdaptiveQuality(now, averageFrameMs);
   performanceSampleStartedAt = now;
   performanceSampleFrames = 0;
@@ -4656,6 +4628,8 @@ function updateInterface(now: number) {
     updateNavigationReadout();
     updateReadouts();
     updateMobileFlightButtons();
+    updateWorldLodVisibility();
+    updateXWingColliderDebug();
   }
   if (mapOpen && now - lastMapUpdateAt >= interval) {
     lastMapUpdateAt = now;
@@ -4664,6 +4638,7 @@ function updateInterface(now: number) {
 }
 
 function updateAdaptiveQuality(now: number, averageFrameMs: number) {
+  if (now < manualQualityUntil) return;
   const currentIndex = QUALITY_TIER_ORDER.indexOf(activeQualityTier);
   const highestAllowedIndex = isTouchLike() ? 1 : 0;
   const canReduceQuality = currentIndex < QUALITY_TIER_ORDER.length - 1;
@@ -4680,18 +4655,137 @@ function updateAdaptiveQuality(now: number, averageFrameMs: number) {
 
 function applyQualityTier(nextTier: QualityTier, now: number) {
   if (nextTier === activeQualityTier) return;
+  const shadowsChanged = renderer.shadowMap.enabled !== QUALITY_PRESETS[nextTier].shadowsEnabled;
   activeQualityTier = nextTier;
   lastQualityTierChangeAt = now;
   renderer.setPixelRatio(renderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = QUALITY_PRESETS[nextTier].shadowsEnabled;
+  if (shadowsChanged) {
+    scene.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach((material) => { material.needsUpdate = true; });
+    });
+  }
+  applyWorldShadowQuality(nextTier);
+  updateWorldLodVisibility();
 
   if (!sunLight) return;
-  const shadowMapSize = QUALITY_PRESETS[nextTier].shadowMapSize;
-  if (sunLight.shadow.mapSize.x === shadowMapSize) return;
-  sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
-  sunLight.shadow.map?.dispose();
-  sunLight.shadow.map = null;
-  sunLight.shadow.needsUpdate = true;
+  const profile = QUALITY_PRESETS[nextTier];
+  const shadowDistance = profile.shadowDistance;
+  sunLight.shadow.camera.far = shadowDistance * 3.5;
+  sunLight.shadow.camera.left = -shadowDistance;
+  sunLight.shadow.camera.right = shadowDistance;
+  sunLight.shadow.camera.top = shadowDistance;
+  sunLight.shadow.camera.bottom = -shadowDistance;
+  sunLight.shadow.camera.updateProjectionMatrix();
+  world.flickerLights.forEach((light, index) => {
+    light.visible = light === world.oxygenLight || light === world.solarLight || index < profile.dynamicLightLimit;
+  });
+  const shadowMapSize = profile.shadowMapSize;
+  if (sunLight.shadow.mapSize.x !== shadowMapSize) {
+    sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+    sunLight.shadow.map?.dispose();
+    sunLight.shadow.map = null;
+    sunLight.shadow.needsUpdate = true;
+  }
+}
+
+function applyWorldShadowQuality(tier: QualityTier) {
+  for (const mesh of worldShadowCasters) {
+    if (tier === "high") {
+      mesh.castShadow = mesh.userData.qualityCastShadow === true;
+      continue;
+    }
+    if (tier === "low") {
+      mesh.castShadow = false;
+      continue;
+    }
+    const geometry = mesh.geometry as THREE.BufferGeometry;
+    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+    mesh.castShadow = mesh.userData.qualityCastShadow === true && (geometry.boundingSphere?.radius ?? 0) >= 1.35;
+  }
+}
+
+function reportCoreModelLoadFailure(error: unknown) {
+  if (import.meta.env.DEV) console.warn("Core GLB LOD load failed; procedural fallback remains active.", error);
+}
+
+async function loadCoreLodModels() {
+  const { attachCoreLodModel, hideMarkedCoreFallback } = await import("./core/glb-lod-system");
+  const habitatModelRoot = world.landmarks.find((landmark) => landmark.label === "01 建筑 居住舱")?.object;
+  if (habitatModelRoot) {
+    void attachCoreLodModel(habitatModelRoot, "habitat", {
+      hideFallback: (anchor) => anchor.traverse((object) => {
+        if (object instanceof THREE.Mesh && hasLodAncestor(object)) {
+          // Thin habitat details should never cast a detached shadow across the hull.
+          object.castShadow = false;
+          object.receiveShadow = false;
+          return;
+        }
+        if (!(object instanceof THREE.Mesh)) return;
+        if (![world.habitatDoor.doorPanels, world.habitatDoor.exteriorMask, world.habitatDoor.interiorPortal, world.habitatDoor.interiorDoor, world.habitatDoor.interiorScene]
+          .some((branch) => isObjectWithinBranch(object, branch))) object.visible = false;
+      }),
+    }).catch(reportCoreModelLoadFailure);
+  }
+  void attachCoreLodModel(playerRig.visual, "alex", { hideFallback: hideMarkedCoreFallback }).catch(reportCoreModelLoadFailure);
+  for (const rover of world.rovers) {
+    const modelId = rover.userData.kind === "bot" ? "repairRobot" : "rover";
+    void attachCoreLodModel(rover, modelId, {
+      scale: typeof rover.userData.size === "number" ? rover.userData.size : 1,
+      hideFallback: hideMarkedCoreFallback,
+    }).catch(reportCoreModelLoadFailure);
+  }
+}
+
+function hasLodAncestor(object: THREE.Object3D) {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current instanceof THREE.LOD) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function isObjectWithinBranch(object: THREE.Object3D, branch: THREE.Object3D) {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current === branch) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function updateWorldLodVisibility() {
+  if (!started) return;
+  const visibleDistance = QUALITY_PRESETS[activeQualityTier].visibleDistance;
+  const missionTarget = mainMissionTargets[missionStep];
+  const worldPosition = new THREE.Vector3();
+  for (const landmark of world.landmarks) {
+    if (!isAnomalySceneAccessible() && (landmark.object === world.monolith.object || landmark.label === "远古巨树拱门")) continue;
+    landmark.object.getWorldPosition(worldPosition);
+    const targetNormal = landmark.object.userData.dynamicMap && worldPosition.lengthSq() > 1
+      ? worldPosition.clone().normalize()
+      : planetNormal(landmark.x, landmark.z, new THREE.Vector3());
+    const surfaceDistance = Math.acos(THREE.MathUtils.clamp(playerNormal.dot(targetNormal), -1, 1)) * PLANET_RADIUS;
+    const objectDistanceLimit = landmark.object.userData.kind === "bot"
+      ? Math.min(visibleDistance, 32)
+      : landmark.object.userData.dynamicMap === true
+        ? Math.min(visibleDistance, 96)
+        : visibleDistance;
+    const mustRemainVisible = world.interactables.some((item) => item.id === missionTarget && item.object === landmark.object);
+    landmark.object.visible = mustRemainVisible || surfaceDistance <= objectDistanceLimit;
+    const surfaceEffects = landmark.object.userData.surfaceEffects as { group?: THREE.Group } | undefined;
+    landmark.object.userData.surfaceEffectsEnabled = activeQualityTier === "high";
+    if (surfaceEffects?.group) surfaceEffects.group.visible = landmark.object.visible && landmark.object.userData.surfaceEffectsEnabled === true;
+  }
+  for (const item of world.unnumberedObjects) {
+    const targetNormal = planetNormal(item.x, item.z, new THREE.Vector3());
+    const surfaceDistance = Math.acos(THREE.MathUtils.clamp(playerNormal.dot(targetNormal), -1, 1)) * PLANET_RADIUS;
+    item.object.visible = surfaceDistance <= visibleDistance;
+  }
 }
 
 function startBackgroundMusic() {
@@ -4847,6 +4941,13 @@ function updateWeather() {
   stormStrength = cycle < STORM_DURATION_SECONDS ? Math.min(fadeIn, fadeOut) : 0;
 
   const fog = scene.fog as THREE.FogExp2;
+  if (orbitalDefense.active) {
+    fog.density = 0.00012;
+    fog.color.set(0x02040a);
+    if (scene.background instanceof THREE.Color) scene.background.set(0x010207);
+    renderer.toneMappingExposure = 1.02;
+    return;
+  }
   fog.density = THREE.MathUtils.lerp(CLEAR_FOG_DENSITY, STORM_FOG_DENSITY, stormStrength);
   fog.color.copy(new THREE.Color(0x120a0a).lerp(new THREE.Color(0x8d3a20), stormStrength));
   if (scene.background instanceof THREE.Color) scene.background.copy(clearSkyColor).lerp(stormSkyColor, stormStrength * 0.82);
@@ -4867,25 +4968,25 @@ function isInsideInteriorSpace() {
 
 function updateScheduledCalls() {
   if (!started || isFocusOverlayActive() || isInsideInteriorSpace()) return;
-  if (pendingMotherCall) {
+  if (pendingSteveCall) {
     return;
   }
   if (introCallQueued) return;
   if (missionStep !== "intro") return;
-  if (elapsedTime < motherCallRetryAt) return;
+  if (elapsedTime < steveCallRetryAt) return;
   if (elapsedTime - gameStartElapsed < 30) return;
   introCallQueued = true;
-  queueMotherCall("intro");
+  queueSteveCall("intro");
 }
 
-function updatePendingMotherCallTimeout() {
-  if (!pendingMotherCall) return;
-  if (elapsedTime - pendingMotherCallQueuedAt < MOTHER_CALL_IDLE_DISMISS_SECONDS) return;
-  deferPendingMotherCall(MOTHER_CALL_IDLE_RETRY_SECONDS);
+function updatePendingSteveCallTimeout() {
+  if (!pendingSteveCall) return;
+  if (elapsedTime - pendingSteveCallQueuedAt < STEVE_CALL_IDLE_DISMISS_SECONDS) return;
+  deferPendingSteveCall(STEVE_CALL_IDLE_RETRY_SECONDS);
 }
 
 function canShowIntroOperationToast() {
-  return !dialogueOpen && !exitConfirmOpen && !pendingMotherCall && performance.now() > messageUntil + 250;
+  return !dialogueOpen && !exitConfirmOpen && !pendingSteveCall && performance.now() > messageUntil + 250;
 }
 
 function updateIntroOperationFeedback(speed: number) {
@@ -4911,7 +5012,7 @@ function updateIntroOperationFeedback(speed: number) {
 }
 
 function updateRobotEncounters() {
-  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return;
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) return;
   if (elapsedTime - lastRobotGreetingAt < 8) return;
 
   let nearestRobot: THREE.Group | null = null;
@@ -4961,6 +5062,9 @@ function updatePlayer(delta: number) {
   }
   if (ridingElevator) {
     return updateElevatorRide(delta, ridingElevator);
+  }
+  if (ridingAtAt) {
+    return updateAtAtDrive(delta);
   }
   if (ridingRover) {
     return updateRoverRide(ridingRover, delta);
@@ -5026,9 +5130,10 @@ function wormholeDepthInput() {
 }
 
 function maybeTriggerWormholeFall() {
+  if (!isAnomalySceneAccessible()) return;
   if (!ancientTreeArchObject || wormholeFall || isWormholeWhiteoutActive()) return;
   if (elapsedTime < lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) return;
-  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || dialogueOpen || exitConfirmOpen) return;
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt || dialogueOpen || exitConfirmOpen) return;
 
   const local = ancientTreeArchObject.worldToLocal(player.position.clone());
   const inPortalCore = isInsideAncientTreePortalCore(local);
@@ -5172,6 +5277,8 @@ function startWormholeFall(options: { fromWhiteout?: boolean } = {}) {
   activeFootball = false;
   activeRideRover = null;
   ridingRover = null;
+  activeAtAt = false;
+  ridingAtAt = false;
   resetAncientPortal();
   disableActiveJetpackForRespawn();
   scaleGunAiming = false;
@@ -5294,8 +5401,8 @@ function finishWormholeFall() {
   camera.updateProjectionMatrix();
   awardRepeatableScore(SCORE_WORMHOLE_TRAVERSAL, localizeText("穿越时空之门"));
   messageUntil = Math.max(messageUntil, performance.now() + 2200);
-  const laserSwordUnlocked = awardLaserSwordAfterWormhole();
-  if (!laserSwordUnlocked) showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
+  const xWingUnlocked = awardXWingAfterWormhole();
+  if (!xWingUnlocked) showDialogue("火星", "你从高空安全落回出生点。虫洞关闭了。", 3.2);
   window.setTimeout(() => {
     if (elapsedTime > lastWormholeTriggerAt + WORMHOLE_TRIGGER_COOLDOWN) wormholeTriggerArmed = true;
   }, WORMHOLE_TRIGGER_COOLDOWN * 1000);
@@ -5664,8 +5771,8 @@ function integrateFootballMotion(delta: number) {
 }
 
 function resolveFootballStaticCollisions() {
-  for (const collider of world.colliders) {
-    if (collider.dynamicObject) continue;
+  const nearbyColliders = staticCollisionWorld.query(football.normal, 24).map((entry) => entry.source);
+  for (const collider of nearbyColliders) {
     if (collider.enabled && !collider.enabled()) continue;
     const colliderNormal = normalForCollider(collider, new THREE.Vector3());
     const minimumDistance = collider.radius + FOOTBALL_RADIUS;
@@ -5723,8 +5830,7 @@ function checkFootballGoal() {
   footballGoal.goals += 1;
   footballGoal.lastScoredAt = elapsedTime;
   awardRepeatableScore(SCORE_FOOTBALL_GOAL, "火星足球穿过古树拱门");
-  if (!hasCamera) awardCamera();
-  else showDialogue("火星足球", "足球穿过古树拱门门洞。足球已回到出生点。", 2.4);
+  showDialogue("火星足球", "足球穿过古树拱门门洞，获得 +100 经验值。足球已回到出生点。", 2.4);
   respawnFootball();
 }
 
@@ -5748,7 +5854,7 @@ function respawnFootball() {
 }
 
 function findActiveFootball() {
-  if (!started || footballCarried || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+  if (!started || footballCarried || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) {
     return false;
   }
   return surfaceDistanceBetween(playerNormal, football.normal) < FOOTBALL_PICKUP_RADIUS;
@@ -5899,6 +6005,12 @@ function updateCamera(delta: number) {
     return;
   }
 
+  if (orbitalDefense.active) {
+    orbitalDefense.updateCamera(delta, camera);
+    playerRig.visual.visible = false;
+    return;
+  }
+
   if (wormholeFall) {
     updateWormholeCamera(delta);
     return;
@@ -5906,6 +6018,12 @@ function updateCamera(delta: number) {
 
   if (isWormholeWhiteoutActive()) {
     updateWormholeWhiteoutCamera(delta);
+    return;
+  }
+
+  if (ridingAtAt) {
+    updateAtAtCamera(delta);
+    playerRig.visual.visible = false;
     return;
   }
 
@@ -5981,7 +6099,9 @@ function getThirdPersonCameraObstructionLift(target: THREE.Vector3, desiredCamer
   if (scaleGunAiming) return 0;
 
   let lift = 0;
-  for (const collider of world.colliders) {
+  const targetNormal = target.clone().normalize();
+  const nearbyStatic = staticCollisionWorld.query(targetNormal, Math.min(CAMERA_MAX_DISTANCE, cameraDistance) + 18).map((entry) => entry.source);
+  for (const collider of [...nearbyStatic, ...dynamicWorldColliders]) {
     if (collider.enabled && !collider.enabled()) continue;
     const obstruction = getColliderSightlineObstruction(collider, target, desiredCameraPosition);
     if (obstruction <= 0) continue;
@@ -6034,6 +6154,9 @@ function resetPlayerToSpawn() {
   ridingElevator = null;
   ridingRover = null;
   activeRideRover = null;
+  activeAtAt = false;
+  ridingAtAt = false;
+  resetAtAtForRun();
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -6069,6 +6192,8 @@ function respawnInsideHabitat() {
   ridingElevator = null;
   ridingRover = null;
   activeRideRover = null;
+  activeAtAt = false;
+  ridingAtAt = false;
   activeElevator = null;
   activeHabitatDoor = null;
   activeGreenhouseDoor = null;
@@ -6135,7 +6260,7 @@ function updateFufu(delta: number) {
     return;
   }
 
-  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+  if (world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) {
     fufu.visible = false;
     settleFufuAnimation(delta);
     return;
@@ -6232,8 +6357,9 @@ function headingFromForward(normal: THREE.Vector3, forward: THREE.Vector3) {
 function resolveCollisions(previousNormal: THREE.Vector3) {
   const playerRadius = 0.34;
   const current = playerNormal.clone();
+  const nearbyStatic = staticCollisionWorld.query(current, 24).map((entry) => entry.source);
 
-  for (const collider of world.colliders) {
+  for (const collider of [...nearbyStatic, ...dynamicWorldColliders]) {
     if (collider.enabled && !collider.enabled()) continue;
     if (collider.dynamicObject) {
       collider.center.set(collider.dynamicObject.userData.planetX ?? 0, collider.dynamicObject.userData.planetZ ?? 0);
@@ -6265,7 +6391,8 @@ function resolveCollisions(previousNormal: THREE.Vector3) {
 }
 
 function updateMissionState() {
-  if (wormholeFall || isWormholeWhiteoutActive()) {
+  if (orbitalDefense.active) {
+    activeAtAt = false;
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
@@ -6273,6 +6400,31 @@ function updateMissionState() {
     activeGreenhouseDoor = null;
     activeAncientPortal = false;
     activeRobot = null;
+    activeElonStatue = null;
+    activeFufu = false;
+    activeFootball = false;
+    activeRideRover = null;
+    activeOrbitalDefense = false;
+    activeXWingIndex = -1;
+    interactionActions = [];
+    interactionChoiceOpen = false;
+    promptBox.textContent = "";
+    promptBox.classList.remove("is-visible");
+    interactionChoice.classList.remove("is-visible", "is-touch-entry", "is-drawer-open");
+    interactionChoice.setAttribute("aria-hidden", "true");
+    updateOrbitalDefenseHud();
+    return;
+  }
+  if (wormholeFall || isWormholeWhiteoutActive()) {
+    activeAtAt = false;
+    activeInteractable = null;
+    activeExplorable = null;
+    activeElevator = null;
+    activeHabitatDoor = null;
+    activeGreenhouseDoor = null;
+    activeAncientPortal = false;
+    activeRobot = null;
+    activeElonStatue = null;
     activeFufu = false;
     activeFootball = false;
     activeRideRover = null;
@@ -6288,6 +6440,7 @@ function updateMissionState() {
     return;
   }
   if (isFocusOverlayActive()) {
+    activeAtAt = false;
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
@@ -6295,6 +6448,7 @@ function updateMissionState() {
     activeGreenhouseDoor = null;
     activeAncientPortal = false;
     activeRobot = null;
+    activeElonStatue = null;
     activeFufu = false;
     activeFootball = false;
     activeRideRover = null;
@@ -6313,6 +6467,7 @@ function updateMissionState() {
     return;
   }
   if (world.habitatDoor.occupied) {
+    activeAtAt = false;
     activeInteractable = null;
     activeExplorable = null;
     activeElevator = null;
@@ -6320,6 +6475,7 @@ function updateMissionState() {
     activeGreenhouseDoor = null;
     activeAncientPortal = false;
     activeRobot = null;
+    activeElonStatue = null;
     activeFufu = false;
     activeFootball = false;
     activeRideRover = null;
@@ -6336,11 +6492,16 @@ function updateMissionState() {
   activeGreenhouseDoor = findActiveGreenhouseDoor();
   activeAncientPortal = findActiveAncientPortal();
   activeRobot = null;
+  activeElonStatue = null;
   activeFufu = false;
   activeFootball = false;
+  activeOrbitalDefense = false;
+  activeXWingIndex = -1;
   activeRideRover = ridingRover;
+  activeAtAt = ridingAtAt;
   let bestDistance = Infinity;
   let bestExploreDistance = Infinity;
+  let bestStatueDistance = Infinity;
   for (const item of world.interactables) {
     const pos = new THREE.Vector3();
     item.object.getWorldPosition(pos);
@@ -6354,6 +6515,10 @@ function updateMissionState() {
       bestExploreDistance = distance;
       activeExplorable = item;
     }
+    if (item.id === "elonStatue" && distance < item.radius && distance < bestStatueDistance) {
+      bestStatueDistance = distance;
+      activeElonStatue = item;
+    }
   }
   if (activeExplorable && !hasExploredBuilding(activeExplorable.id)) {
     awardBuildingExploration(activeExplorable);
@@ -6361,7 +6526,10 @@ function updateMissionState() {
   activeFufu = findActiveFufu();
   activeFootball = findActiveFootball();
   activeRobot = findActiveRobot();
+  activeXWingIndex = findActiveOrbitalDefenseIndex();
+  activeOrbitalDefense = activeXWingIndex >= 0;
   if (!activeRideRover) activeRideRover = findActiveRideRover();
+  if (!activeAtAt) activeAtAt = findActiveAtAt();
   interactionActions = buildInteractionActions();
   if (hasAncientPortalPaymentActions()) selectedInteractionIndex = interactionActions.findIndex((action) => action.id === "ancientPortalPay");
   if (selectedInteractionIndex < 0 || selectedInteractionIndex >= interactionActions.length) selectedInteractionIndex = 0;
@@ -6380,10 +6548,8 @@ function buildInteractionActions(): InteractionAction[] {
     return actions;
   }
   if (activeRobot) {
-    return [
-      { id: "robotOxygen", label: localizeText("加氧气") },
-      { id: "robot", label: localizeText("对话") },
-    ];
+    actions.push({ id: "robot", label: localizeText("对话") });
+    actions.push({ id: "robotOxygen", label: localizeText("加氧气") });
   }
   if (activeElevator) actions.push({ id: "elevator", label: localizeText(elevatorPrompt(activeElevator).replace(/^按 E /, "")) });
   if (activeHabitatDoor) actions.push({ id: "habitat", label: localizeText(world.habitatDoor.occupied ? "离开居住舱" : "进入居住舱") });
@@ -6395,8 +6561,16 @@ function buildInteractionActions(): InteractionAction[] {
   }
   if (activeInteractable && activeInteractable.id !== "habitatCheck") actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
   if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
+  if (activeAtAt && (!ridingAtAt || elapsedTime < atAtExitPromptUntil)) {
+    actions.push({ id: "atAt", label: localizeText(ridingAtAt ? "离开 AT-AT" : "驾驶 AT-AT（100 金币）") });
+  }
   if (activeFufu) actions.push({ id: "fufu", label: localizeText("安抚 福福") });
+  if (activeElonStatue) actions.push({ id: "elonStatue", label: localizeText("与 ELON 纪念雕塑互动") });
   if (activeFootball) actions.push({ id: "footballPickup", label: localizeText("拾取足球") });
+  if (activeOrbitalDefense) {
+    const color = xWingParkingConfigs[activeXWingIndex]?.color ?? "红色";
+    actions.push({ id: "xWing", label: localizeText(orbitalDefense.completed ? `驾驶${color}战机再次出动` : `驾驶${color} X 翼战机`) });
+  }
   const prioritized = prioritizeInteractionActions(actions);
   const hasTwoButtonChoice = prioritized.some((action) => action.id === "ancientPortalConsider" || action.id === "ancientPortalPay");
   const visibleActionLimit = isSmallScreenMapTouch() && !hasTwoButtonChoice ? 1 : 2;
@@ -6404,26 +6578,33 @@ function buildInteractionActions(): InteractionAction[] {
 }
 
 function prioritizeInteractionActions(actions: InteractionAction[]) {
-  return actions
-    .map((action, order) => ({ action, order }))
-    .sort((a, b) => interactionActionPriority(a.action) - interactionActionPriority(b.action) || a.order - b.order)
-    .map((item) => item.action);
+  return rankInteractionCandidates(
+    actions.map((action, order) => ({
+      ...action,
+      priority: interactionActionPriority(action),
+      distance: order / 1000,
+    })),
+    actions.length,
+  ).map(({ id, label }) => ({ id, label }));
 }
 
-function interactionActionPriority(action: InteractionAction) {
-  const priority: Record<InteractionAction["id"], number> = {
-    robotOxygen: 0.5,
-    habitat: 1,
-    greenhouse: 1,
-    elevator: 1,
-    ancientPortalConsider: 1.2,
-    ancientPortalPay: 1.2,
-    hitchRide: 1.5,
-    photoWall: 2,
-    mission: 2,
-    robot: 3,
-    fufu: 3,
-    footballPickup: 3,
+function interactionActionPriority(action: InteractionAction): InteractionPriority {
+  const priority: Record<InteractionAction["id"], InteractionPriority> = {
+    mission: "mission",
+    habitat: "traversal",
+    greenhouse: "traversal",
+    elevator: "traversal",
+    ancientPortalConsider: "traversal",
+    ancientPortalPay: "traversal",
+    hitchRide: "traversal",
+    atAt: "traversal",
+    xWing: "mission",
+    robot: "character",
+    robotOxygen: "oxygen",
+    photoWall: "exploration",
+    fufu: "exploration",
+    footballPickup: "exploration",
+    elonStatue: "character",
   };
   return priority[action.id];
 }
@@ -6458,6 +6639,7 @@ function updateInteractionPrompts() {
 function singleInteractionPromptText(action: InteractionAction) {
   if (action.id === "photoWall") return localizeText("这里保存着你拍下的火星瞬间，按 E 查看。");
   if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
+  if (action.id === "atAt" && ridingAtAt) return `Q ${action.label}`;
   return `E ${action.label}`;
 }
 
@@ -6627,7 +6809,7 @@ function getInteractionChoiceSignature() {
 }
 
 function interact() {
-  if (ridingRover) {
+  if (ridingRover || ridingAtAt) {
     return;
   }
   if (wormholeFall || isFlightActive()) return;
@@ -6683,6 +6865,10 @@ function executeSelectedInteraction() {
     rescueFufu();
     return;
   }
+  if (action.id === "elonStatue") {
+    openElonDialogue();
+    return;
+  }
   if (action.id === "footballPickup") {
     pickupFootball();
     return;
@@ -6701,6 +6887,15 @@ function executeSelectedInteraction() {
     else enterRoverRide(activeRideRover);
     return;
   }
+  if (action.id === "atAt" && activeAtAt) {
+    if (ridingAtAt) exitAtAtRide();
+    else enterAtAtRide();
+    return;
+  }
+  if (action.id === "xWing") {
+    startOrbitalDefenseMission();
+    return;
+  }
   if (action.id === "mission" && activeInteractable) {
     interactMission(activeInteractable);
   }
@@ -6708,19 +6903,11 @@ function executeSelectedInteraction() {
 
 function interactElevator() {
   if (activeElevator) {
-    if (isReturnShipElevator(activeElevator) && !elonElevatorRepaired) {
-      startElonElevatorRepairQuest();
-      return;
-    }
     if (insideRocket) {
       exitRocketInterior();
       return;
     }
     if (isAtRocketHatch()) {
-      if (isReturnShipElevator(activeElevator)) {
-        openElonDialogue();
-        return;
-      }
       enterRocketInterior();
       return;
     }
@@ -6748,8 +6935,6 @@ function interactMission(interactable: Interactable) {
   if (interactable.id === "monolith") {
     awardHiddenDiscovery("monolith", "黑色方碑");
     openDialogueScene("monolith");
-  } else if (isElonSideQuestTarget(interactable.id)) {
-    advanceSideQuest(interactable.id);
   } else if (missionStep === "m1_oxygen" && interactable.id === "oxygen") {
     openDialogueScene("oxygen");
   } else if (missionStep === "m1_solarC" && interactable.id === "solarC") {
@@ -6762,11 +6947,11 @@ function interactMission(interactable: Interactable) {
 }
 
 function findActiveAncientPortal() {
-  if (!started || wormholeFall || isWormholeWhiteoutActive() || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) {
+  if (!isAnomalySceneAccessible()) return false;
+  if (!started || wormholeFall || isWormholeWhiteoutActive() || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) {
     return false;
   }
   if (!ancientTreeArchObject || isAncientPortalOpen()) return false;
-  if (coins < ANCIENT_PORTAL_COST_COINS) return false;
   const inPaymentZone = isInsideAncientTreePortalPaymentZone();
   if (!inPaymentZone) {
     ancientPortalPromptDismissedInZone = false;
@@ -6838,8 +7023,248 @@ function resetAncientPortal() {
 }
 
 function findActiveFufu() {
-  if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return false;
+  if (!started || fufuRescued || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) return false;
   return fufu.position.distanceTo(player.position) < 2.6;
+}
+
+function findActiveOrbitalDefenseIndex() {
+  if (!started || !orbitalDefense.unlocked || orbitalDefense.active || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt || isFlightActive()) {
+    return -1;
+  }
+  let nearestIndex = -1;
+  let nearestDistance = 11.5;
+  for (const [index, parkedShip] of orbitalDefense.parkedShips.entries()) {
+    const distance = parkedShip.position.distanceTo(player.position);
+    if (distance >= nearestDistance) continue;
+    nearestDistance = distance;
+    nearestIndex = index;
+  }
+  return nearestIndex;
+}
+
+function startOrbitalDefenseMission() {
+  if (orbitalDefense.active || activeXWingIndex < 0) return;
+  orbitalDefense.selectParkedShip(activeXWingIndex);
+  closeMapUi();
+  closeTouchInteractionDrawer();
+  interactionActions = [];
+  interactionChoiceOpen = false;
+  keyState.clear();
+  resetStick();
+  if (scaleGunAiming) toggleScaleGunAiming(false);
+  if (cameraMode) toggleCameraMode(false);
+  laserSwordActive = false;
+  laserSwordRaised = false;
+  updateLaserSwordVisual();
+  playerVelocity.set(0, 0, 0);
+  playerRig.visual.visible = false;
+  document.body.classList.add("is-orbital-defense");
+  orbitalDefenseHud.setAttribute("aria-hidden", "false");
+  orbitalDefense.start(camera);
+  setMissionPanelOpen(false);
+  showDialogue("史蒂夫", "撞击轨迹已确认。任选一架 X 翼起飞：115 秒内清除红色危险陨石；Space / J 连发，I 锁定，K 高能炮，Q 自动返航。", 5.6);
+  updateOrbitalDefenseHud();
+}
+
+function handleOrbitalDefenseEvents(events: OrbitalDefenseEvent[]) {
+  for (const event of events) {
+    if (event.type === "launched") {
+      showDialogue("ARES X-Wing", "引擎点火。战机将沿上升弧线连续进入自由飞行；进入战斗状态后 S 翼自动展开。", 5.2);
+    } else if (event.type === "combatStarted") {
+      showDialogue("史蒂夫", "计时已启动：115 秒。战机默认前飞；鼠标转向，A / D 左右飞行并持续转向，W / S 上下飞行，Shift 加速，Ctrl 减速。观察雷达寻找红色陨石；I 锁定，K 高能炮。", 6.8);
+    } else if (event.type === "hit" && event.integrity > 0) {
+      showDialogue("史蒂夫", isEnglish() ? `Hit. Structural integrity: ${event.integrity}/8.` : `命中。目标结构完整度剩余 ${event.integrity}/8。`, 1.1);
+    } else if (event.type === "destroyed") {
+      awardOrbitalDefenseReward();
+      const laserSwordUnlocked = event.remaining === 0 && awardLaserSwordAfterOrbitalDefense();
+      showDialogue(
+        "史蒂夫",
+        event.remaining > 0
+          ? isEnglish()
+            ? `Dangerous asteroid destroyed. Reward: 10 coins and 50 score. ${event.remaining} remaining.`
+            : `已击毁一颗危险陨石。奖励 10 金币、50 积分；剩余 ${event.remaining} 颗。`
+          : laserSwordUnlocked
+            ? localizeText("全部危险陨石已清除，基地安全。你获得了激光剑：按 I 展开或收回，按住 J 举剑攻击；可继续在轨道自由飞行，按 Q 自动返航。")
+            : "全部危险陨石已清除。可继续在轨道自由飞行；按 Q 启动自动返航。",
+        event.remaining > 0 ? 2.8 : 5.2,
+      );
+    } else if (event.type === "asteroidDestroyed") {
+      awardOrbitalAsteroidReward();
+    } else if (event.type === "crashed") {
+      showDialogue(
+        "史蒂夫",
+        event.cause === "asteroid"
+          ? "战机与陨石发生碰撞，机体已爆炸。本轮拦截失败。"
+          : event.cause === "surface"
+            ? "战机撞上火星地表实体，机体已爆炸。本轮拦截失败。"
+            : "战机撞上火星地表，机体已爆炸。本轮拦截失败。",
+        3.2,
+      );
+    } else if (event.type === "failed") {
+      showDialogue("史蒂夫", "115 秒防御时限归零。危险陨石未能全部清除，本轮拦截失败。", 3.2);
+    } else if (event.type === "returned") {
+      document.body.classList.remove("is-orbital-defense");
+      orbitalDefenseHud.setAttribute("aria-hidden", "true");
+      orbitalRadar.hidden = true;
+      if (event.crashed) resetPlayerToSpawn();
+      playerRig.visual.visible = true;
+      if (marsBaseRoot) marsBaseRoot.visible = true;
+      camera.fov = 54;
+      camera.updateProjectionMatrix();
+      cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+      orbitYawOffset = 0;
+      pitch = 0.34;
+      if (event.crashed) {
+        const respawnTarget = player.position.clone().addScaledVector(playerNormal, 1.55);
+        const respawnOffset = playerForward.clone()
+          .multiplyScalar(-Math.cos(pitch) * cameraDistance)
+          .addScaledVector(playerNormal, Math.sin(pitch) * cameraDistance + 2.4);
+        camera.position.copy(respawnTarget).add(respawnOffset);
+        camera.up.copy(playerNormal);
+        camera.lookAt(respawnTarget);
+      }
+      keyState.clear();
+      showDialogue(
+        "ARES X-Wing",
+        event.crashed
+          ? "战机已毁。你已重新部署到基地重生点。"
+          : orbitalDefense.completed
+            ? "返航完成。战机已停回基地外环防御起降点。"
+            : "返航完成。战机已重新装填，可再次出动。",
+        3.2,
+      );
+    }
+  }
+  updateOrbitalDefenseHud();
+}
+
+function awardOrbitalDefenseReward() {
+  scorePoints += 50;
+  coins += 10;
+  completedAnyTask = true;
+  updateRewardReadouts();
+  updatePlayerRank();
+  pulseRewardReadout(scoreReadout, false);
+  pulseRewardReadout(coinReadout, false);
+  showRewardFloat(localizeText("+10 金币 · +50 积分"), false);
+  playScoreRewardSound(4);
+  playCoinDing();
+}
+
+function awardOrbitalAsteroidReward() {
+  scorePoints += 50;
+  completedAnyTask = true;
+  updateRewardReadouts();
+  updatePlayerRank();
+  pulseRewardReadout(scoreReadout, false);
+  showRewardFloat(localizeText("+50 积分"), false);
+  playScoreRewardSound(3);
+}
+
+function updateOrbitalDefenseHud() {
+  const visible = orbitalDefense.active;
+  orbitalDefenseHud.classList.toggle("is-visible", visible);
+  orbitalDefenseHud.classList.toggle("is-first-person", visible && orbitalDefense.firstPerson);
+  orbitalDefenseHud.setAttribute("aria-hidden", String(!visible));
+  if (!visible) {
+    orbitalHeavyReadout.hidden = true;
+    for (const bar of Array.from(orbitalHealthBars.children)) (bar as HTMLElement).hidden = true;
+    return;
+  }
+  const phaseCopy: Record<typeof orbitalDefense.phase, string> = {
+    idle: "待命",
+    launch: "引擎点火 · 滑跑升空",
+    combat: orbitalDefense.locked ? "目标已锁定" : orbitalDefense.aimCandidate ? "按 I 锁定" : "搜索撞击目标",
+    patrol: "威胁已清除 · Q 返回地面",
+    success: "威胁已清除",
+    failed: "拦截失败",
+    return: "自动返航",
+  };
+  orbitalTargetReadout.textContent = localizeText(phaseCopy[orbitalDefense.phase]);
+  orbitalTargetReadout.classList.toggle("is-locked", orbitalDefense.locked);
+  const heavyStatusVisible = orbitalDefense.phase === "combat"
+    && (orbitalDefense.locked || orbitalDefense.aimCandidate || orbitalDefense.heavyLaserCooldown > 0);
+  orbitalHeavyReadout.hidden = !heavyStatusVisible;
+  if (heavyStatusVisible) {
+    orbitalHeavyReadout.textContent = orbitalDefense.heavyLaserCooldown > 0
+      ? isEnglish()
+        ? `HIGH-ENERGY CHARGING ${orbitalDefense.heavyLaserCooldown.toFixed(1)}s`
+        : `高能炮充能 ${orbitalDefense.heavyLaserCooldown.toFixed(1)}s`
+      : orbitalDefense.locked
+        ? localizeText("K 高能炮就绪")
+        : localizeText("I 锁定目标");
+  }
+  orbitalThreatReadout.textContent = `${orbitalDefense.remainingThreats}/${orbitalDefense.totalThreats}`;
+  orbitalTimeReadout.textContent = orbitalDefense.phase === "combat"
+    ? `${Math.ceil(orbitalDefense.missionTimeRemaining)}s`
+    : orbitalDefense.completed ? "∞" : "--";
+  orbitalTimeReadout.classList.toggle("is-low", orbitalDefense.phase === "combat" && orbitalDefense.missionTimeRemaining <= 20);
+  orbitalSpeedReadout.textContent = `${Math.round(orbitalDefense.speed)} u/s`;
+  orbitalViewReadout.textContent = orbitalDefense.firstPerson ? "1P" : "3P";
+  const radarVisible = orbitalDefense.phase === "combat" && orbitalDefense.remainingThreats > 0;
+  orbitalRadar.hidden = !radarVisible;
+  if (radarVisible) {
+    orbitalRadarForward.set(0, 0, -1).applyQuaternion(orbitalDefense.ship.quaternion).normalize();
+    orbitalRadarRight.set(1, 0, 0).applyQuaternion(orbitalDefense.ship.quaternion).normalize();
+    const activeThreats = orbitalDefense.threats.filter((threat) => threat.visible);
+    while (orbitalRadarThreats.children.length < activeThreats.length) {
+      const marker = document.createElement("i");
+      marker.className = "orbital-radar-threat";
+      orbitalRadarThreats.appendChild(marker);
+    }
+    for (const [index, marker] of Array.from(orbitalRadarThreats.children).entries()) {
+      const threat = activeThreats[index];
+      const element = marker as HTMLElement;
+      element.hidden = !threat;
+      if (!threat) continue;
+      orbitalRadarToThreat.copy(threat.position).sub(orbitalDefense.ship.position);
+      const threatDistance = orbitalRadarToThreat.length();
+      orbitalRadarToThreat.normalize();
+      const bearing = Math.atan2(orbitalRadarToThreat.dot(orbitalRadarRight), orbitalRadarToThreat.dot(orbitalRadarForward));
+      const distanceScale = THREE.MathUtils.clamp(threatDistance / 220, 0.35, 1);
+      const radarRadius = Math.max(28, orbitalRadar.clientWidth * 0.38) * distanceScale;
+      const radarX = Math.sin(bearing) * radarRadius;
+      const radarY = -Math.cos(bearing) * radarRadius;
+      element.style.transform = `translate(-50%, -50%) translate(${radarX.toFixed(1)}px, ${radarY.toFixed(1)}px)`;
+    }
+  } else {
+    for (const marker of Array.from(orbitalRadarThreats.children)) (marker as HTMLElement).hidden = true;
+  }
+  updateOrbitalThreatHealthBars();
+}
+
+function updateOrbitalThreatHealthBars() {
+  const visibleThreat = orbitalDefense.firstPerson && orbitalDefense.phase === "combat"
+    ? orbitalDefense.healthTarget
+    : null;
+  while (orbitalHealthBars.children.length < 1) {
+    const bar = document.createElement("div");
+    bar.className = "orbital-integrity-bar";
+    const track = document.createElement("span");
+    const fill = document.createElement("i");
+    track.appendChild(fill);
+    bar.append(track);
+    orbitalHealthBars.appendChild(bar);
+  }
+  for (const [index, node] of Array.from(orbitalHealthBars.children).entries()) {
+    const threat = index === 0 ? visibleThreat : null;
+    const element = node as HTMLElement;
+    element.hidden = !threat;
+    if (!threat) continue;
+    orbitalHealthBarPosition.copy(threat.position).addScaledVector(camera.up, 7.6).project(camera);
+    const onScreen = orbitalHealthBarPosition.z >= -1
+      && orbitalHealthBarPosition.z <= 1
+      && Math.abs(orbitalHealthBarPosition.x) <= 1.08
+      && Math.abs(orbitalHealthBarPosition.y) <= 1.08;
+    element.hidden = !onScreen;
+    if (!onScreen) continue;
+    element.style.left = `${(orbitalHealthBarPosition.x * 0.5 + 0.5) * 100}%`;
+    element.style.top = `${(-orbitalHealthBarPosition.y * 0.5 + 0.5) * 100}%`;
+    const integrity = Number(threat.userData.integrity ?? 8);
+    const maxIntegrity = Math.max(1, Number(threat.userData.maxIntegrity ?? 8));
+    const fill = element.querySelector<HTMLElement>("i");
+    if (fill) fill.style.width = `${THREE.MathUtils.clamp(integrity / maxIntegrity, 0, 1) * 100}%`;
+  }
 }
 
 function rescueFufu() {
@@ -6868,7 +7293,7 @@ function resetVitals() {
 }
 
 function resetRunUiAfterRespawn() {
-  pendingMotherCall = null;
+  pendingSteveCall = null;
   introCallQueued = missionStep !== "intro";
   if (missionStep === "intro") gameStartElapsed = elapsedTime;
   hudCollapsed = false;
@@ -6887,6 +7312,8 @@ function resetRunUiAfterRespawn() {
   activeFootball = false;
   activeRideRover = null;
   ridingRover = null;
+  activeAtAt = false;
+  ridingAtAt = false;
   resetDialogueState();
   closeMapUi();
   showControlsGuide(false);
@@ -6933,7 +7360,7 @@ function updateSuitOxygen(delta: number) {
   if (!started || wormholeFall) return;
   const solarHeatMultiplier = currentSolarHeatStaminaMultiplier();
   const solarHeatActive = solarHeatMultiplier > 1;
-  const vitalsPaused = dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover;
+  const vitalsPaused = dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt;
   if (vitalsPaused) {
     if (solarHeatActive) {
       stamina = Math.max(0, stamina - STAMINA_WALK_DRAIN_PER_SECOND * solarHeatMultiplier * delta);
@@ -6994,7 +7421,7 @@ function isNearHabitatPhotoWall() {
 }
 
 function findActiveRobot() {
-  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover) return null;
+  if (!started || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || ridingAtAt) return null;
   let nearestRobot: THREE.Group | null = null;
   let nearestDistance = Infinity;
   const robotPosition = new THREE.Vector3();
@@ -7149,6 +7576,203 @@ function updateRoverPassengerLook(delta: number) {
   }
 }
 
+function resetAtAtForRun() {
+  const atAt = world.atAt;
+  resetAtAtPose(atAt);
+  atAt.normal.copy(planetNormal(AT_AT_SPAWN_X, AT_AT_SPAWN_Z));
+  placeObjectOnPlanetNormal(atAt.group, atAt.normal, 0, 0.48);
+  atAt.forward
+    .set(0, 0, -1)
+    .applyQuaternion(atAt.group.quaternion)
+    .projectOnPlane(atAt.normal)
+    .normalize();
+  atAt.group.userData.planetX = AT_AT_SPAWN_X;
+  atAt.group.userData.planetZ = AT_AT_SPAWN_Z;
+  atAtFirstPerson = true;
+}
+
+function findActiveAtAt() {
+  if (!started || wormholeFall || dialogueOpen || world.habitatDoor.occupied || insideGreenhouse || insideRocket || ridingElevator || ridingRover || isFlightActive()) return false;
+  if (ridingAtAt) return true;
+  const boardingPosition = world.atAt.boardingAnchor.getWorldPosition(new THREE.Vector3());
+  return boardingPosition.distanceTo(player.position) < AT_AT_PROMPT_RADIUS;
+}
+
+function enterAtAtRide() {
+  if (ridingAtAt) return;
+  const entryStatus = atAtEntryStatus(scorePoints, coins);
+  if (entryStatus === "score") {
+    showDialogue("AT-AT", "驾驶权限不足，需要达到 500 经验。", 3.2);
+    pulseRewardReadout(scoreReadout, true);
+    playPenaltySound();
+    return;
+  }
+  if (entryStatus === "coins") {
+    showDialogue("AT-AT", "金币不足，本次驾驶需要 100 金币。", 3.2);
+    pulseRewardReadout(coinReadout, true);
+    playPenaltySound();
+    return;
+  }
+  if (!spendCoins(AT_AT_RIDE_COST_COINS)) return;
+  if (footballCarried) dropFootball(false);
+  ridingAtAt = true;
+  activeAtAt = true;
+  atAtFirstPerson = true;
+  activeRideRover = null;
+  cameraMode = false;
+  scaleGunAiming = false;
+  laserSwordActive = false;
+  laserSwordRaised = false;
+  disableActiveJetpackForRespawn();
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  cameraDistance = CAMERA_MIN_DISTANCE;
+  orbitYawOffset = 0;
+  pitch = 0.34;
+  atAtExitPromptUntil = elapsedTime + 5;
+  camera.fov = 54;
+  camera.updateProjectionMatrix();
+  updateAtAtDriverTransform();
+  playerRig.visual.visible = false;
+  closeTouchInteractionDrawer();
+  interactionChoiceOpen = false;
+  updateMobileFlightButtons();
+  showDialogue("AT-AT", "已支付 100 金币进入驾驶舱。W/S 行进，A/D 转向，Shift 快速行进，C 切换视角，Q 下车。", 5.2);
+}
+
+function exitAtAtRide() {
+  if (!ridingAtAt) return;
+  world.atAt.speed = 0;
+  const exitNormal = findSafeAtAtExitNormal();
+  ridingAtAt = false;
+  activeAtAt = false;
+  atAtFirstPerson = true;
+  playerNormal.copy(exitNormal);
+  playerForward.copy(world.atAt.forward).projectOnPlane(playerNormal).normalize();
+  playerVelocity.set(0, 0, 0);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+  cameraDistance = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE;
+  orbitYawOffset = 0;
+  pitch = 0.34;
+  playerRig.visual.visible = true;
+  placePlayerOnPlanet();
+  updateMobileFlightButtons();
+  atAtExitPromptUntil = -Infinity;
+  showDialogue("AT-AT", "已离开 AT-AT。再次驾驶仍需支付 100 金币。", 5);
+}
+
+function findSafeAtAtExitNormal() {
+  for (const anchor of world.atAt.exitAnchors) {
+    const candidate = anchor.getWorldPosition(new THREE.Vector3()).normalize();
+    if (isAtAtExitNormalSafe(candidate)) return candidate;
+  }
+  const side = world.atAt.forward.clone().cross(world.atAt.normal).normalize();
+  return world.atAt.normal.clone().addScaledVector(side, 9 / PLANET_RADIUS).normalize();
+}
+
+function isAtAtExitNormalSafe(candidate: THREE.Vector3) {
+  for (const collider of world.colliders) {
+    if (collider.label.startsWith("AT-AT") || collider.label === "红色岩石") continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
+    if (surfaceDistanceBetween(candidate, colliderNormal) < collider.radius + 0.8) return false;
+  }
+  return true;
+}
+
+function updateAtAtDrive(delta: number) {
+  const atAt = world.atAt;
+  const { turnInput, forwardInput } = readMovementInput();
+  const fast = keyState.has("ShiftLeft") || keyState.has("ShiftRight");
+  const forwardSpeed = fast ? AT_AT_FAST_SPEED : AT_AT_WALK_SPEED;
+  const targetSpeed = forwardInput >= 0 ? forwardInput * forwardSpeed : forwardInput * AT_AT_REVERSE_SPEED;
+  const response = Math.abs(targetSpeed) > Math.abs(atAt.speed) ? 1.55 : 2.45;
+  atAt.speed = THREE.MathUtils.lerp(atAt.speed, targetSpeed, 1 - Math.pow(0.02, delta * response));
+  if (Math.abs(targetSpeed) < 0.02 && Math.abs(atAt.speed) < 0.04) atAt.speed = 0;
+
+  const movingRatio = THREE.MathUtils.clamp(Math.abs(atAt.speed) / AT_AT_WALK_SPEED, 0, 1);
+  if (Math.abs(turnInput) > 0.001 && movingRatio > 0.04) {
+    const reverseTurn = atAt.speed < 0 ? -0.62 : 1;
+    const turnRate = fast ? 0.22 : 0.32;
+    atAt.forward
+      .applyAxisAngle(atAt.normal, turnInput * turnRate * reverseTurn * movingRatio * delta)
+      .projectOnPlane(atAt.normal)
+      .normalize();
+  }
+
+  const previousNormal = atAt.normal.clone();
+  const angularDistance = Math.abs(atAt.speed) * delta / PLANET_RADIUS;
+  if (angularDistance > 0.000001) {
+    const direction = atAt.forward.clone().multiplyScalar(Math.sign(atAt.speed));
+    atAt.normal.addScaledVector(direction, angularDistance).normalize();
+    atAt.forward.projectOnPlane(atAt.normal).normalize();
+    resolveAtAtMovementCollision(previousNormal);
+  }
+
+  placeObjectOnPlanetNormal(atAt.group, atAt.normal, 0, headingFromForward(atAt.normal, atAt.forward));
+  const projectedY = Math.max(Math.abs(atAt.normal.y), 0.001);
+  atAt.group.userData.planetX = (atAt.normal.x / projectedY) * PLANET_RADIUS;
+  atAt.group.userData.planetZ = (atAt.normal.z / projectedY) * PLANET_RADIUS;
+  updateAtAtDriverTransform();
+  return Math.abs(atAt.speed);
+}
+
+function resolveAtAtMovementCollision(previousNormal: THREE.Vector3) {
+  const atAt = world.atAt;
+  for (const collider of world.colliders) {
+    if (collider.label.startsWith("AT-AT") || collider.label === "红色岩石" || collider.label === "暗面蜘蛛") continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = normalForCollider(collider, new THREE.Vector3());
+    const minDistance = atAt.collisionRadius + collider.radius;
+    if (surfaceDistanceBetween(atAt.normal, colliderNormal) >= minDistance) continue;
+    atAt.normal.copy(previousNormal);
+    atAt.forward.projectOnPlane(atAt.normal).normalize();
+    atAt.speed = 0;
+    return;
+  }
+}
+
+function updateAtAtDriverTransform() {
+  const atAt = world.atAt;
+  player.position.copy(atAt.cockpitAnchor.getWorldPosition(new THREE.Vector3()));
+  playerNormal.copy(atAt.normal);
+  playerForward.copy(atAt.forward).projectOnPlane(playerNormal).normalize();
+  player.quaternion.copy(atAt.group.getWorldQuaternion(new THREE.Quaternion()));
+  playerVelocity.copy(atAt.forward).multiplyScalar(atAt.speed);
+  playerAltitudeOffset = 0;
+  verticalVelocity = 0;
+  grounded = true;
+}
+
+function updateAtAtCamera(delta: number) {
+  world.root.visible = true;
+  const atAt = world.atAt;
+  const normal = atAt.normal;
+  const lookForward = atAt.forward.clone().applyAxisAngle(normal, orbitYawOffset).projectOnPlane(normal).normalize();
+  const pitchOffset = THREE.MathUtils.clamp(pitch - 0.34, -0.18, 0.28);
+  const atAtLookPitch = atAtFirstPerson ? Math.min(-0.16, pitchOffset - 0.16) : pitchOffset;
+  const lookDirection = lookForward.clone().multiplyScalar(Math.cos(atAtLookPitch)).addScaledVector(normal, Math.sin(atAtLookPitch)).normalize();
+  if (atAtFirstPerson) {
+    atAt.cockpitObstruction.visible = false;
+    const eye = atAt.cockpitAnchor.getWorldPosition(new THREE.Vector3()).addScaledVector(normal, 0.08);
+    camera.position.lerp(eye, 1 - Math.pow(0.00001, delta));
+    camera.up.copy(normal);
+    camera.lookAt(eye.clone().addScaledVector(lookDirection, 80));
+    return;
+  }
+  atAt.cockpitObstruction.visible = true;
+  const target = atAt.group.position.clone().addScaledVector(normal, 15.2).addScaledVector(atAt.forward, 3.5);
+  const cameraSide = atAt.forward.clone().cross(normal).normalize();
+  const desired = target.clone().addScaledVector(atAt.forward, -29).addScaledVector(cameraSide, 21).addScaledVector(normal, 8.2);
+  camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
+  camera.up.copy(normal);
+  camera.lookAt(target);
+}
+
 function findActiveGreenhouseDoor() {
   const door = world.greenhouseDoor;
   if (insideGreenhouse) {
@@ -7191,6 +7815,12 @@ function enterHabitatInterior(door: HabitatDoorControl) {
   setHabitatInteriorMode(true);
   habitatLocal.set(0, -0.76, -1.46);
   player.position.copy(door.root.localToWorld(habitatLocal.clone()));
+  // Entering from outside usually leaves the avatar facing the sealed door.
+  // Re-orient the indoor camera toward the habitat aisle so the first view is
+  // the room and its sleep pods, never the skybox through the doorway.
+  playerNormal.copy(new THREE.Vector3(0, 1, 0).transformDirection(door.root.matrixWorld).normalize());
+  const inward = door.root.localToWorld(new THREE.Vector3(0, -0.76, -0.4)).sub(player.position).projectOnPlane(playerNormal);
+  if (inward.lengthSq() > 0.0001) playerForward.copy(inward.normalize());
   resetVitals();
   cameraDistance = Math.min(cameraDistance, 0.72);
   pitch = 0.34;
@@ -7321,8 +7951,7 @@ function findActiveElevator() {
 
 function elevatorPrompt(elevator: ElevatorControl) {
   if (insideRocket) return "按 E 离开飞船内舱";
-  if (isReturnShipElevator(elevator) && !elonElevatorRepaired) return "按 E 检查 03 飞船升降梯";
-  if (isAtRocketHatch()) return isReturnShipElevator(elevator) ? "按 E 与 埃隆 通话" : "按 E 进入飞船内部观察";
+  if (isAtRocketHatch()) return "按 E 进入飞船内部观察";
   if (elevator.moving) return `${elevator.label}运行中`;
   return elevator.target === "top" ? "按 E 乘坐升降梯" : "按 E 启动飞船升降梯";
 }
@@ -7351,32 +7980,10 @@ function isAtRocketHatch() {
   return elevatorRideLocal.x >= ROCKET_PLATFORM_SPLIT_X;
 }
 
-function isReturnShipElevator(elevator: ElevatorControl | null) {
-  return Boolean(elevator?.label.includes("03 飞船"));
-}
-
-function startElonElevatorRepairQuest() {
-  if (elonSideStep === "available") {
-    elonSideStep = "cargoShip";
-    showDialogue("史蒂夫", "03 飞船升降梯处于安全锁定。状态：机械锁止、电机离线、姿态传感器缺失。先去 02 飞船货运飞船寻找执行器驱动轴。坏掉的垂直移动平台不叫捷径。", 6.4);
-    setCurrentMissionText();
-    return;
-  }
-  const target = elonMissionTargets[elonSideStep];
-  if (target) {
-    showDialogue("史蒂夫", `03 飞船升降梯仍处于锁定。先完成维修清单当前项：${missionLabel(target)}。`, 4.6);
-    return;
-  }
-  if (elonSideStep === "complete" && !elonElevatorRepaired) {
-    elonElevatorRepaired = true;
-    showDialogue("史蒂夫", "03 飞船升降梯校准完成。可上行至高空廊道。提示：03 飞船内舱仍不可进入。", 5.2);
-  }
-}
-
 function openElonDialogue() {
   if (!elonMet) {
     elonMet = true;
-    const elonLandmark = world.landmarks.find((landmark) => landmark.label.includes("埃隆") || landmark.label.includes("Elon"));
+    const elonLandmark = world.landmarks.find((landmark) => landmark.label.includes("埃隆") || landmark.label.toLowerCase().includes("elon"));
     if (elonLandmark) awardHiddenDiscovery(`unknown:${elonLandmark.label}`, elonLandmark.label);
     openDialogueScene("elon", "elon_intro_1");
     return;
@@ -7399,10 +8006,6 @@ function openRocketDoor() {
 
 function enterRocketInterior() {
   if (!ridingElevator) return;
-  if (isReturnShipElevator(ridingElevator)) {
-    showDialogue("史蒂夫", "03 飞船内舱保持封存。埃隆位于升降平台到达顶端后的高空廊道，靠近舱门处。", 4.6);
-    return;
-  }
   elevatorRideLocal.x = ROCKET_HATCH_STOP_X;
   elevatorRideLocal.z = 0;
   exitFrontCamera = null;
@@ -7588,20 +8191,25 @@ function updateLabels() {
 function updateMap() {
   if (!mapOpen || !started) return;
   lastMapUpdateAt = performance.now();
-
-  mapRadar.querySelectorAll(".map-marker").forEach((node) => node.remove());
   const radarSize = mapRadar.clientWidth || 280;
   const radarRadius = radarSize * 0.42;
   const right = playerForward.clone().cross(playerNormal).normalize();
   const showOxygenSupplyTargets = suitOxygen <= OXYGEN_SUPPLY_RADAR_THRESHOLD;
+  const mode: RadarMode = mapExpanded ? "expanded" : "compact";
 
   const mapItems: MapItem[] = [
     ...world.landmarks.map((landmark) => {
       const missionTarget = isMissionTargetLabel(landmark.label);
       const mysteryId = missionTarget ? null : mysteryDiscoveryIdForLabel(landmark.label);
       const mysteryDiscovered = Boolean(mysteryId && hiddenDiscoveries.has(mysteryId));
-      const type = mysteryId && !mysteryDiscovered ? "unknown" : mapTypeForLabel(landmark.label);
+      const type = classifyRadarContact({
+        label: landmark.label,
+        userKind: typeof landmark.object.userData.kind === "string" ? landmark.object.userData.kind : undefined,
+        missionTarget,
+        unknown: Boolean(mysteryId && !mysteryDiscovered),
+      });
       return {
+        id: `landmark:${landmark.object.uuid}`,
         label: mysteryId ? mysteryMapLabel(mysteryId, landmark.label, mysteryUnknownLabelKey(mysteryId)) : localizeLabel(landmark.label),
         object: landmark.object,
         x: typeof landmark.object.userData.planetX === "number" ? landmark.object.userData.planetX : landmark.x,
@@ -7612,6 +8220,9 @@ function updateMap() {
         missionTarget,
         oxygenSupplyTarget: false,
         coinTarget: false,
+        heading: radarHeadingForObject(landmark.object, right),
+        moving: isMovingRadarObject(landmark.object),
+        priority: missionTarget ? 1000 : 0,
       };
     }),
     ...world.unnumberedObjects.map((item, index) => {
@@ -7619,53 +8230,93 @@ function updateMap() {
       const trueLabel = item.label ?? "坠毁飞船残骸";
       const mysteryDiscovered = hiddenDiscoveries.has(mysteryId);
       return {
+        id: `unnumbered:${index}:${item.object.uuid}`,
         label: mysteryMapLabel(mysteryId, trueLabel),
         object: item.object,
         x: item.x,
         z: item.z,
         mapRange: item.mapRange,
-        type: mysteryDiscovered ? mapTypeForLabel(trueLabel) : "unknown",
+        type: classifyRadarContact({ label: trueLabel, unknown: !mysteryDiscovered }),
         unknown: !mysteryDiscovered,
         missionTarget: false,
         oxygenSupplyTarget: false,
         coinTarget: false,
+        heading: radarHeadingForObject(item.object, right),
+        moving: false,
+        priority: 0,
       };
     }),
     ...(showOxygenSupplyTargets
       ? world.rovers
           .filter((rover) => rover.userData.kind === "bot")
-          .map((robot) => ({
+          .map((robot, index) => ({
+            id: `oxygen:${robot.uuid}:${index}`,
             label: localizeLabel(typeof robot.userData.label === "string" ? robot.userData.label : "维修机器人"),
             object: robot,
             x: typeof robot.userData.planetX === "number" ? robot.userData.planetX : 0,
             z: typeof robot.userData.planetZ === "number" ? robot.userData.planetZ : 0,
             mapRange: 320,
-            type: "oxygen",
+            type: "oxygen" as const,
             unknown: false,
             missionTarget: false,
             oxygenSupplyTarget: true,
             coinTarget: false,
+            heading: radarHeadingForObject(robot, right),
+            moving: false,
+            priority: 0,
           }))
       : []),
   ];
 
   mapItems.push({
+    id: "football",
     label: mysteryMapLabel("football", "火星足球"),
     object: football.group,
     x: FOOTBALL_SPAWN_X,
     z: FOOTBALL_SPAWN_Z,
     mapRange: 220,
-    type: hiddenDiscoveries.has("football") ? "vehicle" : "unknown",
+    type: hiddenDiscoveries.has("football") ? "cargo" : "unknown",
     unknown: !hiddenDiscoveries.has("football"),
     missionTarget: false,
     oxygenSupplyTarget: false,
     coinTarget: false,
+    heading: 0,
+    moving: false,
+    priority: 0,
   });
+
+  if (orbitalDefense.unlocked && !orbitalDefense.active) {
+    for (const [index, parkedShip] of orbitalDefense.parkedShips.entries()) {
+      const config = xWingParkingConfigs[index];
+      if (!config || !shouldShowParkedXWing({
+        unlocked: orbitalDefense.unlocked,
+        active: orbitalDefense.active,
+        visible: parkedShip.visible,
+      })) continue;
+      mapItems.push({
+        id: `xwing:${index}`,
+        label: radarXWingLabel(config.color),
+        object: parkedShip,
+        x: config.x,
+        z: config.z,
+        mapRange: 320,
+        type: "xwing",
+        unknown: false,
+        missionTarget: false,
+        oxygenSupplyTarget: false,
+        coinTarget: false,
+        heading: radarHeadingForObject(parkedShip, right),
+        moving: false,
+        priority: 0,
+      });
+    }
+  }
 
   if (!wormholeFall) {
     for (const [index, group] of currentCoinGroups.entries()) {
       if (!group.coins.some((coin) => !coin.collected)) continue;
       mapItems.push({
+        id: `coin:${index}`,
         label: currentCoinGroups.length > 1 ? `${tr("map.coin")} ${index + 1}` : tr("map.coin"),
         object: null,
         x: group.centerX,
@@ -7676,12 +8327,16 @@ function updateMap() {
         missionTarget: false,
         oxygenSupplyTarget: false,
         coinTarget: true,
+        heading: 0,
+        moving: false,
+        priority: 0,
       });
     }
   }
 
   if (sunBody) {
     mapItems.push({
+      id: "sun",
       label: tr("map.sun"),
       object: sunBody,
       x: 0,
@@ -7692,12 +8347,16 @@ function updateMap() {
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: false,
+      heading: 0,
+      moving: false,
+      priority: 0,
     });
   }
 
   if (!fufuRescued) {
     const fufuDiscovered = hiddenDiscoveries.has("unknown:fufu");
     mapItems.push({
+      id: "fufu",
       label: mysteryMapLabel("unknown:fufu", "福福", "map.unknownLife"),
       object: fufu,
       x: world.fufuRescueSite.x,
@@ -7708,11 +8367,15 @@ function updateMap() {
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: false,
+      heading: 0,
+      moving: false,
+      priority: 0,
     });
   }
 
   if (isStarlinkMapVisible()) {
     mapItems.push({
+      id: "starlink",
       label: starlinkDisplayStatus(),
       object: world.starlinkConstellation.anchor,
       x: 0,
@@ -7723,12 +8386,16 @@ function updateMap() {
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: false,
+      heading: 0,
+      moving: false,
+      priority: 0,
     });
   }
 
   const closeMeteor = world.meteors.find((meteor) => meteor.closeFlyby);
   if (closeMeteor) {
     mapItems.push({
+      id: "meteor",
       label: localizeLabel("近火流星"),
       object: closeMeteor.head,
       x: 0,
@@ -7739,6 +8406,9 @@ function updateMap() {
       missionTarget: false,
       oxygenSupplyTarget: false,
       coinTarget: false,
+      heading: radarHeadingForObject(closeMeteor.head, right),
+      moving: true,
+      priority: 0,
     });
   }
 
@@ -7756,54 +8426,159 @@ function updateMap() {
       return { item, distance, lateral, forward };
     })
     .filter((entry) => entry.item.missionTarget || entry.item.oxygenSupplyTarget || entry.item.coinTarget || entry.item.type === "sun" || entry.distance <= mapRangeForItem(entry.item.mapRange))
-    .sort(
-      (a, b) =>
-        Number(b.item.missionTarget) - Number(a.item.missionTarget) ||
-        Number(b.item.oxygenSupplyTarget) - Number(a.item.oxygenSupplyTarget) ||
-        Number(b.item.coinTarget) - Number(a.item.coinTarget) ||
-        Number(b.item.type === "sun") - Number(a.item.type === "sun") ||
-        Number(b.item.type === "meteor") - Number(a.item.type === "meteor") ||
-        a.distance - b.distance
-    )
-    .slice(0, mapExpanded ? 80 : 24);
+    .map((entry) => ({
+      ...entry,
+      item: {
+        ...entry.item,
+        distance: entry.distance,
+        lateral: entry.lateral,
+        forward: entry.forward,
+      },
+    }));
+  const radarContacts: RadarContact[] = nearby.map((entry) => ({
+    ...entry.item,
+    kind: entry.item.type,
+    distance: entry.item.distance,
+    lateral: entry.item.lateral,
+    forward: entry.item.forward,
+  }));
+  const selection = selectRadarContacts(radarContacts, mode);
+  const nearbyById = new Map(nearby.map((entry) => [entry.item.id, entry]));
+  const selectedEntries = selection.visible
+    .map((contact) => nearbyById.get(contact.id))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const nextSignature = `${mode}:${mapZoom}:${selection.hiddenCount}:${getRadarContactSignature(selection.visible)}`;
+  if (nextSignature === radarContactSignature) return;
+  radarContactSignature = nextSignature;
+  updateRadarLegend();
+  radarSummary.textContent = selection.hiddenCount > 0
+    ? (isEnglish() ? `+${selection.hiddenCount} contacts` : `+${selection.hiddenCount} 目标`)
+    : "";
+  radarSummary.classList.toggle("is-visible", selection.hiddenCount > 0);
 
-  nearby.forEach((entry, index) => {
-    const range = mapRangeForItem(entry.item.mapRange);
-    const distanceRatio = THREE.MathUtils.clamp(entry.distance / range, 0, 1);
-    const spreadRatio = mapExpanded ? Math.sqrt(distanceRatio) : distanceRatio;
-    const x = THREE.MathUtils.clamp(entry.lateral * spreadRatio, -1, 1) * radarRadius;
-    const y = THREE.MathUtils.clamp(-entry.forward * spreadRatio, -1, 1) * radarRadius;
-    const markerScale = mapExpanded ? THREE.MathUtils.mapLinear(THREE.MathUtils.clamp(mapZoom, 0.65, 3.2), 0.65, 3.2, 0.86, 1.22) : 1;
-    const marker = document.createElement("div");
+  const entryLayouts = new Map(selectedEntries.map((entry) => [
+    entry.item.id,
+    layoutRadarContact(entry.item, radarRadius, mapRangeForItem(entry.item.mapRange), mode, mapZoom),
+  ]));
+  const labelPositions = buildRadarLabelPositions(selectedEntries, entryLayouts, radarRadius, mode);
+  const visibleIds = new Set<string>();
+  selectedEntries.forEach((entry, index) => {
+    const item = entry.item;
+    visibleIds.add(item.id);
+    const layout = entryLayouts.get(item.id) ?? layoutRadarContact(item, radarRadius, mapRangeForItem(item.mapRange), mode, mapZoom);
+    const marker = radarMarkerNodes.get(item.id) ?? document.createElement("div");
+    radarMarkerNodes.set(item.id, marker);
     marker.className = `map-marker type-${entry.item.type}`;
     marker.classList.toggle("is-mission-target", entry.item.missionTarget);
     marker.classList.toggle("is-oxygen-supply-target", entry.item.oxygenSupplyTarget);
     marker.classList.toggle("is-coin-target", entry.item.coinTarget);
-    if (entry.item.coinTarget) marker.textContent = "$";
-    if (entry.item.unknown) marker.textContent = "?";
+    marker.classList.toggle("is-moving", entry.item.moving);
+    marker.dataset.kind = entry.item.type;
+    marker.title = item.label;
+    marker.setAttribute("aria-label", item.label);
+    marker.textContent = entry.item.coinTarget ? "$" : entry.item.unknown ? "?" : "";
+    marker.style.setProperty("--radar-heading", `${layout.heading}deg`);
+    marker.style.setProperty("--radar-distance", layout.distanceRatio.toFixed(3));
+    marker.style.transform = `translate(calc(-50% + ${layout.x.toFixed(1)}px), calc(-50% + ${layout.y.toFixed(1)}px)) scale(${layout.scale.toFixed(3)})`;
     if (mapExpanded && shouldShowExpandedMapLabel(entry.item, index)) {
       const label = document.createElement("span");
       label.textContent = entry.item.label;
+      const labelPosition = labelPositions.get(item.id);
+      if (labelPosition) {
+        label.classList.toggle("is-left", labelPosition.side === "left");
+        label.style.setProperty("--radar-label-y-shift", `${labelPosition.y - layout.y}px`);
+      }
       marker.appendChild(label);
     }
-    marker.style.transform = `translate(calc(-50% + ${x.toFixed(1)}px), calc(-50% + ${y.toFixed(1)}px)) scale(${markerScale.toFixed(3)})`;
-    mapRadar.appendChild(marker);
+    if (!marker.parentElement) mapRadar.appendChild(marker);
   });
 
+  for (const [id, marker] of radarMarkerNodes) {
+    if (visibleIds.has(id)) continue;
+    marker.remove();
+    radarMarkerNodes.delete(id);
+  }
+
   mapList.innerHTML = "";
+}
+
+function buildRadarLabelPositions(
+  entries: readonly { item: MapItem & { distance: number; lateral: number; forward: number } }[],
+  layouts: ReadonlyMap<string, ReturnType<typeof layoutRadarContact>>,
+  radius: number,
+  mode: RadarMode,
+) {
+  const positions = new Map<string, { side: "left" | "right"; y: number }>();
+  if (mode !== "expanded") return positions;
+  const buckets: Record<"left" | "right", Array<{ id: string; y: number }>> = { left: [], right: [] };
+  entries.forEach((entry, index) => {
+    if (!shouldShowExpandedMapLabel(entry.item, index)) return;
+    const layout = layouts.get(entry.item.id);
+    if (!layout) return;
+    const side = Math.abs(layout.x) < radius * 0.16 ? (index % 2 === 0 ? "right" : "left") : layout.x < 0 ? "left" : "right";
+    buckets[side].push({ id: entry.item.id, y: layout.y });
+  });
+  for (const side of ["left", "right"] as const) {
+    const sorted = buckets[side].sort((a, b) => a.y - b.y);
+    let previous = -Infinity;
+    for (const entry of sorted) {
+      const y = Math.min(radius - 12, Math.max(-radius + 12, Math.max(entry.y, previous + 23)));
+      positions.set(entry.id, { side, y });
+      previous = y;
+    }
+  }
+  return positions;
 }
 
 function mapRangeForItem(itemRange: number) {
   return mapExpanded ? PLANET_RADIUS * Math.PI * 1.08 / mapZoom : Math.min(itemRange, 320 / mapZoom);
 }
 
-function shouldShowExpandedMapLabel(item: { type?: string; missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean; coinTarget?: boolean }, index: number) {
+function radarHeadingForObject(object: THREE.Object3D | null, right: THREE.Vector3) {
+  if (!object) return 0;
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(object.getWorldQuaternion(new THREE.Quaternion()));
+  direction.projectOnPlane(playerNormal).normalize();
+  if (direction.lengthSq() < 0.000001) return 0;
+  return THREE.MathUtils.radToDeg(Math.atan2(direction.dot(right), direction.dot(playerForward)));
+}
+
+function isMovingRadarObject(object: THREE.Object3D) {
+  return object.userData.kind === "rover" || object.userData.kind === "cargo";
+}
+
+function radarXWingLabel(color: string) {
+  if (isEnglish()) {
+    const colors: Record<string, string> = { 红色: "Red", 蓝色: "Blue", 黄色: "Yellow" };
+    return `${colors[color] ?? color} X-Wing`;
+  }
+  return `${color} X 翼`;
+}
+
+function updateRadarLegend() {
+  const labels: Record<string, [string, string]> = {
+    rover: ["火星车", "Rover"],
+    xwing: ["X 翼", "X-Wing"],
+    mission: ["任务", "Mission"],
+    building: ["设施", "Facility"],
+  };
+  radarLegend.classList.toggle("is-visible", mapExpanded);
+  radarLegend.setAttribute("aria-label", isEnglish() ? "Radar legend" : "雷达图例");
+  radarLegend.querySelectorAll<HTMLElement>("[data-radar-legend-label]").forEach((node) => {
+    const key = node.dataset.radarLegendLabel ?? "";
+    const value = labels[key];
+    if (value) node.textContent = value[isEnglish() ? 1 : 0];
+  });
+}
+
+function shouldShowExpandedMapLabel(item: { type?: RadarContactKind; missionTarget: boolean; unknown: boolean; oxygenSupplyTarget?: boolean; coinTarget?: boolean; moving?: boolean }, index: number) {
   if (item.missionTarget) return true;
   if (item.oxygenSupplyTarget) return true;
   if (item.coinTarget) return true;
   if (item.type === "sun") return true;
-  if (item.unknown) return index < 12;
-  return index < 14 && index % 2 === 0;
+  if (item.type === "rover" || item.type === "cargo" || item.type === "xwing") return true;
+  if (item.type === "meteor" || item.type === "ancient") return true;
+  if (item.unknown) return index < 4;
+  return false;
 }
 
 function playerMapCoordinate() {
@@ -7901,12 +8676,12 @@ function labelMatchesInteractableId(label: string, id: Interactable["id"]) {
 function resetDialogueState() {
   activeDialogueNode = null;
   dialogueOpen = false;
-  pendingMotherCall = null;
-  pendingMotherCallQueuedAt = -Infinity;
-  motherCallRetryAt = 0;
+  pendingSteveCall = null;
+  pendingSteveCallQueuedAt = -Infinity;
+  steveCallRetryAt = 0;
   dialogueHistory.length = 0;
   appliedDialogueChoiceEffects.clear();
-  dialogueState.motherTrust = 0;
+  dialogueState.steveTrust = 0;
   dialogueState.baseIntegrity = 0;
   dialogueState.humanAutonomy = 0;
   dialogueStage.classList.remove("is-visible");
@@ -7916,18 +8691,18 @@ function resetDialogueState() {
   document.body.classList.remove("dialogue-open");
 }
 
-function queueMotherCall(scene: DialogueSceneId) {
-  pendingMotherCall = scene;
-  pendingMotherCallQueuedAt = elapsedTime;
+function queueSteveCall(scene: DialogueSceneId) {
+  pendingSteveCall = scene;
+  pendingSteveCallQueuedAt = elapsedTime;
   missionUnread = true;
   missionToggle.classList.add("has-mission-update");
 }
 
-function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
-  pendingMotherCall = null;
-  pendingMotherCallQueuedAt = -Infinity;
+function deferPendingSteveCall(retrySeconds: number, feedback?: string) {
+  pendingSteveCall = null;
+  pendingSteveCallQueuedAt = -Infinity;
   introCallQueued = false;
-  motherCallRetryAt = elapsedTime + retrySeconds;
+  steveCallRetryAt = elapsedTime + retrySeconds;
   setCurrentMissionText();
   missionUnread = false;
   missionToggle.classList.remove("has-mission-update");
@@ -7936,9 +8711,9 @@ function deferPendingMotherCall(retrySeconds: number, feedback?: string) {
 }
 
 function openDialogueScene(scene: DialogueSceneId, startNode: DialogueNodeId = sceneStartNodes[scene]) {
-  pendingMotherCall = null;
-  pendingMotherCallQueuedAt = -Infinity;
-  motherCallRetryAt = 0;
+  pendingSteveCall = null;
+  pendingSteveCallQueuedAt = -Infinity;
+  steveCallRetryAt = 0;
   if (scene !== "robot") {
     characters.repairRobot.name = "A-12";
     characters.repairRobot.callsign = "维修执行单元";
@@ -8037,6 +8812,7 @@ function renderDialogueNode(resetPage = true) {
   dialogueLeftCallsign.textContent = localizeText(leftCharacter.callsign);
 
   dialogueRightPortrait.src = rightCharacter.portrait;
+  dialogueRightPortrait.classList.toggle("is-mirrored", node.speaker === "elon" || node.listener === "elon");
   dialogueRightName.textContent = localizeText(rightCharacter.name);
   dialogueRightCallsign.textContent = localizeText(rightCharacter.callsign);
 
@@ -8051,7 +8827,8 @@ function renderDialogueNode(resetPage = true) {
   dialogueRightTag.classList.toggle("is-listening", leftIsSpeaking);
 
   dialogueSpeaker.textContent = `${localizeText(speaker.name)} / ${localizeText(speaker.callsign)}`;
-  dialogueStats.textContent = `${localizeText("信任")} ${dialogueState.motherTrust} · ${localizeText("基地")} ${dialogueState.baseIntegrity} · ${localizeText("自主")} ${dialogueState.humanAutonomy}`;
+  dialogueStats.textContent = "";
+  dialogueStats.hidden = true;
   dialogueItemImage.hidden = !node.image;
   if (node.image) dialogueItemImage.src = node.image;
   const choices = node.choices ?? [];
@@ -8184,6 +8961,9 @@ function returnToPreviousDialogueLine() {
 }
 
 function applyDialogueEffects(choice: DialogueChoice) {
+  if (choice.effects?.includes("completeSeedDecision") && missionStep !== "m2_seed") return;
+  if (choice.effects?.includes("completeStormDecision") && missionStep !== "m3_lab") return;
+  if (choice.effects?.includes("completeDispatchDecision") && missionStep !== "m3_garage") return;
   for (const effect of choice.effects ?? []) {
     applyDialogueEffect(effect);
   }
@@ -8192,14 +8972,17 @@ function applyDialogueEffects(choice: DialogueChoice) {
 }
 
 function applyDialogueEffect(effect: DialogueEffect) {
-  if (effect === "trustUp") dialogueState.motherTrust += 1;
-  if (effect === "trustDown") dialogueState.motherTrust -= 1;
+  if (effect === "trustUp") dialogueState.steveTrust += 1;
+  if (effect === "trustDown") dialogueState.steveTrust -= 1;
   if (effect === "integrityUp") dialogueState.baseIntegrity += 1;
   if (effect === "integrityDown") dialogueState.baseIntegrity -= 1;
   if (effect === "autonomyUp") dialogueState.humanAutonomy += 1;
   if (effect === "completeOxygen") completeOxygenMission();
   if (effect === "completeSolar") completeSolarMission();
   if (effect === "completeGarage") completeGarageMission();
+  if (effect === "completeSeedDecision") completeSeedDecision();
+  if (effect === "completeStormDecision") completeStormDecision();
+  if (effect === "completeDispatchDecision") completeDispatchDecision();
   if (effect === "acquireScaleGun") setScaleGunOwned(true);
 }
 
@@ -8334,7 +9117,7 @@ function determinePlayerRank(): PlayerRankId {
 }
 
 function isFirstResidentRankUnlocked() {
-  return missionStep === "complete" && dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4;
+  return missionStep === "complete" && dialogueState.steveTrust >= 5 && dialogueState.baseIntegrity >= 4;
 }
 
 function rankIndex(rank: PlayerRankId) {
@@ -8771,12 +9554,18 @@ function playPenaltySound() {
 }
 
 function resetQuestState() {
+  orbitalDefense.reset();
+  if (marsBaseRoot) marsBaseRoot.visible = true;
+  document.body.classList.remove("is-orbital-defense");
+  orbitalDefenseHud.classList.remove("is-visible");
+  orbitalDefenseHud.setAttribute("aria-hidden", "true");
   missionStep = "intro";
+  testModeEnabled = false;
+  xWingCollisionDebugEnabled = false;
+  resetXWingColliderScale();
   fufuSideStep = "available";
   cargoSideStep = "available";
   patrolSideStep = "available";
-  elonSideStep = "available";
-  elonElevatorRepaired = false;
   elonMet = false;
   elonDialogueIndex = 0;
   scorePoints = 0;
@@ -8787,8 +9576,8 @@ function resetQuestState() {
     moneyCheatTimer = null;
   }
   currentRank = "internPatrol";
-  motherCallRetryAt = 0;
-  pendingMotherCallQueuedAt = -Infinity;
+  steveCallRetryAt = 0;
+  pendingSteveCallQueuedAt = -Infinity;
   completedAnyTask = false;
   awardedEvents.clear();
   exploredBuildings.clear();
@@ -8796,7 +9585,19 @@ function resetQuestState() {
   talkedRobotIds.clear();
   shownOperationHelpIds.delete("laserSword.unlock");
   lastLaserSwordLockedPromptAt = -Infinity;
+  lastLaserSwordAttackAt = -Infinity;
   lastSpiderDamageAt = -Infinity;
+  for (const spider of world.darkSpiders) {
+    spider.health = spider.maxHealth;
+    spider.defeated = false;
+    spider.attacking = false;
+    spider.hitUntil = -Infinity;
+    spider.deathStartedAt = -Infinity;
+    spider.group.visible = true;
+    spider.visual.visible = true;
+    spider.visual.rotation.set(0, 0, 0);
+    spider.eyeMaterial.color.set(0x8cff66);
+  }
   setLaserSwordOwned(false);
   clearCoinGroups();
   nextCoinRefreshAt = elapsedTime;
@@ -8826,20 +9627,27 @@ function setLaserSwordOwned(owned: boolean) {
   if (!owned) {
     laserSwordActive = false;
     laserSwordRaised = false;
+    lastLaserSwordAttackAt = -Infinity;
     laserSwordWorldLight.visible = false;
     laserSwordWorldLight.intensity = 0;
   }
   updateLaserSwordVisual();
 }
 
-function awardLaserSwordAfterWormhole() {
+function awardLaserSwordAfterOrbitalDefense() {
   if (hasLaserSword) return false;
   setLaserSwordOwned(true);
+  return true;
+}
+
+function awardXWingAfterWormhole() {
+  if (orbitalDefense.unlocked) return false;
+  orbitalDefense.setUnlocked(true);
   showOneTimeOperationHelp(
-    "laserSword.unlock",
+    "xWing.unlock",
     localizeText("装备解锁"),
-    localizeText("你获得了激光剑。按 I 展开或收回；按住 J 举起，松开恢复。激光剑会照亮黑暗区域，蜘蛛会主动避开光。"),
-    7.2
+    localizeText("你获得了「X 翼战机」。战机已停在出生点附近；靠近后按 E 登机。"),
+    7.2,
   );
   return true;
 }
@@ -8884,6 +9692,30 @@ function completeGarageMission() {
   setCurrentMissionText();
 }
 
+function completeSeedDecision() {
+  if (missionStep !== "m2_seed") return;
+  completeInteractable("greenhouse");
+  missionStep = "m3_tower";
+  awardTaskScore("main_m2_seed", missionLabel("greenhouse"));
+  setCurrentMissionText();
+}
+
+function completeStormDecision() {
+  if (missionStep !== "m3_lab") return;
+  completeInteractable("lab");
+  missionStep = "m3_methane";
+  awardTaskScore("main_m3_lab", missionLabel("lab"));
+  setCurrentMissionText();
+}
+
+function completeDispatchDecision() {
+  if (missionStep !== "m3_garage") return;
+  completeInteractable("garage");
+  missionStep = "m3_steve";
+  awardTaskScore("main_m3_garage", missionLabel("garage"));
+  setCurrentMissionText();
+}
+
 function advanceWorldQuest(id: Interactable["id"]) {
   if (advanceSideQuest(id)) return;
   if (mainMissionTargets[missionStep] !== id) return;
@@ -8906,17 +9738,14 @@ function advanceWorldQuest(id: Interactable["id"]) {
     missionStep = "m2_seed";
     showDialogue("史蒂夫", "阵列 B 已分配温室补光。回到温室，决定火星第一批种植方案。让第一批植物值得这点电。", 5.2);
   } else if (missionStep === "m2_seed") {
-    completeInteractable(id);
-    missionStep = "m3_tower";
-    dialogueState.humanAutonomy += 1;
-    showDialogue("亚历克斯", "种植方案确认。第一批纪念植物进入培养槽。火星基地不只是在维持运行，也开始生活。", 5.4);
+    openDialogueScene("greenhouseDecision");
+    return;
   } else if (missionStep === "m3_tower") {
     missionStep = "m3_lab";
     showDialogue("P-03", "风暴提前。通信塔只收到半段地球指令。请到科研舱比对本地气象数据。", 5.2);
   } else if (missionStep === "m3_lab") {
-    missionStep = "m3_methane";
-    dialogueState.humanAutonomy += 1;
-    showDialogue("科研舱", "地球旧指令已过时。本地数据支持低功率启动甲烷燃料厂。", 4.8);
+    openDialogueScene("stormDecision");
+    return;
   } else if (missionStep === "m3_methane") {
     missionStep = "m3_solarA";
     showDialogue("甲烷燃料厂", "第一轮低功率试生产完成。风暴加强，请固定太阳能阵列 A。", 4.8);
@@ -8924,13 +9753,12 @@ function advanceWorldQuest(id: Interactable["id"]) {
     missionStep = "m3_garage";
     showDialogue("史蒂夫", "阵列 A 锁定。A-12 与 A-01 同时请求调度，请前往机器人车库分配优先级。只能选一个优先级，聚焦。", 5.6);
   } else if (missionStep === "m3_garage") {
-    missionStep = "m3_mother";
-    dialogueState.baseIntegrity += 1;
-    showDialogue("机器人车库", "A-12 去封闭外部阀门，A-01 固定物资仓货架。请回到居住舱史蒂夫终端签署协作协议。", 5.6);
-  } else if (missionStep === "m3_mother") {
+    openDialogueScene("dispatchDecision");
+    return;
+  } else if (missionStep === "m3_steve") {
     missionStep = "complete";
-    dialogueState.motherTrust += 1;
-    const ending = dialogueState.motherTrust >= 5 && dialogueState.baseIntegrity >= 4 ? "协作协议已建立。欢迎来到火星，X。现在把它做成一个真正能住人的地方。" : "协作协议已建立。亚历克斯拥有现场判断权，史蒂夫保留风险限制。";
+    dialogueState.steveTrust += 1;
+    const ending = dialogueState.steveTrust >= 5 && dialogueState.baseIntegrity >= 4 ? "协作协议已建立。欢迎来到火星，X。现在把它做成一个真正能住人的地方。" : "协作协议已建立。亚历克斯拥有现场判断权，史蒂夫保留风险限制。";
     showDialogue("史蒂夫", ending, 6);
   }
   completeInteractable(id);
@@ -8939,36 +9767,11 @@ function advanceWorldQuest(id: Interactable["id"]) {
 }
 
 function advanceSideQuest(id: Interactable["id"]) {
-  if (isElonSideQuestTarget(id)) {
-    const previousStep = elonSideStep;
-    if (elonSideStep === "cargoShip") {
-      elonSideStep = "solarC";
-      showDialogue("02 飞船 货运飞船", "发现备用执行器驱动轴。外壳有轻微沙尘磨损，结构完整。下一项：去太阳能阵列 C 处理高功率继电器。", 5.4);
-    } else if (elonSideStep === "solarC") {
-      elonSideStep = "garage";
-      showDialogue("12 机器人 阵列 C 维修工", "高功率继电器已复制为低风险替代件。阵列 C 风暴恢复冗余保留。下一项：去机器人车库取得姿态锁止传感器。", 5.8);
-    } else if (elonSideStep === "garage") {
-      elonSideStep = "storehouse";
-      showDialogue("机器人车库", "姿态锁止传感器可用。没有它，升降梯只能知道自己在移动，不能证明自己停在正确位置。下一项：去物资仓取低温润滑胶囊。", 6);
-    } else if (elonSideStep === "storehouse") {
-      elonSideStep = "lab";
-      showDialogue("08 建筑 物资仓", "低温润滑胶囊已取出。库存剩余两枚。下一项：去科研舱生成一次性校准密钥。", 5.2);
-    } else if (elonSideStep === "lab") {
-      elonSideStep = "complete";
-      elonElevatorRepaired = true;
-      dialogueState.baseIntegrity += 1;
-      showDialogue("科研舱", "校准密钥生成完成。03 飞船升降梯维修记录已写入史蒂夫安全边界。可返回 03 飞船升降梯，上行至埃隆所在高空廊道。", 6.4);
-    }
-    awardSideTaskScore(`side_elon_${previousStep}`, missionLabel(id));
-    setCurrentMissionText();
-    return true;
-  }
-
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) {
     const previousStep = fufuSideStep;
     if (fufuSideStep === "medical") {
       fufuSideStep = "habitat";
-      dialogueState.motherTrust += 1;
+      dialogueState.steveTrust += 1;
       showDialogue("医疗舱", "扫描完成。福福体温偏低，无污染风险。隔离不是拒绝，是确认安全前的保护。请带它回居住舱观察。", 5.6);
     } else if (fufuSideStep === "habitat") {
       fufuSideStep = "complete";
@@ -9032,25 +9835,24 @@ function completeInteractable(id: Interactable["id"]) {
 }
 
 function isCargoAvailable() {
-  return ["m2_storehouse", "m2_lab", "m2_solarB", "m2_seed", "m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+  return ALL_PLAYABLE_CONTENT_UNLOCKED || testModeEnabled || ["m2_storehouse", "m2_lab", "m2_solarB", "m2_seed", "m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_steve", "complete"].includes(missionStep);
 }
 
 function isPatrolAvailable() {
-  return ["m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+  return ALL_PLAYABLE_CONTENT_UNLOCKED || testModeEnabled || ["m3_tower", "m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_steve", "complete"].includes(missionStep);
 }
 
 function isStarlinkMapVisible() {
-  return ["m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_mother", "complete"].includes(missionStep);
+  return ALL_PLAYABLE_CONTENT_UNLOCKED || testModeEnabled || ["m3_lab", "m3_methane", "m3_solarA", "m3_garage", "m3_steve", "complete"].includes(missionStep);
 }
 
-function isElonSideQuestTarget(id: Interactable["id"]) {
-  return !elonElevatorRepaired && elonSideStep !== "available" && elonSideStep !== "complete" && elonMissionTargets[elonSideStep] === id;
+function isAnomalySceneAccessible() {
+  return ALL_PLAYABLE_CONTENT_UNLOCKED || testModeEnabled || isAnomalyContentUnlocked(missionStep);
 }
 
 function isActiveMissionInteractable(id: Interactable["id"]) {
-  if (id === "monolith") return !hasScaleGun;
+  if (id === "monolith") return isAnomalySceneAccessible() && (testModeEnabled || !hasScaleGun);
   if (mainMissionTargets[missionStep] === id) return true;
-  if (isElonSideQuestTarget(id)) return true;
   if (fufuSideStep !== "available" && fufuSideStep !== "complete" && sideMissionTargets.fufu[fufuSideStep] === id) return true;
   if (isCargoAvailable() && cargoSideStep !== "complete") {
     const cargoStep = cargoSideStep === "available" ? "cargoShip" : cargoSideStep;
@@ -9064,6 +9866,7 @@ function isActiveMissionInteractable(id: Interactable["id"]) {
 }
 
 function setCurrentMissionText() {
+  updateAnomalyContentState();
   const textByStep: Record<MainMissionStep, string> = {
     intro: "等待基地中央 AI 史蒂夫建立通信，随后开始基地验收。",
     m1_habitat: "主线一：前往 01 建筑居住舱，检查空气循环与补给柜。",
@@ -9080,22 +9883,31 @@ function setCurrentMissionText() {
     m3_methane: "主线三：前往 04 建筑甲烷燃料厂，完成低功率试生产。",
     m3_solarA: "主线三：前往 01 能源太阳能阵列 A，固定风暴锁扣。",
     m3_garage: "主线三：前往 05 建筑机器人车库，分配 A-12 与 A-01 的调度顺序。",
-    m3_mother: "主线三：回到 01 建筑居住舱史蒂夫终端，签署人机协作协议。",
+    m3_steve: "主线三：回到 01 建筑居住舱史蒂夫终端，签署人机协作协议。",
     complete: "主线完成：阿瑞斯阿尔法基地达到最低生存标准。可继续完成剩余支线。",
   };
 
   const sideHints: string[] = [];
   if (fufuSideStep === "medical") sideHints.push("支线：带福福去医疗舱扫描");
   if (fufuSideStep === "habitat") sideHints.push("支线：带福福回居住舱");
-  if (!elonElevatorRepaired && elonSideStep !== "available") {
-    const target = elonMissionTargets[elonSideStep];
-    sideHints.push(target ? `支线：修复 03 飞船升降梯，当前目标 ${missionLabel(target)}` : "支线：返回 03 飞船升降梯");
-  }
-  if (elonElevatorRepaired && !elonMet) sideHints.push("支线：乘坐 03 飞船升降梯，在高空廊道与埃隆通话");
   if (isCargoAvailable() && cargoSideStep !== "complete") sideHints.push("支线：调查 A-01 的错位货箱");
   if (isPatrolAvailable() && patrolSideStep !== "complete") sideHints.push("支线：跟进 P-03 的外围异常");
   if (isStarlinkMapVisible()) sideHints.push(`轨道链路：${starlinkDisplayStatus()}`);
   setMission(sideHints.length ? `${textByStep[missionStep]} ｜ ${sideHints.join("；")}` : textByStep[missionStep]);
+}
+
+function updateAnomalyContentState() {
+  const visible = isAnomalySceneAccessible();
+  for (const spider of world.darkSpiders) {
+    if (!spider.defeated) {
+      spider.group.visible = true;
+      spider.visual.visible = true;
+    }
+  }
+  if (visible === anomalyContentVisible) return;
+  anomalyContentVisible = visible;
+  world.ancientTreePortal.visible = visible;
+  world.monolith.object.visible = visible;
 }
 
 function setMission(text: string) {
@@ -9122,7 +9934,21 @@ function showDialogue(speaker: string, text: string, seconds: number) {
 }
 
 function isFocusOverlayActive() {
-  return dialogueOpen || cameraMode || scaleGunAiming || photoViewerOpen;
+  const mode = currentGameMode();
+  return mode === "dialogue" || mode === "camera" || mode === "scaleGun" || photoViewerOpen;
+}
+
+function currentGameMode() {
+  return resolveGameMode({
+    started,
+    dialogueOpen,
+    insideInterior: isInsideInteriorSpace(),
+    ridingVehicle: Boolean(ridingRover || ridingAtAt),
+    ridingElevator: Boolean(ridingElevator),
+    cameraMode,
+    scaleGunAiming,
+    wormholeActive: Boolean(wormholeFall) || isWormholeWhiteoutActive(),
+  });
 }
 
 function suppressTransientInfoWindows() {
@@ -9161,6 +9987,7 @@ function updateReadouts() {
   if (onlineCountReadout) {
     onlineCountReadout.textContent = isEnglish() ? `${multiplayer.onlineCount} players` : `${multiplayer.onlineCount}人`;
   }
+  fpsValue.textContent = multiplayer.latencyMs === null ? "--" : `${Math.round(multiplayer.latencyMs)}ms`;
 }
 
 function onResize() {

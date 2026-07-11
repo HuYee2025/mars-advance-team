@@ -98,7 +98,7 @@ wss.on("connection", (socket) => {
     if (message.type === "ping") {
       const player = players.get(message.playerId);
       if (player && player.socket === socket) player.updatedAt = Date.now();
-      send(socket, { type: "pong" });
+      send(socket, { type: "pong", sentAt: finiteNumber(message.sentAt, Date.now(), 0, Number.MAX_SAFE_INTEGER) });
     }
   });
 

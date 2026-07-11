@@ -7,14 +7,14 @@ const strict = process.argv.includes("--strict");
 const updateBaseline = process.argv.includes("--update-baseline");
 const baselinePath = join(root, "scripts/i18n-audit-baseline.json");
 const sourceFiles = collectFiles(["src", "index.html"], [".ts", ".html"]);
-const main = readFileSync(join(root, "src/main.ts"), "utf8");
+const catalog = readFileSync(join(root, "src/i18n/catalog.ts"), "utf8");
 const html = readFileSync(join(root, "index.html"), "utf8");
 
-const zhI18n = extractRecord(main, '"zh-CN": {', '\n  "en-US": {');
-const enI18n = extractRecord(main, '"en-US": {', '\n};\n\nconst exactEnglishTexts');
-const exactEnglishTexts = extractRecord(main, "const exactEnglishTexts: Record<string, string> = {", "\n};\n\nconst runtimeEnglishTexts");
-const runtimeEnglishTexts = extractRecord(main, "const runtimeEnglishTexts: Record<string, string> = {", "\n};\n\nconst englishPhrasePairs");
-const phraseSources = extractPhraseSources(main);
+const zhI18n = extractRecord(catalog, '"zh-CN": {', '\n  "en-US": {');
+const enI18n = extractRecord(catalog, '"en-US": {', '\n};\n\nexport const exactEnglishTexts');
+const exactEnglishTexts = extractRecord(catalog, "export const exactEnglishTexts: Record<string, string> = {", "\n};\n\nexport const runtimeEnglishTexts");
+const runtimeEnglishTexts = extractRecord(catalog, "export const runtimeEnglishTexts: Record<string, string> = {", "\n};\n\nexport const englishPhrasePairs");
+const phraseSources = extractPhraseSources(catalog);
 const i18nKeys = extractHtmlI18nKeys(html);
 
 const errors = [];

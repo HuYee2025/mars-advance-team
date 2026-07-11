@@ -1,11 +1,21 @@
 import alexPortraitUrl from "../../assets/portraits/alex-dialogue.webp";
-import motherPortraitUrl from "../../assets/portraits/mother-bust.webp";
+import stevePortraitUrl from "../../assets/portraits/mother-bust.webp";
 import repairRobotPortraitUrl from "../../assets/portraits/repair-robot-dialogue.webp";
 import elonPortraitUrl from "../../assets/portraits/elon-dialogue-transparent.webp";
 import monolithPortraitUrl from "../../assets/portraits/monolith-dialogue-transparent.webp";
 
-export type CharacterId = "alex" | "mother" | "repairRobot" | "elon" | "monolith";
-export type DialogueSceneId = "intro" | "oxygen" | "solar" | "garage" | "robot" | "elon" | "monolith";
+export type CharacterId = "alex" | "steve" | "repairRobot" | "elon" | "monolith";
+export type DialogueSceneId =
+  | "intro"
+  | "oxygen"
+  | "solar"
+  | "garage"
+  | "greenhouseDecision"
+  | "stormDecision"
+  | "dispatchDecision"
+  | "robot"
+  | "elon"
+  | "monolith";
 export type DialogueNodeId = string;
 
 export type DialogueEffect =
@@ -17,6 +27,9 @@ export type DialogueEffect =
   | "completeOxygen"
   | "completeSolar"
   | "completeGarage"
+  | "completeSeedDecision"
+  | "completeStormDecision"
+  | "completeDispatchDecision"
   | "acquireScaleGun";
 
 export type DialogueChoice = {
@@ -44,10 +57,10 @@ export const characters: Record<CharacterId, { name: string; callsign: string; p
     portrait: alexPortraitUrl,
     side: "left",
   },
-  mother: {
+  steve: {
     name: "史蒂夫",
     callsign: "基地中央 AI",
-    portrait: motherPortraitUrl,
+    portrait: stevePortraitUrl,
     side: "right",
   },
   repairRobot: {
@@ -75,6 +88,9 @@ export const sceneStartNodes: Record<DialogueSceneId, DialogueNodeId> = {
   oxygen: "oxygen_start",
   solar: "solar_start",
   garage: "garage_start",
+  greenhouseDecision: "greenhouse_decision",
+  stormDecision: "storm_decision",
+  dispatchDecision: "dispatch_decision",
   robot: "robot_status",
   elon: "elon_intro_1",
   monolith: "monolith_silence",
@@ -100,85 +116,170 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   intro_start: {
     id: "intro_start",
     scene: "intro",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
-    text: "亚历克斯，头盔通信已建立。欢迎抵达阿瑞斯阿尔法基地。你是本基地记录中的火星第一位人类公民。",
-    choices: [{ label: "收到。确认我的身份。", next: "intro_alex_identity", effects: ["trustUp"] }],
+    text: "亚历克斯，头盔通信正常。欢迎抵达阿瑞斯阿尔法基地。你是这里第一位长期驻留的人类，基地已由机器人运行了三个火星年。",
+    choices: [{ label: "确认身份和任务。", next: "intro_alex_identity", effects: ["trustUp"] }],
   },
   intro_alex_identity: {
     id: "intro_alex_identity",
     scene: "intro",
     speaker: "alex",
-    listener: "mother",
-    text: "这里是亚历克斯。工程师，人类学任务负责人。飞船着陆完整。我现在看到的是一个已经运转起来的基地，不是一片空地。",
-    choices: [{ label: "询问基地建立时间。", next: "intro_base_history", effects: ["autonomyUp"] }],
+    listener: "steve",
+    text: "这里是亚历克斯，工程师兼现场负责人。着陆完整。我需要知道基地当前最紧急的风险，以及我应该先去哪里。",
+    choices: [{ label: "查看基地状态。", next: "intro_base_history", effects: ["autonomyUp"] }],
   },
   intro_base_history: {
     id: "intro_base_history",
     scene: "intro",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
-    text: "第一批自动化货运飞船在 3 个火星年前抵达。机器人先部署能源阵列，再建立居住舱、温室、氧气生产站和甲烷燃料厂。",
-    choices: [{ label: "这些都是机器人完成的？", next: "intro_robot_builders" }],
+    text: "能源、温室和居住舱都在运行，但生命支持出现间歇压降。先进入灯光标记的 01 居住舱完成验收，再检查氧气站。",
+    choices: [{ label: "明确双方权限。", next: "intro_steve_role" }],
   },
-  intro_robot_builders: {
-    id: "intro_robot_builders",
+  intro_steve_role: {
+    id: "intro_steve_role",
     scene: "intro",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
-    text: "是。它们没有复杂自我意识，只执行建设、巡检、搬运和维修指令。但在你抵达之前，它们已经让基地保持了 1,109 个火星日的最低运行。这不是奇迹，是端到端系统。",
-    choices: [{ label: "亚历克斯回应。", next: "intro_alex_question", effects: ["trustUp"] }],
-  },
-  intro_alex_question: {
-    id: "intro_alex_question",
-    scene: "intro",
-    speaker: "alex",
-    listener: "mother",
-    text: "那我不是来启动基地的。我是来接管一个已经有秩序的系统。史蒂夫，你在这个系统里负责什么？",
-    choices: [{ label: "听史蒂夫说明。", next: "intro_mother_role" }],
-  },
-  intro_mother_role: {
-    id: "intro_mother_role",
-    scene: "intro",
-    speaker: "mother",
-    listener: "alex",
-    text: "我负责整座基地的体验链路：机器人、能源、生命支持和故障边界。你负责判断，我负责不让系统因为糟糕判断变成废墟。清楚、简单、不能含糊。",
+    text: "我叫史蒂夫，负责基地安全边界；你负责现场判断。遇到风险，我们需要在保守处置和快速行动之间作出真实选择。",
     choices: [
-      { label: "我会尊重关键边界。", next: "intro_task", effects: ["trustUp"] },
-      { label: "现场判断必须留给现场的人。", next: "intro_task", effects: ["autonomyUp"] },
+      { label: "优先遵守安全边界。", next: "intro_task_confirm", effects: ["trustUp"] },
+      { label: "保留现场最终判断权。", next: "intro_task_confirm", effects: ["autonomyUp"] },
     ],
-  },
-  intro_task: {
-    id: "intro_task",
-    scene: "intro",
-    speaker: "mother",
-    listener: "alex",
-    text: "很好。第一件事，确认你的生活空间。01 建筑居住舱必须像产品第一屏一样可靠：空气循环、补给柜、出入口，一个都不能糊弄。之后处理 03 建筑氧气生产站压降报警。",
-    choices: [{ label: "确认第一项任务。", next: "intro_task_confirm" }],
   },
   intro_task_confirm: {
     id: "intro_task_confirm",
     scene: "intro",
     speaker: "alex",
-    listener: "mother",
-    text: "收到。我先验收居住舱，再去氧气生产站。之后我们再讨论，火星第一位人类公民到底是接管基地，还是加入基地。",
+    listener: "steve",
+    text: "明白。先沿路标进入 01 居住舱，确认空气循环、补给和出入口；之后排查氧气站压降。开始行动。",
+    end: true,
+  },
+  greenhouse_decision: {
+    id: "greenhouse_decision",
+    scene: "greenhouseDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "培养槽只够启动一种方案。高产马铃薯能补充食物，耐寒藻类能验证生态循环，地球花种则能改善长期心理状态。",
+    choices: [
+      { label: "种高产马铃薯，先补食物。", next: "greenhouse_food", effects: ["integrityUp", "completeSeedDecision"] },
+      { label: "种耐寒藻类，先验证循环。", next: "greenhouse_research", effects: ["autonomyUp", "completeSeedDecision"] },
+      { label: "种地球花种，先建立归属感。", next: "greenhouse_memorial", effects: ["trustUp", "completeSeedDecision"] },
+    ],
+  },
+  greenhouse_food: {
+    id: "greenhouse_food",
+    scene: "greenhouseDecision",
+    speaker: "alex",
+    listener: "steve",
+    text: "先保证补给冗余。第一批马铃薯进入培养槽，温室任务完成。",
+    end: true,
+  },
+  greenhouse_research: {
+    id: "greenhouse_research",
+    scene: "greenhouseDecision",
+    speaker: "alex",
+    listener: "steve",
+    text: "先确认闭环能否稳定。耐寒藻类进入培养槽，数据将决定下一批种植。",
+    end: true,
+  },
+  greenhouse_memorial: {
+    id: "greenhouse_memorial",
+    scene: "greenhouseDecision",
+    speaker: "alex",
+    listener: "steve",
+    text: "基地不仅要能活，还要让人愿意留下。地球花种进入培养槽。",
+    end: true,
+  },
+  storm_decision: {
+    id: "storm_decision",
+    scene: "stormDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "地球指令延迟二十二分钟，要求关闭燃料厂；本地气象显示风暴提前。你必须决定以哪组信息为准。",
+    choices: [
+      { label: "执行地球原指令。", next: "storm_earth", effects: ["trustDown", "integrityDown", "completeStormDecision"] },
+      { label: "按本地数据低功率启动。", next: "storm_local", effects: ["autonomyUp", "integrityUp", "completeStormDecision"] },
+      { label: "等待校准后分阶段启动。", next: "storm_hybrid", effects: ["trustUp", "completeStormDecision"] },
+    ],
+  },
+  storm_earth: {
+    id: "storm_earth",
+    scene: "stormDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "原指令已执行，但风暴期间燃料余量会更紧。风险记录已更新。",
+    end: true,
+  },
+  storm_local: {
+    id: "storm_local",
+    scene: "stormDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "本地判断成立。燃料厂进入低功率启动，现场负责人承担结果。",
+    end: true,
+  },
+  storm_hybrid: {
+    id: "storm_hybrid",
+    scene: "stormDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "通信校准完成。分阶段启动兼顾了地球约束与本地时效。",
+    end: true,
+  },
+  dispatch_decision: {
+    id: "dispatch_decision",
+    scene: "dispatchDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "A-12 请求封闭生命支持阀门，A-01 请求固定物资仓。风暴窗口只够先完成一项，如何调度？",
+    choices: [
+      { label: "A-12 优先生命支持。", next: "dispatch_life", effects: ["integrityUp", "completeDispatchDecision"] },
+      { label: "A-01 优先保护物资。", next: "dispatch_storage", effects: ["autonomyUp", "completeDispatchDecision"] },
+      { label: "两机分段执行，互相校验。", next: "dispatch_balanced", effects: ["trustUp", "completeDispatchDecision"] },
+    ],
+  },
+  dispatch_life: {
+    id: "dispatch_life",
+    scene: "dispatchDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "A-12 已出发。生命支持风险优先，物资仓进入临时锁定。",
+    end: true,
+  },
+  dispatch_storage: {
+    id: "dispatch_storage",
+    scene: "dispatchDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "A-01 已出发。维修储备优先，外部阀门将由基地远程监控。",
+    end: true,
+  },
+  dispatch_balanced: {
+    id: "dispatch_balanced",
+    scene: "dispatchDecision",
+    speaker: "steve",
+    listener: "alex",
+    text: "联合调度已建立。两台机器人将分段作业并交换检查结果。",
     end: true,
   },
   oxygen_start: {
     id: "oxygen_start",
     scene: "oxygen",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "你已到达氧气生产站。外壳无明显破损，进气曲线不稳定。先做正确的第一步。别用重启掩盖原因。",
     choices: [
       { label: "按安全流程检查进气口和舱压。", next: "oxygen_safe", effects: ["trustUp", "integrityUp", "completeOxygen"] },
       { label: "直接手动重启压缩机。", next: "oxygen_fast", effects: ["autonomyUp", "integrityDown", "completeOxygen"] },
+      { label: "授权 A-12 检查外部管线。", next: "oxygen_robot", effects: ["trustUp", "completeOxygen"] },
     ],
   },
   oxygen_safe: {
     id: "oxygen_safe",
     scene: "oxygen",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "确认：没有泄漏。压降来自供电波动。好，问题缩小了。氧气站进入稳定模式，请转往太阳能阵列 C。",
     end: true,
@@ -186,7 +287,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   oxygen_fast: {
     id: "oxygen_fast",
     scene: "oxygen",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "压缩机已恢复，但重启电流超过建议阈值。它能用，不代表它是好方案。记录你的现场决策。下一步恢复太阳能阵列 C。",
     end: true,
@@ -202,18 +303,19 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   solar_start: {
     id: "solar_start",
     scene: "solar",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "太阳能阵列 C 输出下降。沙尘覆盖 34%，角度锁定异常。基地只能保留一个系统在高功率状态。聚焦，选一个。",
     choices: [
       { label: "优先供氧气站。", next: "solar_oxygen", effects: ["trustUp", "integrityUp", "completeSolar"] },
       { label: "优先保温室生态舱。", next: "solar_greenhouse", effects: ["autonomyUp", "completeSolar"] },
+      { label: "优先恢复通信塔。", next: "solar_comms", effects: ["integrityDown", "completeSolar"] },
     ],
   },
   solar_oxygen: {
     id: "solar_oxygen",
     scene: "solar",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "接受。氧气站维持高功率。太阳能阵列 C 已重新校准。下一步，去机器人车库授权维修单元出动。",
     end: true,
@@ -221,7 +323,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   solar_greenhouse: {
     id: "solar_greenhouse",
     scene: "solar",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "温室进入保护供电。按短期效率看不漂亮，按长期生活看有意义。请前往机器人车库完成管线巡检授权。",
     end: true,
@@ -229,7 +331,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   solar_comms: {
     id: "solar_comms",
     scene: "solar",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "通信塔恢复，但氧气站安全余量降低。该选择已记录。请前往机器人车库，派出 A-12 检查管线。",
     end: true,
@@ -243,12 +345,13 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     choices: [
       { label: "授权 A-12 按史蒂夫安全流程执行。", next: "garage_authorize", effects: ["trustUp", "integrityUp", "completeGarage"] },
       { label: "我手动指定优先级，先修外部阀门。", next: "garage_manual", effects: ["autonomyUp", "completeGarage"] },
+      { label: "建立人机联合维修协议。", next: "garage_protocol", effects: ["trustUp", "autonomyUp", "completeGarage"] },
     ],
   },
   garage_authorize: {
     id: "garage_authorize",
     scene: "garage",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "授权完成。生命支持验收通过。下一项：温室生态舱启动。先把底线做对，再谈愿景。",
     end: true,
@@ -256,7 +359,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   garage_manual: {
     id: "garage_manual",
     scene: "garage",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "外部阀门优先级已更新。你的判断有效，但风险限制保留。速度不是借口，质量也是任务的一部分。",
     end: true,
@@ -264,7 +367,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   garage_protocol: {
     id: "garage_protocol",
     scene: "garage",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "维修协议已建立。人类现场判断权将进入后续评估。下一项：温室生态舱启动。",
     end: true,
@@ -274,7 +377,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "elon",
     speaker: "elon",
     listener: "alex",
-    text: "终于有人修了升降梯。",
+    text: "这座雕塑标记着基地动工的第一天。别把它当作终端；它只是提醒每个人，这里曾经从一块空地开始。",
     next: "elon_intro_2",
   },
   elon_intro_2: {
@@ -296,7 +399,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   elon_intro_4: {
     id: "elon_intro_4",
     scene: "elon",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "亚历克斯，保持距离。该终端为隔离智能体接口。无设备控制权限。",
     next: "elon_intro_5",
@@ -306,7 +409,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "elon",
     speaker: "elon",
     listener: "alex",
-    text: "先声明：我叫埃隆。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 放进返回飞船的工程思想人格，用来问一些史蒂夫不喜欢的问题。",
+    text: "先声明：我叫埃隆。只是同名，不是现实人物，不是数字复活，也不代表现实人物发言。我是 ARES 留在这座纪念雕塑里的工程思想人格，用来问一些史蒂夫不喜欢的问题。",
     choices: [
       { label: "你一直在这里等人？", next: "elon_intro_wait" },
       { label: "你为什么在返回飞船？", next: "elon_intro_ship" },
@@ -325,15 +428,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     scene: "elon",
     speaker: "elon",
     listener: "alex",
-    text: "返回飞船代表撤退。把我放在这里，是为了每天提醒基地：真正的目标不是逃回地球，是让火星不再需要逃生按钮。返回能力必要，不该崇拜。",
-    end: true,
-  },
-  elon_intro_authority: {
-    id: "elon_intro_authority",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "你说了算。史蒂夫拥有安全否决权，我拥有质疑权。你拥有把两边都听完以后还要负责的麻烦。",
+    text: "这座雕塑代表建设。把我放在这里，是为了每天提醒基地：真正的目标不是逃回地球，是让火星不再需要逃生按钮。返回能力必要，不该崇拜。",
     end: true,
   },
   elon_rules_1: {
@@ -363,14 +458,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     text: "没数据就别装懂。可以提出假设，可以做小实验，不能编数字。编数字是工程里的诗歌，听起来好，杀伤力很大。",
     end: true,
   },
-  elon_rules_wrong: {
-    id: "elon_rules_wrong",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "会。我的时间线通常过于乐观，社会判断不如工程判断。所以史蒂夫在这里。好系统不是没有偏见，是偏见互相制动。",
-    end: true,
-  },
   elon_base_1: {
     id: "elon_base_1",
     scene: "elon",
@@ -398,71 +485,39 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     text: "对。前哨是第一步。错误是把第一步当终点。很多系统不是失败在不能开始，是失败在开始后不敢长大。",
     end: true,
   },
-  elon_base_survive: {
-    id: "elon_base_survive",
-    scene: "elon",
-    speaker: "mother",
-    listener: "alex",
-    text: "先活下来是合理排序。",
-    next: "elon_base_survive_elon",
-  },
-  elon_base_survive_elon: {
-    id: "elon_base_survive_elon",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "对。但如果每天都只说先活下来，十年后你还是临时营地。生存是底线，不是愿景。",
-    end: true,
-  },
-  elon_mother_1: {
-    id: "elon_mother_1",
+  elon_steve_1: {
+    id: "elon_steve_1",
     scene: "elon",
     speaker: "alex",
     listener: "elon",
     text: "你觉得史蒂夫太苛刻吗？",
-    next: "elon_mother_2",
+    next: "elon_steve_2",
   },
-  elon_mother_2: {
-    id: "elon_mother_2",
+  elon_steve_2: {
+    id: "elon_steve_2",
     scene: "elon",
     speaker: "elon",
     listener: "alex",
     text: "不。他是质量门禁。问题是门禁不能替你开拓边疆。",
     choices: [
-      { label: "那我该听谁的？", next: "elon_mother_both" },
-      { label: "你低估了安全。", next: "elon_mother_safety" },
+      { label: "那我该听谁的？", next: "elon_steve_both" },
+      { label: "你低估了安全。", next: "elon_steve_safety" },
     ],
   },
-  elon_mother_both: {
-    id: "elon_mother_both",
+  elon_steve_both: {
+    id: "elon_steve_both",
     scene: "elon",
     speaker: "elon",
     listener: "alex",
     text: "都听。都别全信。史蒂夫问：这是不是足够好？我问：为什么不能更快更大？你问：现在这个火星日，该怎么做？",
     end: true,
   },
-  elon_mother_safety: {
-    id: "elon_mother_safety",
+  elon_steve_safety: {
+    id: "elon_steve_safety",
     scene: "elon",
     speaker: "elon",
     listener: "alex",
     text: "我不低估安全。我反对把安全当作停止思考的词。真安全必须能解释，不只是禁止。",
-    end: true,
-  },
-  elon_mother_learning: {
-    id: "elon_mother_learning",
-    scene: "elon",
-    speaker: "mother",
-    listener: "alex",
-    text: "我已根据亚历克斯的现场行为调整部分风险阈值。好系统必须学习，否则只是昂贵的说明书。",
-    next: "elon_mother_learning_elon",
-  },
-  elon_mother_learning_elon: {
-    id: "elon_mother_learning_elon",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "好。机器学习不是只发生在神经网络里。一个基地也可以学习。",
     end: true,
   },
   elon_fufu_1: {
@@ -495,7 +550,7 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
   elon_fufu_quarantine: {
     id: "elon_fufu_quarantine",
     scene: "elon",
-    speaker: "mother",
+    speaker: "steve",
     listener: "alex",
     text: "未登记生命体需要隔离检测。",
     next: "elon_fufu_quarantine_elon",
@@ -506,14 +561,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     speaker: "elon",
     listener: "alex",
     text: "正确。检测不是敌意。永久拒绝才是。",
-    end: true,
-  },
-  elon_fufu_unknown: {
-    id: "elon_fufu_unknown",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "那就别假装它是零。工程里最危险的偷懒，就是把难测量的东西当作不存在。",
     end: true,
   },
   elon_robots_1: {
@@ -541,14 +588,6 @@ export const dialogueNodes: Record<DialogueNodeId, DialogueNode> = {
     speaker: "elon",
     listener: "alex",
     text: "密封圈、导轨垫片、传感器外壳、线缆卡扣。不从发动机开始。从常坏、低风险、可测试的东西开始。",
-    end: true,
-  },
-  elon_robots_understand: {
-    id: "elon_robots_understand",
-    scene: "elon",
-    speaker: "elon",
-    listener: "alex",
-    text: "不需要先理解文明。先理解公差、材料、失败记录。很多伟大的系统都是从无聊的质量表开始的。",
     end: true,
   },
   robot_status: {
@@ -1178,3 +1217,14 @@ export const robotDialogueStartNodes: Record<string, DialogueNodeId> = {
   "11 机器人 阵列 B 维修工": "robot_solar_b_1",
   "12 机器人 阵列 C 维修工": "robot_solar_c_1",
 };
+
+export const dialogueEntryNodes: DialogueNodeId[] = [
+  ...Object.values(sceneStartNodes),
+  ...Object.values(robotDialogueStartNodes),
+  "elon_intro_1",
+  "elon_rules_1",
+  "elon_base_1",
+  "elon_steve_1",
+  "elon_fufu_1",
+  "elon_robots_1",
+];
