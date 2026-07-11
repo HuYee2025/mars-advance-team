@@ -23,11 +23,11 @@ export type RemotePlayer = {
 export type ClientMessage =
   | { type: "join"; playerId: string; displayName: string; roomId: MultiplayerRoomId }
   | { type: "state"; playerId: string; snapshot: PlayerSnapshot }
-  | { type: "ping"; playerId: string };
+  | { type: "ping"; playerId: string; sentAt: number };
 
 export type ServerMessage =
   | { type: "welcome"; playerId: string; peers: RemotePlayer[] }
   | { type: "player_joined"; player: RemotePlayer }
   | { type: "player_state"; playerId: string; snapshot: PlayerSnapshot }
   | { type: "player_left"; playerId: string }
-  | { type: "pong" };
+  | { type: "pong"; sentAt: number };

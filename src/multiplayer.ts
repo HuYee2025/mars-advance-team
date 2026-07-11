@@ -56,6 +56,7 @@ export class MultiplayerClient {
   private reconnectTimer: number | null = null;
   private sendAccumulator = 0;
   private pingAccumulator = 0;
+  private measuredLatencyMs: number | null = null;
   private remotes = new Map<string, RemoteAvatar>();
 
   constructor(options: MultiplayerClientOptions) {
@@ -68,6 +69,10 @@ export class MultiplayerClient {
     return 1 + this.remotes.size;
   }
 
+  get latencyMs() {
+    return this.measuredLatencyMs;
+  }
+
   connect() {
     if (this.socket || this.connected) return;
     this.shouldReconnect = true;
@@ -77,6 +82,7 @@ export class MultiplayerClient {
   disconnect() {
     this.shouldReconnect = false;
     this.connected = false;
+    this.measuredLatencyMs = null;
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -107,7 +113,7 @@ export class MultiplayerClient {
 
     if (this.connected && this.pingAccumulator >= PING_INTERVAL) {
       this.pingAccumulator = 0;
-      this.send({ type: "ping", playerId: this.playerId });
+      this.send({ type: "ping", playerId: this.playerId, sentAt: Date.now() });
     }
 
     for (const [playerId, remote] of this.remotes) {
@@ -176,6 +182,10 @@ export class MultiplayerClient {
   }
 
   private handleMessage(message: ServerMessage) {
+    if (message.type === "pong") {
+      this.measuredLatencyMs = Math.max(0, Math.min(999, Date.now() - message.sentAt));
+      return;
+    }
     if (message.type === "welcome") {
       for (const peer of message.peers) this.upsertRemote(peer, false);
       return;

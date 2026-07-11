@@ -21,6 +21,15 @@ export type StarlinkConstellation = {
   trainCount: number;
   satellitesPerTrain: number;
   initialized: boolean;
+  renderBatches?: StarlinkRenderBatches;
+};
+
+type StarlinkRenderBatches = {
+  buses: THREE.InstancedMesh;
+  antennas: THREE.InstancedMesh;
+  panels: THREE.InstancedMesh;
+  glints: THREE.Points;
+  glintPositions: THREE.BufferAttribute;
 };
 
 const STARLINK_BASE_ALTITUDE = 190;
@@ -29,6 +38,9 @@ const SATELLITES_PER_TRAIN = 7;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const scratchPosition = new THREE.Vector3();
 const scratchForward = new THREE.Vector3();
+const scratchMatrix = new THREE.Matrix4();
+const scratchLocalMatrix = new THREE.Matrix4();
+const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 let starlinkGlintTexture: THREE.CanvasTexture | null = null;
 
 export function createStarlinkConstellation(planetRadius: number) {
@@ -51,6 +63,13 @@ export function createStarlinkConstellation(planetRadius: number) {
   };
 
   generateFixedStarlinkTrains(constellation);
+  constellation.renderBatches = createStarlinkRenderBatches(constellation);
+  group.add(
+    constellation.renderBatches.buses,
+    constellation.renderBatches.antennas,
+    constellation.renderBatches.panels,
+    constellation.renderBatches.glints,
+  );
   constellation.initialized = true;
   return constellation;
 }
@@ -71,8 +90,9 @@ export function updateStarlinkConstellation(constellation: StarlinkConstellation
 
     const glint = 0.82 + Math.sin(elapsedSeconds * 1.45 + index * 0.83) * 0.18;
     satellite.light.intensity = (satellite.layer === "relay" ? 0.34 : 0.26) * stormDimming * glint;
-    satellite.object.visible = stormStrength < 0.97 || index % 2 === 0;
+    satellite.object.userData.renderVisible = stormStrength < 0.97 || index % 2 === 0;
   });
+  updateStarlinkRenderBatches(constellation, stormDimming);
 }
 
 export function starlinkStatusText(constellation: StarlinkConstellation) {
@@ -121,6 +141,29 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
   object.name = data.id;
   object.userData.starlinkId = data.id;
 
+  const visibleScale = data.layer === "relay" ? 1.7 : 1.55;
+  const hitArea = new THREE.Mesh(
+    new THREE.SphereGeometry(4.1, 8, 6),
+    new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      colorWrite: false,
+      depthWrite: false,
+    })
+  );
+  hitArea.name = `${data.id} scale gun hit area`;
+  hitArea.layers.set(2);
+
+  object.add(hitArea);
+  object.scale.setScalar(visibleScale);
+  object.userData.renderVisible = true;
+
+  const light = new THREE.PointLight(0xffffff, data.layer === "relay" ? 0.58 : 0.46, 42);
+  return { ...data, object, light };
+}
+
+function createStarlinkRenderBatches(constellation: StarlinkConstellation): StarlinkRenderBatches {
+  const count = constellation.satellites.length;
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.22,
@@ -135,53 +178,62 @@ function createStarlinkSatellite(data: Omit<StarlinkSatellite, "object" | "light
     emissive: 0xffffff,
     emissiveIntensity: 1.18,
   });
-  const antennaMaterial = new THREE.MeshStandardMaterial({
-    color: 0x252a2d,
-    roughness: 0.56,
-    metalness: 0.32,
-  });
+  const antennaMaterial = new THREE.MeshStandardMaterial({ color: 0x252a2d, roughness: 0.56, metalness: 0.32 });
+  const buses = new THREE.InstancedMesh(new THREE.BoxGeometry(0.22, 0.035, 0.15), bodyMaterial, count);
+  const antennas = new THREE.InstancedMesh(new THREE.BoxGeometry(0.19, 0.012, 0.12), antennaMaterial, count);
+  const panels = new THREE.InstancedMesh(new THREE.BoxGeometry(0.48, 0.012, 0.17), panelMaterial, count * 2);
+  for (const mesh of [buses, antennas, panels]) {
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 4;
+  }
+  buses.name = "Starlink instanced buses";
+  antennas.name = "Starlink instanced antennas";
+  panels.name = "Starlink instanced solar panels";
 
-  const visibleScale = data.layer === "relay" ? 1.7 : 1.55;
-  const bus = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.15), bodyMaterial);
-  const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.012, 0.12), antennaMaterial);
-  antenna.position.y = -0.026;
-  const leftPanel = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.012, 0.17), panelMaterial);
-  leftPanel.position.x = -0.36;
-  const rightPanel = leftPanel.clone();
-  rightPanel.position.x = 0.36;
-  const glint = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: getStarlinkGlintTexture(),
+  const glintGeometry = new THREE.BufferGeometry();
+  const glintPositions = new THREE.Float32BufferAttribute(new Float32Array(count * 3), 3);
+  glintPositions.setUsage(THREE.DynamicDrawUsage);
+  glintGeometry.setAttribute("position", glintPositions);
+  const glints = new THREE.Points(glintGeometry, new THREE.PointsMaterial({
     color: 0xffffff,
+    size: 7,
+    sizeAttenuation: false,
     transparent: true,
-    opacity: data.layer === "relay" ? 1 : 0.96,
+    opacity: 0.94,
     depthWrite: false,
+    map: getStarlinkGlintTexture(),
+    alphaTest: 0.04,
   }));
-  glint.scale.setScalar(data.layer === "relay" ? 0.86 : 0.76);
+  glints.name = "Starlink instanced glints";
+  glints.frustumCulled = false;
+  glints.renderOrder = 4;
+  return { buses, antennas, panels, glints, glintPositions };
+}
 
-  const hitArea = new THREE.Mesh(
-    new THREE.SphereGeometry(4.1, 8, 6),
-    new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      colorWrite: false,
-      depthWrite: false,
-    })
-  );
-  hitArea.name = `${data.id} scale gun hit area`;
-
-  object.add(bus, antenna, leftPanel, rightPanel, glint, hitArea);
-  object.scale.setScalar(visibleScale);
-  object.traverse((child) => {
-    if (child instanceof THREE.Mesh) {
-      child.castShadow = false;
-      child.receiveShadow = false;
-      child.renderOrder = 4;
-    }
+function updateStarlinkRenderBatches(constellation: StarlinkConstellation, stormDimming: number) {
+  const batches = constellation.renderBatches;
+  if (!batches) return;
+  constellation.satellites.forEach((satellite, index) => {
+    const visible = satellite.object.userData.renderVisible !== false;
+    satellite.object.updateMatrix();
+    const rootMatrix = visible ? satellite.object.matrix : hiddenMatrix;
+    batches.buses.setMatrixAt(index, rootMatrix);
+    scratchLocalMatrix.makeTranslation(0, -0.026, 0);
+    batches.antennas.setMatrixAt(index, scratchMatrix.copy(rootMatrix).multiply(scratchLocalMatrix));
+    scratchLocalMatrix.makeTranslation(-0.36, 0, 0);
+    batches.panels.setMatrixAt(index * 2, scratchMatrix.copy(rootMatrix).multiply(scratchLocalMatrix));
+    scratchLocalMatrix.makeTranslation(0.36, 0, 0);
+    batches.panels.setMatrixAt(index * 2 + 1, scratchMatrix.copy(rootMatrix).multiply(scratchLocalMatrix));
+    const position = visible ? satellite.object.position : scratchPosition.set(0, -100000, 0);
+    batches.glintPositions.setXYZ(index, position.x, position.y, position.z);
   });
-
-  const light = new THREE.PointLight(0xffffff, data.layer === "relay" ? 0.58 : 0.46, 42);
-  object.add(light);
-  return { ...data, object, light };
+  batches.buses.instanceMatrix.needsUpdate = true;
+  batches.antennas.instanceMatrix.needsUpdate = true;
+  batches.panels.instanceMatrix.needsUpdate = true;
+  batches.glintPositions.needsUpdate = true;
+  (batches.glints.material as THREE.PointsMaterial).opacity = 0.94 * stormDimming;
 }
 
 function getStarlinkGlintTexture() {

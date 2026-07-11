@@ -107,9 +107,20 @@
           </h1>
           <p class="title-text" data-i18n="title.text">终于，火星基地迎来了第一位人类居民。</p>
           <div class="title-actions">
-            <button id="enter-base" class="title-action title-action-primary" type="button" data-key="E" data-i18n="title.enter">进入基地</button>
             <button id="story-summary" class="title-action title-action-secondary" type="button" data-key="Q" data-i18n="title.story">故事概要</button>
+            <button id="enter-base" class="title-action title-action-primary" type="button" data-key="E" data-i18n="title.enter">进入基地</button>
           </div>
+          <section class="title-update" aria-labelledby="title-update-heading">
+            <h2 id="title-update-heading" data-i18n="title.updateHeading">7-11 更新内容</h2>
+            <div class="title-update-row">
+              <span class="title-update-index" aria-hidden="true">01</span>
+              <p data-i18n="title.update.flight">穿越虫洞可以获得 X 飞行战机进行空战，守卫火星基地。</p>
+            </div>
+            <div class="title-update-row">
+              <span class="title-update-index" aria-hidden="true">02</span>
+              <p data-i18n="title.update.mech">体验驾驶超大四足机甲步行战车行走在火星上。</p>
+            </div>
+          </section>
         </div>
       </section>
       <section class="hud" aria-label="基地状态" data-i18n-attr="aria-label:hud.aria">
@@ -183,6 +194,31 @@
         <span data-i18n="mission.current">当前任务</span>
         <p id="mission-text"></p>
       </section>
+      <section id="orbital-defense-hud" aria-label="轨道防御界面" aria-hidden="true" tabindex="-1" data-i18n-attr="aria-label:orbital.aria">
+        <div class="orbital-mission-card">
+          <span>ARES ORBITAL DEFENSE</span>
+          <strong id="orbital-target-readout" data-i18n="orbital.search">搜索撞击目标</strong>
+          <small data-i18n="orbital.controls">雷达搜索 · 鼠标转向 · A D 左右飞行 / 转向 · W S 上下飞行 · Shift 加速 / Ctrl 减速 · Space / J 连发 · I 锁定 · K 高能炮 · C 视角 · Q 返航</small>
+        </div>
+        <div class="orbital-reticle" aria-hidden="true"><span></span></div>
+        <div id="orbital-heavy-readout" class="orbital-heavy-readout" aria-live="polite" hidden></div>
+        <div id="orbital-health-bars" class="orbital-health-bars" aria-hidden="true"></div>
+        <div id="orbital-radar" class="orbital-radar" aria-label="危险陨石雷达" data-i18n-attr="aria-label:orbital.radar" hidden>
+          <span class="orbital-radar-ring ring-a"></span>
+          <span class="orbital-radar-ring ring-b"></span>
+          <span class="orbital-radar-ring ring-c"></span>
+          <span class="orbital-radar-heading-tick" aria-hidden="true"></span>
+          <span id="orbital-radar-threats" class="orbital-radar-threats" aria-hidden="true"></span>
+          <b class="orbital-radar-ship" aria-hidden="true"></b>
+          <small>DANGER RADAR</small>
+        </div>
+        <div class="orbital-readouts">
+          <div><span>THREAT</span><strong id="orbital-threat-readout">3/3</strong></div>
+          <div><span>TIME</span><strong id="orbital-time-readout">115s</strong></div>
+          <div><span>VEL</span><strong id="orbital-speed-readout">0 u/s</strong></div>
+          <div><span>VIEW</span><strong id="orbital-view-readout">3P</strong></div>
+        </div>
+      </section>
       <div id="labels" aria-hidden="true"></div>
       <section id="map-overlay" aria-label="基地地图" aria-live="polite" aria-hidden="true">
         <div class="map-card">
@@ -193,14 +229,24 @@
           <div class="map-radar" id="map-radar">
             <div class="map-ring ring-a"></div>
             <div class="map-ring ring-b"></div>
+            <div class="map-ring ring-c"></div>
             <div class="map-cross x"></div>
             <div class="map-cross y"></div>
+            <div class="map-heading-tick" aria-hidden="true"></div>
             <div class="map-player" aria-hidden="true"></div>
+          </div>
+          <div class="radar-summary" id="radar-summary" aria-live="polite"></div>
+          <div class="radar-legend" id="radar-legend" aria-label="Radar legend">
+            <span class="radar-legend-item" data-radar-kind="rover"><i aria-hidden="true"></i><span data-radar-legend-label="rover"></span></span>
+            <span class="radar-legend-item" data-radar-kind="xwing"><i aria-hidden="true"></i><span data-radar-legend-label="xwing"></span></span>
+            <span class="radar-legend-item" data-radar-kind="mission"><i aria-hidden="true"></i><span data-radar-legend-label="mission"></span></span>
+            <span class="radar-legend-item" data-radar-kind="building"><i aria-hidden="true"></i><span data-radar-legend-label="building"></span></span>
           </div>
           <div class="map-list" id="map-list"></div>
         </div>
       </section>
       <div id="interaction-prompt" aria-live="polite"></div>
+      <div id="xwing-collider-debug" aria-live="polite" hidden></div>
       <div id="interaction-choice" aria-live="polite" aria-hidden="true"></div>
       <section id="scale-gun-overlay" aria-label="缩放枪瞄准界面" aria-hidden="true">
         <div class="scale-reticle" aria-hidden="true">
@@ -318,7 +364,7 @@
               <div class="guide-key wide"><b>C</b><span>第一 / 第三人称</span></div>
               <div class="guide-key wide"><b>X</b><span>开 / 收缩放枪</span></div>
               <div class="guide-key wide"><b>I</b><span>开 / 收激光剑</span></div>
-              <div class="guide-key wide"><b>J</b><span>举起激光剑</span></div>
+              <div class="guide-key wide"><b>J</b><span>攻击 / 举剑</span></div>
               <div class="guide-key wide"><b>WASD</b><span>枪瞄准</span></div>
               <div class="guide-key wide"><b>E / Q</b><span>枪放大 / 缩小</span></div>
               <div class="guide-key wide"><b>= / -</b><span>备用缩放</span></div>
@@ -328,6 +374,6 @@
         </div>
       </section>
     </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

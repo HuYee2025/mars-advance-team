@@ -2,6 +2,10 @@ import * as THREE from "three";
 import marsAlbedoUrl from "./assets/mars-albedo-generated.webp";
 import meteorRockUrl from "./assets/meteor-rock-generated.png";
 import { createStarlinkConstellation, type StarlinkConstellation } from "./orbital-starlink";
+import { createCybertruckRover, createUtilityBot } from "./world/core-procedural-models";
+import { createAtAt, type AtAtControl } from "./world/at-at";
+import { isSpiderInShade } from "./core/spider-visibility";
+export { isSpiderInShade, SPIDER_SHADE_DOT_MAX } from "./core/spider-visibility";
 
 export type Interactable = {
   id:
@@ -18,7 +22,8 @@ export type Interactable = {
     | "solarB"
     | "solarC"
     | "cargoShip"
-    | "monolith";
+    | "monolith"
+    | "elonStatue";
   label: string;
   prompt: string;
   object: THREE.Object3D;
@@ -67,6 +72,7 @@ type RoverSurfaceEffectState = {
 
 export type MarsWorld = {
   root: THREE.Group;
+  atAt: AtAtControl;
   interactables: Interactable[];
   landmarks: Landmark[];
   unnumberedObjects: UnnumberedObject[];
@@ -120,6 +126,11 @@ export type DarkSpider = {
   attacking: boolean;
   damageFactor: number;
   lastDamageAt: number;
+  maxHealth: number;
+  health: number;
+  hitUntil: number;
+  defeated: boolean;
+  deathStartedAt: number;
 };
 
 export type SpiderLightThreat = {
@@ -258,6 +269,8 @@ const VEHICLE_ROUTE_TERRAIN_SAFE_RADIUS = 15;
 const VEHICLE_ROUTE_ROCK_CLEARANCE = 12;
 const VEHICLE_BASE_TARGET_X = expandWorldCoordinate(-18);
 const VEHICLE_BASE_TARGET_Z = expandWorldCoordinate(-124);
+export const AT_AT_SPAWN_X = -4;
+export const AT_AT_SPAWN_Z = 403;
 export const CRASHED_SHIP_SITE_NORMAL = new THREE.Vector3(-0.2, -0.62, -0.76).normalize();
 const ANCIENT_TREE_ARCH_NORMAL = normalFromLonLat(ANCIENT_TREE_ARCH_LON, ANCIENT_TREE_ARCH_LAT);
 const SPIDER_ARRIVAL_NORMAL = ANCIENT_TREE_ARCH_NORMAL.clone().lerp(CRASHED_SHIP_SITE_NORMAL, 0.72).normalize();
@@ -338,8 +351,13 @@ export function expandWorldCoordinate(value: number) {
   return value * WORLD_EXPANSION;
 }
 
-const CLOSE_METEOR_CENTER_NORMAL = planetNormal(expandWorldCoordinate(-18), expandWorldCoordinate(-124), new THREE.Vector3());
-const CLOSE_METEOR_LOOK_NORMAL = planetNormal(expandWorldCoordinate(18), expandWorldCoordinate(18), new THREE.Vector3());
+export const PLAYER_SPAWN_X = expandWorldCoordinate(-10);
+export const PLAYER_SPAWN_Z = expandWorldCoordinate(14);
+export const PLAYER_SPAWN_TARGET_X = spread(0);
+export const PLAYER_SPAWN_TARGET_Z = spread(18);
+
+const CLOSE_METEOR_CENTER_NORMAL = planetNormal(PLAYER_SPAWN_X, PLAYER_SPAWN_Z, new THREE.Vector3());
+const CLOSE_METEOR_LOOK_NORMAL = planetNormal(PLAYER_SPAWN_TARGET_X, PLAYER_SPAWN_TARGET_Z, new THREE.Vector3());
 const CLOSE_METEOR_FORWARD = CLOSE_METEOR_LOOK_NORMAL.clone().sub(CLOSE_METEOR_CENTER_NORMAL).projectOnPlane(CLOSE_METEOR_CENTER_NORMAL).normalize();
 const CLOSE_METEOR_FLYBY_TANGENT = CLOSE_METEOR_FORWARD.clone().cross(CLOSE_METEOR_CENTER_NORMAL).normalize();
 const CLOSE_METEOR_WOBBLE_AXIS = CLOSE_METEOR_CENTER_NORMAL.clone().cross(CLOSE_METEOR_FLYBY_TANGENT).normalize();
@@ -551,9 +569,30 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   root.add(base);
   addNasaPerseveranceRover(base, colliders, landmarks);
 
+  const atAt = createAtAt();
+  const atAtYaw = 0.48;
+  placeObjectOnPlanet(atAt.group, AT_AT_SPAWN_X, AT_AT_SPAWN_Z, 0, atAtYaw);
+  atAt.normal.copy(planetNormal(AT_AT_SPAWN_X, AT_AT_SPAWN_Z));
+  atAt.forward
+    .set(0, 0, -1)
+    .applyQuaternion(atAt.group.quaternion)
+    .projectOnPlane(atAt.normal)
+    .normalize();
+  base.add(atAt.group);
+  landmarks.push(landmark("AT-AT 步行机", atAt.group, AT_AT_SPAWN_X, AT_AT_SPAWN_Z, 48, 300));
+  for (const footAnchor of atAt.footAnchors) {
+    colliders.push({
+      center: new THREE.Vector2(),
+      radius: 1.35,
+      label: "AT-AT 足部",
+      dynamicObject: footAnchor,
+    });
+  }
+
   addDarkSideRockField(root, colliders);
   for (let i = 0; i < 3; i += 1) {
     const spider = createDarkSpider(i);
+    spider.group.visible = true;
     darkSpiders.push(spider);
     root.add(spider.group);
     colliders.push({
@@ -561,6 +600,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
       radius: SPIDER_BODY_RADIUS + 0.35,
       label: "暗面蜘蛛",
       dynamicObject: spider.group,
+      enabled: () => !spider.defeated,
     });
   }
 
@@ -647,6 +687,25 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
   );
   colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, -10.8, 0.2, 2.75, "居住舱左端盖"), enabled: () => !habitatDoor.occupied });
   colliders.push({ ...offsetCircle(habitatX, habitatZ, habitatYaw, 10.8, 0.2, 2.75, "居住舱右端盖"), enabled: () => !habitatDoor.occupied });
+
+  // The Elon machine-dog is now a permanent base-construction memorial rather
+  // than a temporary character attached to the return-ship elevator.  Keep it
+  // close to the arrival route so the player can discover and revisit it.
+  const elonStatueX = spread(7.5);
+  const elonStatueZ = spread(2.5);
+  const elonStatue = createElonMemorialStatue(elonStatueX, elonStatueZ);
+  placeObjectOnPlanet(elonStatue, elonStatueX, elonStatueZ, 0.08, -0.18);
+  base.add(elonStatue);
+  landmarks.push(landmark("基地动工纪念雕塑 · ELON", elonStatue, elonStatueX, elonStatueZ, 34, 220));
+  colliders.push(circle(elonStatueX, elonStatueZ, 4.4, "基地动工纪念雕塑"));
+  interactables.push({
+    id: "elonStatue",
+    label: "基地动工纪念雕塑 · ELON",
+    prompt: "按 E 与 ELON 纪念雕塑互动",
+    object: elonStatue,
+    radius: 11,
+    completed: false,
+  });
 
   const greenhouse = createGreenhouse(flickerLights);
   greenhouse.scale.setScalar(GREENHOUSE_SCALE);
@@ -868,6 +927,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
   return {
     root,
+    atAt,
     interactables,
     landmarks,
     unnumberedObjects,
@@ -905,12 +965,6 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     if (interactive && lander.userData.elevator) {
       const elevator = lander.userData.elevator as ElevatorControl;
       elevator.label = shipId ? `${shipId} 飞船升降梯` : "飞船升降梯";
-      if (label.includes("返回飞船")) {
-        addElonAvatar(elevator.car.parent ?? elevator.car, x, z);
-        elevator.rocketInterior = undefined;
-        elevator.rocketInteriorLight = undefined;
-        elevator.rocketInteriorFillLight = undefined;
-      }
       elevators.push(elevator);
     }
     placeObjectOnPlanet(lander, x, z, LANDER_SURFACE_SETTLE, yaw);
@@ -1016,7 +1070,7 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     return "返回飞船是基地的应急撤离与样本返回载具。我负责舱体保温、推进剂接口、导航校验和待命电源。";
   }
 
-  function addElonAvatar(platform: THREE.Object3D, shipX: number, shipZ: number) {
+  function addElonAvatar(platform: THREE.Object3D, shipX: number, shipZ: number, mode: "ship" | "statue" = "ship") {
     const elon = new THREE.Group();
     elon.name = "Elon machine-dog astronaut avatar";
 
@@ -1062,9 +1116,16 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
 
     const backpack = add(box(0.42, 0.78, 0.2, dark), 0, 1.58, 0.29);
     backpack.rotation.x = 0.04;
-    const hose = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.025, 6, 18, Math.PI * 1.12), rubber);
-    hose.position.set(0.38, 1.78, 0.18);
-    hose.rotation.set(0.45, 1.15, 0.24);
+    // Route the service hose along the backpack instead of using a partial
+    // torus.  The old torus formed a conspicuous floating loop around the
+    // avatar when viewed from the return-ship platform.
+    const hosePath = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.18, 1.84, 0.26),
+      new THREE.Vector3(0.46, 1.72, 0.2),
+      new THREE.Vector3(0.5, 1.36, 0.16),
+      new THREE.Vector3(0.42, 1.1, 0.14),
+    ]);
+    const hose = new THREE.Mesh(new THREE.TubeGeometry(hosePath, 8, 0.025, 6, false), rubber);
     hose.castShadow = true;
     elon.add(hose);
 
@@ -1113,11 +1174,42 @@ export function createMarsWorld(scene: THREE.Scene): MarsWorld {
     namePlate.rotation.x = -0.08;
     elon.add(namePlate);
 
-    elon.scale.setScalar(0.72);
-    elon.position.set(2.26, 10.17, 0.03);
+    elon.scale.setScalar(mode === "statue" ? 0.78 : 0.72);
+    // Statue feet sit directly on the illuminated plinth; the ship avatar
+    // keeps its original high-platform offset.
+    elon.position.set(mode === "statue" ? 0 : 2.26, mode === "statue" ? 1.3 : 10.17, mode === "statue" ? 0 : 0.03);
     elon.rotation.y = 0.42;
     platform.add(elon);
-    unnumberedObjects.push({ object: elon, x: shipX, z: shipZ, mapRange: 260, label: "未知智能体" });
+    return elon;
+  }
+
+  function createElonMemorialStatue(x: number, z: number) {
+    const group = new THREE.Group();
+    group.name = "Elon machine-dog construction memorial";
+    const stone = mat(0x6b7582, 0.66, 0.24);
+    const trim = mat(0xd3a86a, 0.44, 0.42, 0xc17632);
+    const glow = mat(0x66d9ff, 0.28, 0.24, 0x2d8fb6);
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 1.02, 1.05, 8), stone);
+    pedestal.position.y = 0.525;
+    pedestal.castShadow = true;
+    pedestal.receiveShadow = true;
+    group.add(pedestal);
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.78, 0.24, 8), trim);
+    plinth.position.y = 1.17;
+    plinth.castShadow = true;
+    plinth.receiveShadow = true;
+    group.add(plinth);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.74, 0.045, 6, 24), glow);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 1.31;
+    group.add(ring);
+    const plaque = createTextPlate("基地动工 · ELON", glow);
+    plaque.position.set(0, 1.03, -0.9);
+    plaque.scale.setScalar(0.48);
+    group.add(plaque);
+    addElonAvatar(group, x, z, "statue");
+    group.scale.setScalar(3);
+    return group;
   }
 }
 
@@ -1277,8 +1369,12 @@ function createTerrain() {
     const elevation = sphereHeightFromNormal(normal);
     positions.setXYZ(i, normal.x * (PLANET_RADIUS + elevation), normal.y * (PLANET_RADIUS + elevation), normal.z * (PLANET_RADIUS + elevation));
 
-    const shade = 0.5 + elevation * 0.11 + 0.1 * Math.sin(normal.x * 17.0);
-    color.setHSL(0.045, 0.68, THREE.MathUtils.clamp(shade, 0.28, 0.68));
+    const macroVariation = Math.sin(normal.x * 8.4 + normal.z * 5.7) * 0.055 + Math.cos(normal.z * 13.2 - normal.y * 4.8) * 0.028;
+    const elevationLight = elevation * 0.07;
+    const lightness = THREE.MathUtils.clamp(0.46 + macroVariation + elevationLight, 0.31, 0.61);
+    const hue = 0.038 + Math.sin((normal.x - normal.z) * 6.2) * 0.008;
+    const saturation = 0.54 + Math.cos(normal.y * 9.0) * 0.045;
+    color.setHSL(hue, saturation, lightness);
     colors.push(color.r, color.g, color.b);
   }
 
@@ -1428,11 +1524,17 @@ function createLander() {
   heatShield.receiveShadow = true;
   group.add(heatShield);
 
-  for (const y of [3.4, 5.55, 7.7, 9.85, 12.0, 14.15]) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.31, 0.025, 5, 24), mat(0xb8afa2, 0.5, 0.58));
-    ring.position.y = y;
-    ring.rotation.x = Math.PI / 2;
-    group.add(ring);
+  // Keep only three shallow structural bands.  The old six torus loops read as
+  // floating rings (especially on the low-poly silhouette) and were easy to
+  // mistake for duplicated/errored geometry.  A thin open cylinder follows
+  // the hull surface without creating a separate circular silhouette.
+  const bandMaterial = mat(0xb8afa2, 0.52, 0.46);
+  for (const y of [4.2, 8.0, 11.8]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(2.315, 2.315, 0.055, 24, 1, true), bandMaterial);
+    band.position.y = y;
+    band.castShadow = true;
+    band.receiveShadow = true;
+    group.add(band);
   }
 
   for (const angle of [0.28, 1.84, 3.42, 4.98]) {
@@ -1479,6 +1581,24 @@ function createLander() {
   barrelShell.rotation.x = Math.PI / 2;
   barrelShell.position.set(0, barrelCenterY, -0.34);
   barrelShell.receiveShadow = true;
+  // CylinderGeometry(openEnded=true) leaves both bulkheads open.  When the
+  // player looks down the module, the exterior sky was therefore visible
+  // through the far end.  Add double-sided pressure bulkheads so the interior
+  // is a closed, self-contained volume from every camera angle.
+  const bulkheadMat = new THREE.MeshStandardMaterial({
+    color: 0x343a38,
+    roughness: 0.86,
+    metalness: 0.24,
+    emissive: 0x070b0b,
+    emissiveIntensity: 0.04,
+    side: THREE.DoubleSide,
+    flatShading: true,
+  });
+  const frontBulkhead = new THREE.Mesh(new THREE.CylinderGeometry(1.73, 1.73, 0.08, 18), bulkheadMat);
+  frontBulkhead.rotation.x = Math.PI / 2;
+  frontBulkhead.position.set(0, barrelCenterY, -3.35);
+  const rearBulkhead = frontBulkhead.clone();
+  rearBulkhead.position.z = 2.67;
   const barrelRibs = [-2.84, -1.62, -0.4, 0.82, 2.04].map((z) => {
     const rib = new THREE.Mesh(new THREE.TorusGeometry(1.72, 0.025, 6, 24), ribMat);
     rib.position.set(0, barrelCenterY, z);
@@ -1499,6 +1619,8 @@ function createLander() {
   rocketInteriorBackLight.position.set(0, rocketInteriorFloorY + 2.45, 2.05);
   rocketInterior.add(
     barrelShell,
+    frontBulkhead,
+    rearBulkhead,
     ...barrelRibs,
     innerDeck,
     ceilingStrip,
@@ -1629,13 +1751,16 @@ function createHabitatModule() {
   innerShell.position.y = -0.04;
   innerShell.castShadow = true;
   innerShell.receiveShadow = true;
-  group.add(innerShell);
+  // The pressure shell is part of the indoor room. Keeping it under
+  // `interiorScene` prevents the GLB exterior fallback pass from hiding the
+  // only double-sided wall that seals the room from the skybox.
+  interiorScene.add(innerShell);
 
   const floor = box(11.2, 0.18, 3.72, floorMat);
   floor.position.set(0, -1.42, 0);
   const centerAisle = box(10.2, 0.08, 0.74, mat(0x1f1e1d, 0.84, 0.18));
   centerAisle.position.set(0, -1.27, 0);
-  group.add(floor, centerAisle);
+  interiorScene.add(floor, centerAisle);
 
   const sealedFloor = box(11.9, 0.16, 4.68, mat(0x272521, 0.84, 0.18));
   sealedFloor.position.set(0, -1.16, 0);
@@ -1663,6 +1788,10 @@ function createHabitatModule() {
   for (let i = -2; i <= 2; i += 1) {
     const window = box(1.05, 0.42, 0.06, glass);
     window.position.set(i * 1.85, 0.68, -2.38);
+    // Habitat windows are emissive glass panels. They should not cast a hard,
+    // detached shadow above the opening or draw a thin shadow line across the hull.
+    window.castShadow = false;
+    window.receiveShadow = false;
     group.add(window);
   }
 
@@ -1719,7 +1848,7 @@ function createHabitatModule() {
     pod.add(lowerShell, lowerCutCap, upperGlass);
     const status = box(0.12, 0.08, 0.08, mat(index === 6 ? 0xffb15d : 0x8cffaa, 0.28, 0.2, index === 6 ? 0xff9d3d : 0x44ff88));
     status.position.set(x + 0.45, -0.72, z - Math.sign(z) * 0.36);
-    group.add(pod, status);
+    interiorScene.add(pod, status);
   });
 
   const ceilingLightA = box(0.16, 0.08, 2.0, sleepGlass);
@@ -1729,7 +1858,7 @@ function createHabitatModule() {
   const interiorLight = new THREE.PointLight(0xffe4b8, 3.1, 12);
   interiorLight.position.set(0, 1.05, 0);
   interiorLight.visible = false;
-  group.add(ceilingLightA, ceilingLightB, interiorLight);
+  interiorScene.add(ceilingLightA, ceilingLightB, interiorLight);
   group.userData.door = {
     root: group,
     doorPanels,
@@ -2320,12 +2449,11 @@ function getAncientTreePortalTexture() {
 }
 
 export function updateAncientTreePortal(portal: THREE.Group, elapsed: number) {
-  const activeDuration = 28.5;
   const openedAt = Number(portal.userData.openedAt ?? -Infinity);
   const activeAge = elapsed - openedAt;
-  const active = activeAge >= 0 && activeAge < activeDuration;
+  const active = activeAge >= 0 && activeAge < 28.5;
   const fadeIn = THREE.MathUtils.smoothstep(activeAge, 0.2, 1.2);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(activeAge, activeDuration - 4.8, activeDuration);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(activeAge, 23.7, 28.5);
   const strength = active ? Math.max(0, Math.min(fadeIn, fadeOut)) : 0;
   portal.userData.portalStrength = strength;
   portal.visible = strength > 0.01;
@@ -2864,100 +2992,6 @@ function createCargoRover(size: number) {
   return group;
 }
 
-function createCybertruckRover(size: number) {
-  const group = new THREE.Group();
-  const steel = mat(0xbfc3c1, 0.24, 0.78);
-  const dark = mat(0x090b0d, 0.68, 0.32);
-  const glass = mat(0x071016, 0.18, 0.52, 0x0a2833);
-  const light = mat(0xf8f0df, 0.18, 0.22, 0xffe9b0);
-  const glassMaterial = glass as THREE.MeshStandardMaterial;
-  glassMaterial.side = THREE.DoubleSide;
-
-  const lowerBody = box(2.52 * size, 0.78 * size, 6.9 * size, steel);
-  lowerBody.position.set(0, 0.74 * size, 0);
-
-  const upperBody = createCybertruckPrism(
-    [
-      [-3.45, 1.1],
-      [-1.28, 2.15],
-      [3.45, 1.42],
-      [3.45, 1.1],
-    ],
-    2.52,
-    steel
-  );
-  upperBody.castShadow = true;
-  upperBody.receiveShadow = true;
-
-  const leftWindow = createCybertruckSidePanel(-1);
-  const rightWindow = createCybertruckSidePanel(1);
-  const frontLight = box(1.96 * size, 0.08 * size, 0.06 * size, light);
-  frontLight.position.set(0, 1.06 * size, -3.48 * size);
-  group.add(lowerBody, upperBody, leftWindow, rightWindow, frontLight);
-
-  const wheels: THREE.Mesh[] = [];
-  for (const sx of [-1.28, 1.28]) {
-    for (const sz of [-2.18, 2.04]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.58 * size, 0.58 * size, 0.36 * size, 16), dark);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(sx * size, 0.36 * size, sz * size);
-      wheel.castShadow = true;
-      wheel.receiveShadow = true;
-      wheels.push(wheel);
-      group.add(wheel);
-    }
-  }
-
-  group.userData.wheels = wheels;
-  return group;
-
-  function createCybertruckPrism(profile: Array<[number, number]>, width: number, material: THREE.Material) {
-    const halfWidth = (width * size) / 2;
-    const vertices: number[] = [];
-    for (const x of [-halfWidth, halfWidth]) {
-      for (const [z, y] of profile) vertices.push(x, y * size, z * size);
-    }
-    const faces: number[] = [];
-    for (let i = 1; i < profile.length - 1; i += 1) faces.push(0, i, i + 1);
-    const offset = profile.length;
-    for (let i = 1; i < profile.length - 1; i += 1) faces.push(offset, offset + i + 1, offset + i);
-    for (let i = 0; i < profile.length; i += 1) {
-      const next = (i + 1) % profile.length;
-      faces.push(i, next, offset + next, i, offset + next, offset + i);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setIndex(faces);
-    geometry.computeVertexNormals();
-    return new THREE.Mesh(geometry, material);
-  }
-
-  function createCybertruckSidePanel(side: -1 | 1) {
-    const x = side * 1.28 * size;
-    const vertices = [
-      x,
-      1.2 * size,
-      -2.9 * size,
-      x,
-      1.92 * size,
-      -1.28 * size,
-      x,
-      1.66 * size,
-      1.6 * size,
-      x,
-      1.26 * size,
-      2.06 * size,
-    ];
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setIndex(side < 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]);
-    geometry.computeVertexNormals();
-    const panel = new THREE.Mesh(geometry, glass);
-    panel.castShadow = true;
-    return panel;
-  }
-}
-
 function createCybertruckBody(points: Array<[number, number]>, width: number, material: THREE.Material, scale: number) {
   const base = createSideProfilePrism(points, width, material, scale);
   base.rotation.y = Math.PI / 2;
@@ -2985,70 +3019,6 @@ function createSideProfilePrism(points: Array<[number, number]>, depth: number, 
   return new THREE.Mesh(geometry, material);
 }
 
-function createUtilityBot(size: number) {
-  const group = new THREE.Group();
-  const steel = mat(0xc9c4b8, 0.36, 0.72);
-  const shadedSteel = mat(0x8f938f, 0.42, 0.68);
-  const brightSteel = mat(0xe2ded3, 0.28, 0.76);
-  const walkParts: {
-    leftArm: THREE.Object3D[];
-    rightArm: THREE.Object3D[];
-    leftLeg: THREE.Object3D[];
-    rightLeg: THREE.Object3D[];
-  } = { leftArm: [], rightArm: [], leftLeg: [], rightLeg: [] };
-
-  const pelvis = box(0.48 * size, 0.18 * size, 0.32 * size, shadedSteel);
-  pelvis.position.y = 0.66 * size;
-  const torso = box(0.62 * size, 0.76 * size, 0.42 * size, steel);
-  torso.position.y = 1.12 * size;
-  const chest = box(0.5 * size, 0.36 * size, 0.04 * size, shadedSteel);
-  chest.position.set(0, 1.15 * size, -0.23 * size);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * size, 0.12 * size, 0.12 * size, 8), shadedSteel);
-  neck.position.y = 1.58 * size;
-  const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32 * size, 1), brightSteel);
-  head.position.y = 1.86 * size;
-  head.scale.set(1, 0.82, 0.9);
-  const visor = box(0.36 * size, 0.1 * size, 0.035 * size, shadedSteel);
-  visor.position.set(0, 1.85 * size, -0.28 * size);
-  group.add(pelvis, torso, chest, neck, head, visor);
-
-  for (const side of [-1, 1]) {
-    const shoulder = box(0.18 * size, 0.2 * size, 0.28 * size, brightSteel);
-    shoulder.position.set(side * 0.43 * size, 1.42 * size, 0);
-    const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.055 * size, 0.06 * size, 0.46 * size, 6), steel);
-    upperArm.position.set(side * 0.58 * size, 1.12 * size, 0);
-    upperArm.rotation.z = side * 0.18;
-    const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.052 * size, 0.064 * size, 0.42 * size, 6), steel);
-    forearm.position.set(side * 0.62 * size, 0.78 * size, -0.02 * size);
-    forearm.rotation.z = side * -0.08;
-    const hand = box(0.12 * size, 0.1 * size, 0.14 * size, shadedSteel);
-    hand.position.set(side * 0.62 * size, 0.51 * size, -0.02 * size);
-    group.add(shoulder, upperArm, forearm, hand);
-    (side < 0 ? walkParts.leftArm : walkParts.rightArm).push(upperArm, forearm, hand);
-  }
-
-  for (const side of [-1, 1]) {
-    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.07 * size, 0.075 * size, 0.48 * size, 6), steel);
-    thigh.position.set(side * 0.18 * size, 0.42 * size, 0);
-    thigh.rotation.z = side * -0.04;
-    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.06 * size, 0.07 * size, 0.42 * size, 6), steel);
-    shin.position.set(side * 0.19 * size, 0.14 * size, 0);
-    const foot = box(0.2 * size, 0.08 * size, 0.32 * size, shadedSteel);
-    foot.position.set(side * 0.19 * size, -0.1 * size, -0.08 * size);
-    group.add(thigh, shin, foot);
-    (side < 0 ? walkParts.leftLeg : walkParts.rightLeg).push(thigh, shin, foot);
-  }
-  group.userData.walkParts = walkParts;
-  group.userData.botSize = size;
-  group.traverse((object) => {
-    if (object instanceof THREE.Mesh) {
-      object.castShadow = true;
-      object.receiveShadow = true;
-    }
-  });
-  return group;
-}
-
 function createSkyDust() {
   const group = new THREE.Group();
   const geometry = new THREE.BufferGeometry();
@@ -3056,8 +3026,11 @@ function createSkyDust() {
   const colors: number[] = [];
   const starDirections: THREE.Vector3[] = [];
   const color = new THREE.Color();
-  for (let i = 0; i < 3600; i += 1) {
-    const shell = PLANET_RADIUS + 260 + Math.random() * 520;
+  for (let i = 0; i < 6200; i += 1) {
+    // 战机轨道最高可到火星外 500 单位；星点必须始终位于摄影机之后的远景天幕，
+    // 不能让飞行镜头穿进点云而产生贴脸粒子。
+    // 保持在战机航线之外的远景天幕，同时让标题相机与 Safari 高分屏也能稳定看见星空。
+    const shell = PLANET_RADIUS + 1400 + Math.random() * 900;
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(THREE.MathUtils.randFloatSpread(2));
     const direction = new THREE.Vector3(Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta)).normalize();
@@ -3078,12 +3051,14 @@ function createSkyDust() {
   const starField = new THREE.Points(
     geometry,
     new THREE.PointsMaterial({
-      size: 1.85,
+      size: 2.05,
       sizeAttenuation: false,
       vertexColors: true,
       transparent: true,
-      opacity: 0.95,
+      opacity: 1,
       depthWrite: false,
+      // 星空是无限远背景，不应被火星地表的局部沙尘雾压暗。
+      fog: false,
     })
   );
   group.add(starField);
@@ -3246,60 +3221,92 @@ function headingFromForward(normal: THREE.Vector3, forward: THREE.Vector3) {
 
 function addRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
   const rockMat = mat(0x8d4228, 1);
+  const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, 95);
+  const dummy = new THREE.Object3D();
+  let rockCount = 0;
   for (let i = 0; i < 95; i += 1) {
     const radius = spread(6 + Math.random() * 31);
     const angle = Math.random() * Math.PI * 2;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
+    if (Math.hypot(x - AT_AT_SPAWN_X, z - AT_AT_SPAWN_Z) < 24) continue;
+    if (distanceToSegment2D(x, z, PLAYER_SPAWN_X, PLAYER_SPAWN_Z, PLAYER_SPAWN_TARGET_X, PLAYER_SPAWN_TARGET_Z) < 7.5) continue;
     if (isInsideVehicleRouteRockClearance(planetNormal(x, z, scratchNormal))) continue;
     if (Math.abs(x) < spread(30) && Math.abs(z) < spread(24) && Math.random() < 0.72) continue;
     const rockRadius = 0.35 + Math.random() * 1.15;
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rockRadius, 0), rockMat);
-    placeObjectOnPlanet(rock, x, z, 0.15, Math.random() * Math.PI * 2);
-    rock.rotateX(Math.random() * Math.PI);
-    rock.rotateZ(Math.random() * Math.PI);
-    rock.scale.y = 0.45 + Math.random() * 0.9;
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    scene.add(rock);
+    placeObjectOnPlanet(dummy, x, z, 0.15, Math.random() * Math.PI * 2);
+    dummy.rotateX(Math.random() * Math.PI);
+    dummy.rotateZ(Math.random() * Math.PI);
+    dummy.scale.set(rockRadius, rockRadius * (0.45 + Math.random() * 0.9), rockRadius);
+    dummy.updateMatrix();
+    rocks.setMatrixAt(rockCount, dummy.matrix);
+    rockCount += 1;
     colliders.push(circle(x, z, Math.max(0.42, rockRadius * 0.86), "红色岩石"));
   }
+  rocks.count = rockCount;
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
+  rocks.computeBoundingSphere();
+  scene.add(rocks);
 }
 
-function addRockAtNormal(scene: THREE.Object3D, colliders: CircleCollider[], normal: THREE.Vector3, radius: number, label: string, dark = false) {
-  void dark;
-  if (isInsideVehicleRouteRockClearance(normal)) return;
+function distanceToSegment2D(px: number, pz: number, ax: number, az: number, bx: number, bz: number) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= 0.000001) return Math.hypot(px - ax, pz - az);
+  const t = THREE.MathUtils.clamp(((px - ax) * dx + (pz - az) * dz) / lengthSq, 0, 1);
+  return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+}
+
+function addRockClusterAtNormals(
+  scene: THREE.Object3D,
+  colliders: CircleCollider[],
+  entries: Array<{ normal: THREE.Vector3; radius: number }>,
+) {
   const rockMat = mat(0x8d4228, 1);
-  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(radius, 0), rockMat);
-  placeObjectOnPlanetNormal(rock, normal, 0.12, Math.random() * Math.PI * 2);
-  rock.rotateX(Math.random() * Math.PI);
-  rock.rotateZ(Math.random() * Math.PI);
-  rock.scale.y = 0.48 + Math.random() * 1.15;
-  rock.castShadow = true;
-  rock.receiveShadow = true;
-  scene.add(rock);
-  colliders.push({
-    center: new THREE.Vector2(),
-    normal: normal.clone(),
-    radius: Math.max(0.42, radius * 0.86),
-    label,
-  });
+  const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, entries.length);
+  const dummy = new THREE.Object3D();
+  let rockCount = 0;
+  for (const entry of entries) {
+    if (isInsideVehicleRouteRockClearance(entry.normal)) continue;
+    placeObjectOnPlanetNormal(dummy, entry.normal, 0.12, Math.random() * Math.PI * 2);
+    dummy.rotateX(Math.random() * Math.PI);
+    dummy.rotateZ(Math.random() * Math.PI);
+    dummy.scale.set(entry.radius, entry.radius * (0.48 + Math.random() * 1.15), entry.radius);
+    dummy.updateMatrix();
+    rocks.setMatrixAt(rockCount, dummy.matrix);
+    rockCount += 1;
+    colliders.push({
+      center: new THREE.Vector2(),
+      normal: entry.normal.clone(),
+      radius: Math.max(0.42, entry.radius * 0.86),
+      label: "红色岩石",
+    });
+  }
+  rocks.count = rockCount;
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
+  rocks.computeBoundingSphere();
+  scene.add(rocks);
 }
 
 function addDarkSideRockField(scene: THREE.Object3D, colliders: CircleCollider[]) {
   const { tangentA, tangentB } = tangentBasis(SPIDER_ARRIVAL_NORMAL);
+  const entries: Array<{ normal: THREE.Vector3; radius: number }> = [];
   for (let i = 0; i < 32; i += 1) {
     const angle = Math.random() * Math.PI * 2;
     const distance = 24 + Math.random() * 58;
     const normal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
-    addRockAtNormal(scene, colliders, normal, 0.42 + Math.random() * 1.55, "红色岩石");
+    entries.push({ normal, radius: 0.42 + Math.random() * 1.55 });
   }
   for (let i = 0; i < 46; i += 1) {
     const angle = Math.random() * Math.PI * 2;
     const distance = 46 + Math.random() * 84;
     const normal = normalOffset(SPIDER_ARRIVAL_NORMAL, tangentA, tangentB, Math.cos(angle) * distance, Math.sin(angle) * distance);
-    addRockAtNormal(scene, colliders, normal, 0.32 + Math.random() * 1.15, "红色岩石");
+    entries.push({ normal, radius: 0.32 + Math.random() * 1.15 });
   }
+  addRockClusterAtNormals(scene, colliders, entries);
 }
 
 function createDarkSpider(index: number): DarkSpider {
@@ -3412,6 +3419,11 @@ function createDarkSpider(index: number): DarkSpider {
     attacking: false,
     damageFactor: 1,
     lastDamageAt: -Infinity,
+    maxHealth: 100,
+    health: 100,
+    hitUntil: -Infinity,
+    defeated: false,
+    deathStartedAt: -Infinity,
   };
 }
 
@@ -3428,7 +3440,8 @@ export function updateDarkSpiders(
   const lightThreatNormal = lightThreat && lightThreat.radius > 0 ? lightThreat.position.clone().normalize() : null;
   const attackLeader = playerThreat?.active ? nearestSpiderToPlayer(spiders, playerThreat.normal) : null;
   for (const spider of spiders) {
-    const lit = sunDirection ? spider.normal.dot(sunDirection) > -0.02 : false;
+    if (spider.defeated || !spider.group.visible) continue;
+    const lit = !isSpiderInShade(spider.normal, sunDirection);
     spider.homeNormal.copy(spiderDarkActivityCenter(spider, sunDirection));
     const orbitSpeed = lit ? 0.34 : 0.22;
     const orbitA = Math.cos(elapsed * orbitSpeed + spider.phase) * spider.radius + Math.sin(elapsed * 0.67 + spider.phase) * 3.2;
@@ -3471,7 +3484,11 @@ export function updateDarkSpiders(
     spider.eyeMaterial.color.set(attackingPlayer ? 0xff3028 : 0x8cff66);
     if (!attackingPlayer) desiredNormal = separateSpiderTarget(desiredNormal, spider, spiders);
     const constrainToTerritory = !attackingPlayer;
-    const movementTarget = constrainToTerritory ? constrainSpiderTerritory(desiredNormal) : desiredNormal;
+    // Attacking does not grant permission to cross into direct sunlight. The
+    // spider can pursue along the shadow boundary, but never enter the lit
+    // hemisphere itself.
+    const shadedTarget = keepSpiderInShade(desiredNormal, sunDirection, spider);
+    const movementTarget = constrainToTerritory ? constrainSpiderTerritory(shadedTarget) : shadedTarget;
     const targetNormal = avoidSpiderObstacles(movementTarget, colliders, SPIDER_BODY_RADIUS + 0.35, constrainToTerritory);
     const normalBeforeMove = spider.normal.clone();
     const dot = THREE.MathUtils.clamp(spider.normal.dot(targetNormal), -1, 1);
@@ -3489,6 +3506,7 @@ export function updateDarkSpiders(
     const collisionState = resolveSpiderObstacleContact(spider.normal, colliders, SPIDER_BODY_RADIUS, constrainToTerritory);
     spider.normal.copy(collisionState.normal);
     spider.normal.copy(resolveSpiderSeparation(spider.normal, spider, spiders, attackingPlayer ? SPIDER_ATTACK_SEPARATION_DISTANCE : SPIDER_SEPARATION_DISTANCE, constrainToTerritory));
+    spider.normal.copy(keepSpiderInShade(spider.normal, sunDirection, spider));
     spider.forward.projectOnPlane(spider.normal).normalize();
     const actualTravel = Math.acos(THREE.MathUtils.clamp(normalBeforeMove.dot(spider.normal), -1, 1)) * PLANET_RADIUS;
     const moving = intendedMove && actualTravel > Math.max(0.012, delta * 0.16);
@@ -3522,6 +3540,7 @@ function nearestSpiderToPlayer(spiders: DarkSpider[], playerNormal: THREE.Vector
   let leader: DarkSpider | null = null;
   let nearestDistance = Infinity;
   for (const spider of spiders) {
+    if (spider.defeated || !spider.group.visible) continue;
     const distance = Math.acos(THREE.MathUtils.clamp(spider.normal.dot(playerNormal), -1, 1)) * PLANET_RADIUS;
     if (distance < nearestDistance) {
       leader = spider;
@@ -3580,7 +3599,8 @@ function spiderDarkActivityCenter(spider: DarkSpider, sunDirection: THREE.Vector
 
 function keepSpiderInShade(normal: THREE.Vector3, sunDirection: THREE.Vector3 | null, spider?: DarkSpider) {
   const constrained = constrainSpiderTerritory(normal);
-  if (!sunDirection || constrained.dot(sunDirection) < -0.015) return constrained;
+  if (!sunDirection) return constrained;
+  if (isSpiderInShade(constrained, sunDirection)) return constrained;
   if (spider) return spiderDarkActivityCenter(spider, sunDirection);
   const { tangentA, tangentB } = tangentBasis(ANCIENT_TREE_ARCH_NORMAL);
   const sunTangent = sunDirection.clone().addScaledVector(ANCIENT_TREE_ARCH_NORMAL, -sunDirection.dot(ANCIENT_TREE_ARCH_NORMAL));
@@ -3593,7 +3613,7 @@ function keepSpiderInShade(normal: THREE.Vector3, sunDirection: THREE.Vector3 | 
 function separateSpiderTarget(normal: THREE.Vector3, spider: DarkSpider, spiders: DarkSpider[]) {
   const adjusted = normal.clone();
   for (const other of spiders) {
-    if (other === spider) continue;
+    if (other === spider || other.defeated || !other.group.visible) continue;
     const dot = THREE.MathUtils.clamp(adjusted.dot(other.normal), -1, 1);
     const distance = Math.acos(dot) * PLANET_RADIUS;
     if (distance >= SPIDER_SEPARATION_DISTANCE * 1.45) continue;
@@ -3609,7 +3629,7 @@ function separateSpiderTarget(normal: THREE.Vector3, spider: DarkSpider, spiders
 function resolveSpiderSeparation(normal: THREE.Vector3, spider: DarkSpider, spiders: DarkSpider[], minimumDistance = SPIDER_SEPARATION_DISTANCE, constrainToTerritory = true) {
   const adjusted = normal.clone();
   for (const other of spiders) {
-    if (other === spider) continue;
+    if (other === spider || other.defeated || !other.group.visible) continue;
     const dot = THREE.MathUtils.clamp(adjusted.dot(other.normal), -1, 1);
     const distance = Math.acos(dot) * PLANET_RADIUS;
     if (distance >= minimumDistance) continue;
@@ -4063,6 +4083,8 @@ function updateRoverWheelSpin(rover: THREE.Group, elapsed: number, speed: number
 function updateRoverSurfaceEffects(rover: THREE.Group, elapsed: number, delta: number, speed: number) {
   if (!rover.parent || Math.abs(speed) < 0.001) return;
   const effects = getRoverSurfaceEffects(rover);
+  effects.group.visible = rover.visible && rover.userData.surfaceEffectsEnabled !== false;
+  if (!rover.visible) return;
   const normal = scratchTrackNormal.copy(rover.position).normalize();
   const side = scratchTrackSide.set(1, 0, 0).applyQuaternion(rover.quaternion).addScaledVector(normal, -scratchTrackSide.dot(normal));
   const forward = scratchTrackForward.set(0, 0, -1).applyQuaternion(rover.quaternion).addScaledVector(normal, -scratchTrackForward.dot(normal));
