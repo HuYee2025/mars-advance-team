@@ -1,0 +1,14 @@
+{
+  "version": "0.2.6",
+  "date": "2026-07-20",
+  "summary": "Move the title-screen Mars log into the lower area above the visitor counter.",
+  "changes": [
+    "Increase the desktop Mars log offset to the requested red-box area.",
+    "Increase the mobile offset proportionally."
+  ],
+  "verification": [
+    "npm run build",
+    "npm test",
+    "npm run i18n:audit"
+  ]
+}

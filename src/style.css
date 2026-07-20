@@ -147,7 +147,7 @@ html[lang="zh-CN"] .title-copy h1 {
   box-sizing: border-box;
   display: grid;
   gap: 3px;
-  margin: clamp(18px, 4vh, 52px) auto 0;
+  margin: clamp(72px, 12vh, 144px) auto 0;
   padding: 4px 0 0;
   border: 0;
   background: transparent;
@@ -3493,7 +3493,7 @@ body:not(.hud-collapsed) #hud-toggle,
     width: min(92vw, 420px);
     gap: 3px;
     padding: 3px 0 0;
-    margin: 18px auto 0;
+    margin: 48px auto 0;
   }
 
   .title-update h2 {

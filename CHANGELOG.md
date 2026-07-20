@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 — 2026-07-20
+
+- Move the Mars log farther down into the bottom area above the visitor counter.
+- Verification: `npm run build`, `npm test`, and `npm run i18n:audit`.
+
 ## 0.2.5 — 2026-07-20
 
 - Rename the title-screen update section to “火星日志” and move it closer to the visitor counter.
