@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5 — 2026-07-20
+
+- Rename the title-screen update section to “火星日志” and move it closer to the visitor counter.
+- Verification: `npm run build`, `npm test`, and `npm run i18n:audit`.
+
 ## 0.2.4 — 2026-07-20
 
 - Restrict the title-screen update list to `gameplay` entries so bug fixes and build maintenance never displace a gameplay update.

@@ -1,0 +1,14 @@
+{
+  "version": "0.2.5",
+  "date": "2026-07-20",
+  "summary": "Rename and reposition the title-screen Mars log section.",
+  "changes": [
+    "Rename the update heading to 火星日志.",
+    "Move the Mars log section closer to the visitor counter."
+  ],
+  "verification": [
+    "npm run build",
+    "npm test",
+    "npm run i18n:audit"
+  ]
+}
