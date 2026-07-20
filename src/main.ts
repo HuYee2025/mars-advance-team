@@ -121,6 +121,7 @@ type InteractionAction = {
     | "mission"
     | "photoWall"
     | "hitchRide"
+    | "driveRover"
     | "atAt"
     | "xWing"
     | "elonStatue";
@@ -4423,7 +4424,7 @@ export function startGame() {
         rover.userData.playerDrivenNormal = roverNormal.clone();
         rover.userData.playerDrivenForward = roverForward.clone();
         rover.userData.playerDrivenSpeed = 0;
-        enterRoverRide(rover);
+        enterRoverDrive(rover);
       } else {
         const previewOffset = roverRight.multiplyScalar(8).addScaledVector(roverForward, 2.5);
         playerNormal.copy(roverNormal).addScaledVector(previewOffset, 1 / PLANET_RADIUS).normalize();
@@ -6630,7 +6631,14 @@ function buildInteractionActions(): InteractionAction[] {
     actions.push({ id: "ancientPortalPay", label: localizeText("支付") });
   }
   if (activeInteractable && activeInteractable.id !== "habitatCheck") actions.push({ id: "mission", label: localizeText(activeInteractable.prompt.replace(/^按 E /, "")) });
-  if (activeRideRover) actions.push({ id: "hitchRide", label: localizeText(ridingRover ? "下车" : "要不要搭便车？") });
+  if (activeRideRover) {
+    if (ridingRover) {
+      actions.push({ id: "hitchRide", label: localizeText("下车") });
+    } else {
+      actions.push({ id: "driveRover", label: localizeText("驾驶车辆（免费）") });
+      actions.push({ id: "hitchRide", label: localizeText("搭便车（10 金币）") });
+    }
+  }
   if (activeAtAt && (!ridingAtAt || elapsedTime < atAtExitPromptUntil)) {
     actions.push({ id: "atAt", label: localizeText(ridingAtAt ? "离开 AT-AT" : "驾驶 AT-AT（100 金币）") });
   }
@@ -6667,6 +6675,7 @@ function interactionActionPriority(action: InteractionAction): InteractionPriori
     ancientPortalConsider: "traversal",
     ancientPortalPay: "traversal",
     hitchRide: "traversal",
+    driveRover: "traversal",
     atAt: "traversal",
     xWing: "mission",
     robot: "character",
@@ -6711,6 +6720,12 @@ function singleInteractionPromptText(action: InteractionAction) {
   if (action.id === "hitchRide" && ridingRover) return `Q ${action.label}`;
   if (action.id === "atAt" && ridingAtAt) return `Q ${action.label}`;
   return `E ${action.label}`;
+}
+
+function interactionActionDisplayLabel(action: InteractionAction) {
+  if (action.id === "driveRover" && !ridingRover) return `Q ${action.label}`;
+  if (action.id === "hitchRide" && !ridingRover) return `E ${action.label}`;
+  return action.label;
 }
 
 function isAncientPortalPaymentAction(action: InteractionAction) {
@@ -6771,7 +6786,7 @@ function renderInteractionChoice() {
     button.type = "button";
     button.dataset.choiceIndex = String(index);
     const label = document.createElement("strong");
-    label.textContent = action.label;
+    label.textContent = interactionActionDisplayLabel(action);
     button.appendChild(label);
     button.classList.toggle("is-selected", index === selectedInteractionIndex);
     interactionChoice.appendChild(button);
@@ -6954,7 +6969,11 @@ function executeSelectedInteraction() {
   }
   if (action.id === "hitchRide" && activeRideRover) {
     if (ridingRover) exitRoverRide();
-    else enterRoverRide(activeRideRover);
+    else enterRoverRide(activeRideRover, "passenger");
+    return;
+  }
+  if (action.id === "driveRover" && activeRideRover) {
+    enterRoverDrive(activeRideRover);
     return;
   }
   if (action.id === "atAt" && activeAtAt) {
@@ -7542,9 +7561,25 @@ function isRideableRover(rover: THREE.Group) {
   return rover.userData.kind === "rover" || rover.userData.kind === "cargo";
 }
 
-function enterRoverRide(rover: THREE.Group) {
+function enterRoverDrive(rover: THREE.Group) {
   if (!isRideableRover(rover)) return;
-  const playerDriven = rover.userData.playerDriven === true;
+  const normal = rover.getWorldPosition(new THREE.Vector3()).normalize();
+  const forward = new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(rover.getWorldQuaternion(new THREE.Quaternion()))
+    .projectOnPlane(normal)
+    .normalize();
+  if (!(rover.userData.playerDrivenNormal instanceof THREE.Vector3)) rover.userData.playerDrivenNormal = normal;
+  if (!(rover.userData.playerDrivenForward instanceof THREE.Vector3) || (rover.userData.playerDrivenForward as THREE.Vector3).lengthSq() < 0.000001) {
+    rover.userData.playerDrivenForward = forward;
+  }
+  if (typeof rover.userData.playerDrivenSpeed !== "number") rover.userData.playerDrivenSpeed = 0;
+  enterRoverRide(rover, "driver");
+}
+
+function enterRoverRide(rover: THREE.Group, mode: "passenger" | "driver" = "passenger") {
+  if (!isRideableRover(rover)) return;
+  const playerDriven = mode === "driver";
+  rover.userData.playerDriven = playerDriven;
   if (!playerDriven && coins < ROVER_RIDE_COST_COINS) {
     showDialogue("车辆", "金币不足，搭便车需要 10 个金币。", 2.4);
     pulseRewardReadout(coinReadout, true);
@@ -7577,9 +7612,11 @@ function enterRoverRide(rover: THREE.Group) {
   interactionChoiceOpen = false;
   showDialogue(
     "车辆",
-    playerDriven
-      ? "驾驶原型：W/S 前后，A/D 转向，Shift 加速，Space 刹车，Q 下车。"
-      : "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。",
+    localizeText(
+      playerDriven
+        ? "驾驶车辆：W/S 前后，A/D 转向，Shift 加速，Space 刹车，Q 下车。"
+        : "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。",
+    ),
     playerDriven ? 4.8 : 3.2,
   );
 }

@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "date": "2026-07-20",
+  "type": "patch",
+  "summary": "Split rover interaction into free driving and paid hitching",
+  "verification": [
+    "npm test",
+    "npm run build",
+    "npm run i18n:audit",
+    "Playwright interaction preview"
+  ]
+}
