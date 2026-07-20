@@ -1,0 +1,15 @@
+{
+  "version": "0.2.3",
+  "date": "2026-07-20",
+  "summary": "Make the title-screen gameplay update list data-driven and add the Cybertruck driving update.",
+  "changes": [
+    "Show the latest three title-screen gameplay updates automatically.",
+    "Use the newest update date for the title-screen heading.",
+    "Add 03 驾驶 Cybertruck 在火星上奔驰 dated 7月20日."
+  ],
+  "verification": [
+    "npm run build",
+    "npm test",
+    "npm run i18n:audit"
+  ]
+}

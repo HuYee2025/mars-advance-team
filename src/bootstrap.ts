@@ -1,4 +1,5 @@
 import "./style.css";
+import { getRecentTitleUpdates } from "./title-updates";
 
 const LANG_STORAGE_KEY = "mars.language";
 const ARES_CALENDAR_EPOCH_UTC = Date.UTC(2026, 5, 26, 16, 0, 0);
@@ -12,6 +13,8 @@ const storyButton = document.querySelector<HTMLButtonElement>("#story-summary");
 const languageButton = document.querySelector<HTMLButtonElement>("#language-toggle");
 const visitorCounter = document.querySelector<HTMLElement>("#visitor-counter");
 const visitorCount = document.querySelector<HTMLElement>("#visitor-count");
+const titleUpdateHeading = document.querySelector<HTMLElement>("#title-update-heading");
+const titleUpdatesList = document.querySelector<HTMLElement>("#title-updates-list");
 let runtimeLoaded = false;
 let runtimeLoading: Promise<typeof import("./main")> | null = null;
 
@@ -97,13 +100,11 @@ function readLanguage() {
 
 function applyBootstrapLanguage(language: "zh-CN" | "en-US") {
   document.documentElement.lang = language;
+  renderTitleUpdates(language);
   const text: Record<string, [string, string]> = {
     "title.name": ["火星先遣队", "Mars Advance Team"],
     "title.subtitle": ["第一位人类", "The First Human"],
     "title.text": ["终于，火星基地迎来了第一位人类居民。", "At last, the Mars base welcomes its first human resident."],
-    "title.updateHeading": ["7-11 更新内容", "7-11 UPDATE"],
-    "title.update.flight": ["穿越虫洞可以获得 X 飞行战机进行空战，守卫火星基地。", "Cross the wormhole to unlock an X-wing fighter and defend the Mars base in aerial combat."],
-    "title.update.mech": ["体验驾驶超大四足机甲步行战车行走在火星上。", "Take the controls of a colossal four-legged mech walker and cross the surface of Mars."],
     "title.enter": ["进入基地", "Enter Base"],
     "title.story": ["故事概要", "Story Brief"],
   };
@@ -115,6 +116,31 @@ function applyBootstrapLanguage(language: "zh-CN" | "en-US") {
     languageButton.dataset.flag = language === "zh-CN" ? "us" : "cn";
     languageButton.setAttribute("aria-label", language === "zh-CN" ? "Switch to English" : "切换到中文");
   }
+}
+
+function renderTitleUpdates(language: "zh-CN" | "en-US") {
+  const updates = getRecentTitleUpdates();
+  const latest = updates.at(-1);
+  if (!titleUpdateHeading || !titleUpdatesList || !latest) return;
+
+  titleUpdateHeading.textContent = language === "zh-CN"
+    ? `${latest.dateZh} 更新内容`
+    : `${latest.dateEn} UPDATE`;
+  titleUpdatesList.replaceChildren(...updates.map((update) => {
+    const row = document.createElement("div");
+    row.className = "title-update-row";
+
+    const index = document.createElement("span");
+    index.className = "title-update-index";
+    index.setAttribute("aria-hidden", "true");
+    index.textContent = update.number;
+
+    const copy = document.createElement("p");
+    copy.textContent = language === "zh-CN" ? update.zh : update.en;
+
+    row.append(index, copy);
+    return row;
+  }));
 }
 
 function updateTitleDate() {

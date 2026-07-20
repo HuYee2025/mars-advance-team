@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — 2026-07-20
+
+- Added the data-driven title-screen update list; it automatically shows the latest three gameplay updates and uses the newest update date as the heading.
+- Added `03 驾驶 Cybertruck 在火星上奔驰` dated `7月20日`.
+- Verification: `npm run build`, `npm test`, and `npm run i18n:audit`.
+
 ## 0.2.2 — 2026-07-20
 
 - Hide Alex's character model during both driving and hitching; restore it immediately after getting off.
