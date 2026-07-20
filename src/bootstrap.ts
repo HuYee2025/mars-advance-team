@@ -124,8 +124,8 @@ function renderTitleUpdates(language: "zh-CN" | "en-US") {
   if (!titleUpdateHeading || !titleUpdatesList || !latest) return;
 
   titleUpdateHeading.textContent = language === "zh-CN"
-    ? `${latest.dateZh} 更新内容`
-    : `${latest.dateEn} UPDATE`;
+    ? `${latest.dateZh} 火星日志`
+    : `${latest.dateEn} MARS LOG`;
   titleUpdatesList.replaceChildren(...updates.map((update) => {
     const row = document.createElement("div");
     row.className = "title-update-row";
