@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4 — 2026-07-20
+
+- Restrict the title-screen update list to `gameplay` entries so bug fixes and build maintenance never displace a gameplay update.
+- Verification: `npm run build`, `npm test`, and `npm run i18n:audit`.
+
 ## 0.2.3 — 2026-07-20
 
 - Added the data-driven title-screen update list; it automatically shows the latest three gameplay updates and uses the newest update date as the heading.
