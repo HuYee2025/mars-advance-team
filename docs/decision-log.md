@@ -1,5 +1,11 @@
 # 决策记录
 
+### 2026-07-20 先做球面驾驶原型，再接高精 Cybertruck
+
+- 决定先保留程序化 Cybertruck 外观，新增 `?cybertruck-drive-preview` 驾驶预览，不把付费或来源不明的 GLB 提前写死进正式资源。
+- 驾驶状态沿火星表面法线保存 `normal + forward + speed`，不直接套用平面 Cannon RaycastVehicle；这是为了匹配本项目球形星体和现有碰撞系统。
+- 高精模型接入时只替换视觉层，继续复用车辆控制、车轮旋转和 LOD；候选清单见 `docs/research/cybertruck-glb-candidates.md`。
+
 ### 2026-07-20 左侧 HUD 恢复信号延迟读数
 
 原因：

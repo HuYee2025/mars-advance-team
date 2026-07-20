@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "date": "2026-07-20",
+  "type": "feature",
+  "summary": "Spherical Mars Cybertruck driving prototype and GLB candidate research",
+  "verification": [
+    "npm test",
+    "npm run build",
+    "Playwright preview launch at ?cybertruck-drive-preview"
+  ]
+}

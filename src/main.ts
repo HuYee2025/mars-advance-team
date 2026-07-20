@@ -782,6 +782,9 @@ let anomalyContentVisible = true;
 let messageUntil = 0;
 let scorePoints = 0;
 let coins = 0;
+
+const cybertruckDrivePreviewEnabled = import.meta.env.DEV
+  && new URLSearchParams(window.location.search).has("cybertruck-drive-preview");
 let currentRank: PlayerRankId = "internPatrol";
 let completedAnyTask = false;
 let hudCollapsed = false;
@@ -4401,7 +4404,7 @@ export function startGame() {
     playerForward.copy(walkerNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
     placePlayerOnPlanet();
   }
-  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("cybertruck-preview")) {
+  if (import.meta.env.DEV && (new URLSearchParams(window.location.search).has("cybertruck-preview") || cybertruckDrivePreviewEnabled)) {
     const rover = world.rovers.find((candidate) => candidate.userData.kind === "rover");
     if (rover) {
       rover.userData.stationPauseUntil = Number.POSITIVE_INFINITY;
@@ -4415,10 +4418,18 @@ export function startGame() {
         .applyQuaternion(rover.getWorldQuaternion(new THREE.Quaternion()))
         .projectOnPlane(roverNormal)
         .normalize();
-      const previewOffset = roverRight.multiplyScalar(8).addScaledVector(roverForward, 2.5);
-      playerNormal.copy(roverNormal).addScaledVector(previewOffset, 1 / PLANET_RADIUS).normalize();
-      playerForward.copy(roverNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
-      placePlayerOnPlanet();
+      if (cybertruckDrivePreviewEnabled) {
+        rover.userData.playerDriven = true;
+        rover.userData.playerDrivenNormal = roverNormal.clone();
+        rover.userData.playerDrivenForward = roverForward.clone();
+        rover.userData.playerDrivenSpeed = 0;
+        enterRoverRide(rover);
+      } else {
+        const previewOffset = roverRight.multiplyScalar(8).addScaledVector(roverForward, 2.5);
+        playerNormal.copy(roverNormal).addScaledVector(previewOffset, 1 / PLANET_RADIUS).normalize();
+        playerForward.copy(roverNormal).sub(playerNormal).projectOnPlane(playerNormal).normalize();
+        placePlayerOnPlanet();
+      }
     }
   }
   if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("spider-preview")) {
@@ -4525,6 +4536,64 @@ function resetStick(_event?: PointerEvent) {
   joystickKnob.style.transform = "translate(0, 0)";
 }
 
+function updatePlayerDrivenRover(delta: number) {
+  const rover = ridingRover;
+  if (!rover || rover.userData.playerDriven !== true || delta <= 0) return;
+
+  const size = typeof rover.userData.size === "number" ? rover.userData.size : 1;
+  const normal = (rover.userData.playerDrivenNormal as THREE.Vector3 | undefined)?.clone()
+    ?? rover.getWorldPosition(new THREE.Vector3()).normalize();
+  const forward = (rover.userData.playerDrivenForward as THREE.Vector3 | undefined)?.clone()
+    ?? new THREE.Vector3(0, 0, -1).applyQuaternion(rover.getWorldQuaternion(new THREE.Quaternion()));
+  normal.normalize();
+  forward.projectOnPlane(normal);
+  if (forward.lengthSq() < 0.000001) forward.copy(new THREE.Vector3(0, 0, -1).projectOnPlane(normal));
+  forward.normalize();
+
+  const steerInput = (keyState.has("KeyA") || keyState.has("ArrowLeft") ? 1 : 0)
+    + (keyState.has("KeyD") || keyState.has("ArrowRight") ? -1 : 0);
+  const throttleInput = (keyState.has("KeyW") || keyState.has("ArrowUp") ? 1 : 0)
+    + (keyState.has("KeyS") || keyState.has("ArrowDown") ? -1 : 0);
+  const boost = keyState.has("ShiftLeft") || keyState.has("ShiftRight");
+  const handbrake = keyState.has("Space");
+  const currentSpeed = typeof rover.userData.playerDrivenSpeed === "number" ? rover.userData.playerDrivenSpeed : 0;
+  const targetSpeed = throttleInput * (boost ? 13 : 7.2);
+  const response = handbrake ? 18 : throttleInput === 0 ? 2.8 : 7.5;
+  const speedBlend = 1 - Math.exp(-response * delta);
+  const speed = THREE.MathUtils.lerp(currentSpeed, handbrake ? 0 : targetSpeed, speedBlend);
+
+  if (Math.abs(steerInput) > 0.001 && Math.abs(speed) > 0.05) {
+    const steeringRate = 1.05 * Math.min(1, Math.abs(speed) / 4.5);
+    forward.applyAxisAngle(normal, steerInput * steeringRate * delta * (speed >= 0 ? 1 : -1));
+    forward.projectOnPlane(normal).normalize();
+  }
+
+  const travel = speed * delta;
+  const candidateNormal = normal.clone()
+    .addScaledVector(forward, travel / PLANET_RADIUS)
+    .normalize();
+  const blocked = Math.abs(travel) > 0.0001 && isDrivenRoverBlocked(rover, candidateNormal, world.colliders, size);
+  const nextNormal = blocked ? normal : candidateNormal;
+  const nextSpeed = blocked ? THREE.MathUtils.lerp(speed, 0, 1 - Math.exp(-16 * delta)) : speed;
+  rover.userData.playerDrivenNormal = nextNormal;
+  rover.userData.playerDrivenForward = forward;
+  rover.userData.playerDrivenSpeed = nextSpeed;
+  rover.userData.playerDrivenDelta = delta;
+}
+
+function isDrivenRoverBlocked(rover: THREE.Group, candidateNormal: THREE.Vector3, colliders: CircleCollider[], size: number) {
+  const clearance = 2.9 * size;
+  for (const collider of colliders) {
+    if (collider.dynamicObject === rover) continue;
+    if (collider.enabled && !collider.enabled()) continue;
+    const colliderNormal = collider.normal?.clone().normalize()
+      ?? planetNormal(collider.center.x, collider.center.y, new THREE.Vector3());
+    const distance = Math.acos(THREE.MathUtils.clamp(candidateNormal.dot(colliderNormal), -1, 1)) * PLANET_RADIUS;
+    if (distance < collider.radius + clearance) return true;
+  }
+  return false;
+}
+
 function animate() {
   const now = performance.now();
   const frameDurationMs = now - lastFrameTime;
@@ -4555,8 +4624,9 @@ function animate() {
   }
   updateCamera(delta);
   updatePhotoWallFrames();
+  updatePlayerDrivenRover(delta);
   updateRovers(world.rovers, elapsedTime, world.colliders);
-  if (ridingRover) updateRoverRide(ridingRover, 0);
+  if (ridingRover) updateRoverRide(ridingRover, delta);
   updateAtAtVisual(world.atAt, delta, elapsedTime);
   if (ridingAtAt && (keyState.has("KeyJ") || keyState.has("Space"))) {
     fireAtAtCannon(world.atAt);
@@ -7474,15 +7544,18 @@ function isRideableRover(rover: THREE.Group) {
 
 function enterRoverRide(rover: THREE.Group) {
   if (!isRideableRover(rover)) return;
-  if (coins < ROVER_RIDE_COST_COINS) {
+  const playerDriven = rover.userData.playerDriven === true;
+  if (!playerDriven && coins < ROVER_RIDE_COST_COINS) {
     showDialogue("车辆", "金币不足，搭便车需要 10 个金币。", 2.4);
     pulseRewardReadout(coinReadout, true);
     playPenaltySound();
     return;
   }
   if (footballCarried) dropFootball(false);
-  if (!spendCoins(ROVER_RIDE_COST_COINS)) return;
-  awardRepeatableScore(SCORE_ROVER_RIDE, localizeText("搭便车"));
+  if (!playerDriven) {
+    if (!spendCoins(ROVER_RIDE_COST_COINS)) return;
+    awardRepeatableScore(SCORE_ROVER_RIDE, localizeText("搭便车"));
+  }
   ridingRover = rover;
   activeRideRover = rover;
   resetVitals();
@@ -7495,10 +7568,20 @@ function enterRoverRide(rover: THREE.Group) {
   verticalVelocity = 0;
   grounded = true;
   setFirstPersonCamera();
+  if (playerDriven) {
+    cameraDistance = 8.6;
+    pitch = 0.28;
+  }
   updateRoverRide(rover, 0);
   closeTouchInteractionDrawer();
   interactionChoiceOpen = false;
-  showDialogue("车辆", "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。", 3.2);
+  showDialogue(
+    "车辆",
+    playerDriven
+      ? "驾驶原型：W/S 前后，A/D 转向，Shift 加速，Space 刹车，Q 下车。"
+      : "已支付 10 金币搭上巡检车辆。乘车期间不消耗氧气和体能，按 Q 可随时下车。",
+    playerDriven ? 4.8 : 3.2,
+  );
 }
 
 function exitRoverRide() {
@@ -7548,8 +7631,10 @@ function updateRoverRide(rover: THREE.Group, delta = 0) {
   else playerForward.normalize();
   if (scaleGunAiming) {
     updateScaleGunAimInput(delta);
-  } else {
+  } else if (!rover.userData.playerDriven) {
     updateRoverPassengerLook(delta);
+  } else {
+    playerForward.copy(fallbackForward);
   }
   player.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), playerNormal);
   player.rotateY(headingFromForward(playerNormal, playerForward));

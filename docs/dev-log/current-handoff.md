@@ -8,6 +8,14 @@
 
 ## 2026-07-20 RaycastVehicle 车辆研究
 
+## 2026-07-20 驾驶原型与 Cybertruck 资产筛选
+
+- 已新增开发预览：`http://127.0.0.1:5173/?cybertruck-drive-preview`。
+- 进入基地后自动坐进电动巡检车；`W/S` 前后、`A/D` 转向、`Shift` 加速、`Space` 刹车、`Q` 下车。
+- 驾驶采用火星球面切平面移动，车辆会避开现有圆形碰撞体；普通车辆仍保持原来的自动巡逻路线。
+- 高精模型暂不直接购买/接入，候选与授权风险记录在 `docs/research/cybertruck-glb-candidates.md`。首选是 ArtStation 2025 GLB，但当前页面提示部分地区不可用；真正接入前必须检查车轮节点与商业授权。
+- 已完成 `npm run build`；Playwright 预览验证通过。浏览器日志中的 `502 /api/visitors` 与 `ws://127.0.0.1:8787/ws` 是本地访客/多人服务未启动，不是驾驶代码报错。
+
 - `docs/research/raycast-vehicle-feasibility.md` 已记录 `icurtis1/raycast-vehicle` 的高精 GLB 加载与 RaycastVehicle 驾驶结构。
 - 结论：可借鉴“低模物理代理 + 异步高精视觉 GLB + 追逐镜头”的结构；不能把 Cannon 的平面世界重力原样放到球形火星。
 - 推荐下一步是先用现有 Cybertruck 制作球面本地驾驶原型，手感通过后再接高精 GLB。
