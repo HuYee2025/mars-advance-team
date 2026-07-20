@@ -17,7 +17,8 @@ const outputDir = resolve("public/models/core");
 mkdirSync(outputDir, { recursive: true });
 
 const palettes = {
-  alex: [material("suit", 0xf1e7d4, 0.7, 0.08), material("graphite", 0x242527, 0.58, 0.26), material("visor", 0x183743, 0.2, 0.5, 0x164654)],
+  // NASA EVA 头盔的金色太阳面罩是整片反光防护层，不是透明的人脸窗口。
+  alex: [material("suit", 0xf1e7d4, 0.7, 0.08), material("graphite", 0x242527, 0.58, 0.26), material("gold-reflective-visor", 0x8a6725, 0.16, 0.88, 0x1a1204)],
   repairRobot: [material("steel", 0xc9c4b8, 0.4, 0.65), material("graphite", 0x44484a, 0.58, 0.48), material("sensor", 0x64d9ef, 0.24, 0.2, 0x2596b3)],
   rover: [material("steel", 0xc5c8c4, 0.34, 0.62), material("graphite", 0x111416, 0.68, 0.3), material("glass", 0x18343e, 0.2, 0.5, 0x0c3442)],
   habitat: [material("hull", 0xf1e6d2, 0.62, 0.1), material("trim", 0xc96d3c, 0.64, 0.06), material("glass", 0x1a4654, 0.18, 0.44, 0x174d5e)],
@@ -113,7 +114,7 @@ function buildAlex(level) {
     part(new THREE.CylinderGeometry(0.25, 0.29, 0.22, radial), 1, [0, 1.63, 0]),
     part(new THREE.CapsuleGeometry(0.22, 0.38, 4, radial), 1, [0, 1.08, 0.36], [0, 0, 0], [1.2, 1, 0.62]),
     part(new THREE.BoxGeometry(0.5, 0.3, 0.075), 1, [0, 1.22, -0.31]),
-    part(new THREE.SphereGeometry(0.34, radial, Math.max(5, radial - 4)), 2, [0, 1.94, -0.21], [0, 0, 0], [0.92, 0.68, 0.58]),
+    part(new THREE.SphereGeometry(0.38, radial, Math.max(6, radial - 3)), 2, [0, 1.94, -0.245], [0, 0, 0], [1, 0.76, 0.48]),
     part(new THREE.SphereGeometry(0.18, Math.max(7, radial - 2), 6), 0, [-0.5, 1.39, 0], [0, 0, 0], [1, 0.84, 0.9]),
     part(new THREE.SphereGeometry(0.18, Math.max(7, radial - 2), 6), 0, [0.5, 1.39, 0], [0, 0, 0], [1, 0.84, 0.9]),
   ];

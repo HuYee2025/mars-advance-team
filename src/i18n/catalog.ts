@@ -147,7 +147,7 @@ export const i18n: Record<LanguageCode, Record<string, string>> = {
     "map.sun": "Sun",
     "map.positionLabel": "Position",
     "map.headingLabel": "HDG",
-    "perf.fpsAria": "Signal lag",
+    "perf.fpsAria": "Signal Lag",
     "perf.fpsLabel": "Signal Lag",
     "interaction.title": "Interact",
     "interaction.choose": "Choose Interaction",

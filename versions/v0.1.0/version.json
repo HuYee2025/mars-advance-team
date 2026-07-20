@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "date": "2026-07-20",
+  "type": "baseline",
+  "summary": "Rollback snapshot before Mars vehicle driving prototype",
+  "verification": "Working tree state recorded before prototype implementation"
+}

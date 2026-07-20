@@ -9987,7 +9987,9 @@ function updateReadouts() {
   if (onlineCountReadout) {
     onlineCountReadout.textContent = isEnglish() ? `${multiplayer.onlineCount} players` : `${multiplayer.onlineCount}人`;
   }
-  fpsValue.textContent = multiplayer.latencyMs === null ? "--" : `${Math.round(multiplayer.latencyMs)}ms`;
+  // HUD 叙事上称为“信号延迟”，底层取本机实际渲染帧率，单人离线也必须有数值。
+  const fps = averageFrameDurationMs > 0 ? Math.round(1000 / averageFrameDurationMs) : null;
+  fpsValue.textContent = fps === null ? "--" : `${Math.min(fps, 240)} FPS`;
 }
 
 function onResize() {

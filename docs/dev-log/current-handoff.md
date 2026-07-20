@@ -6,6 +6,23 @@
 
 这是新对话进入项目时的快速交接入口。若同一对话发生约 3 次自动压缩，先检查本文件和相关主管文档是否完整；完整后建议开启新对话继续。
 
+## 2026-07-20 RaycastVehicle 车辆研究
+
+- `docs/research/raycast-vehicle-feasibility.md` 已记录 `icurtis1/raycast-vehicle` 的高精 GLB 加载与 RaycastVehicle 驾驶结构。
+- 结论：可借鉴“低模物理代理 + 异步高精视觉 GLB + 追逐镜头”的结构；不能把 Cannon 的平面世界重力原样放到球形火星。
+- 推荐下一步是先用现有 Cybertruck 制作球面本地驾驶原型，手感通过后再接高精 GLB。
+
+## 2026-07-20 HUD 信号延迟读数恢复
+
+- 左侧人员 HUD 保留“信号延迟 / Signal Lag”的火星任务文案，底层显示本机真实渲染 `FPS`。
+- 读数由已有的约 `0.5s` 帧耗采样换算，不再读取多人 WebSocket RTT；单人离线也会显示数值。
+
+## 2026-07-12 宇航员头盔反光面罩
+
+- 亚历克斯头部正面改为一整片椭圆形、深金色镜面 EVA 防护面罩；没有眼睛、没有透明人脸窗口。
+- `src/player.ts` 的可动画程序化模型与 `scripts/generate-core-glb.mjs` 的正式三级 LOD 源保持同步；重新生成后的 `public/models/core/alex.glb` 已纳入修改。
+- 设计依据和长期约束已登记在 `docs/decision-log.md`。
+
 ## 2026-07-11 最后交接：AT-AT 与蜘蛛死亡状态
 
 ### 当前完成
