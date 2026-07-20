@@ -1,0 +1,14 @@
+{
+  "version": "0.2.4",
+  "date": "2026-07-20",
+  "summary": "Restrict title-screen update rotation to gameplay updates.",
+  "changes": [
+    "Filter the title-screen update list to kind gameplay.",
+    "Keep the latest three gameplay updates and exclude bug fixes."
+  ],
+  "verification": [
+    "npm run build",
+    "npm test",
+    "npm run i18n:audit"
+  ]
+}

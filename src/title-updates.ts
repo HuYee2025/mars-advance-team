@@ -1,4 +1,5 @@
 export type TitleUpdate = {
+  kind: "gameplay";
   date: string;
   dateZh: string;
   dateEn: string;
@@ -13,6 +14,7 @@ export type TitleUpdate = {
  */
 export const TITLE_UPDATES: readonly TitleUpdate[] = [
   {
+    kind: "gameplay",
     date: "2026-07-11",
     dateZh: "7月11日",
     dateEn: "JUL 11",
@@ -21,6 +23,7 @@ export const TITLE_UPDATES: readonly TitleUpdate[] = [
     en: "Cross the wormhole to unlock an X-wing fighter and defend the Mars base in aerial combat.",
   },
   {
+    kind: "gameplay",
     date: "2026-07-11",
     dateZh: "7月11日",
     dateEn: "JUL 11",
@@ -29,6 +32,7 @@ export const TITLE_UPDATES: readonly TitleUpdate[] = [
     en: "Take the controls of a colossal four-legged mech walker and cross the surface of Mars.",
   },
   {
+    kind: "gameplay",
     date: "2026-07-20",
     dateZh: "7月20日",
     dateEn: "JUL 20",
@@ -39,8 +43,9 @@ export const TITLE_UPDATES: readonly TitleUpdate[] = [
 ];
 
 export function getRecentTitleUpdates(limit = 3) {
-  return [...TITLE_UPDATES]
+  return TITLE_UPDATES
+    .filter((update) => update.kind === "gameplay")
+    .slice()
     .sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))
     .slice(-Math.max(0, limit));
 }
-
