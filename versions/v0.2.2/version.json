@@ -1,0 +1,12 @@
+{
+  "version": "0.2.2",
+  "date": "2026-07-20",
+  "type": "patch",
+  "summary": "Hide player character model while riding or driving a rover",
+  "verification": [
+    "npm run build",
+    "npm test",
+    "npm run i18n:audit",
+    "Playwright rover preview"
+  ]
+}

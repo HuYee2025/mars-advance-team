@@ -19,6 +19,8 @@
 - 放大缩小枪概念图：`assets/concepts/scale-gun-concept.webp`
 - 黑色方碑绿幕源图：`assets/portraits/monolith-dialogue-green.png`
 - 黑色方碑透明对话立绘：`assets/portraits/monolith-dialogue-transparent.webp`
+- 横版宣传海报组：`output/game-promo-posters-v1/`，共四张约 `16:9` PNG，分别用于古树门蜘蛛战、Elon 纪念雕像与基地、ARES X 形战机陨石防御、火星孤独感主视觉。
+- 游戏 Logo 第一轮概念：`output/game-logo-concepts-v1/`，正式双语名称为“火星先遣队 / MARS ADVANCE TEAM”；用户已选定带登陆飞船的 ARES 工程徽章型为主 Logo，后续透明底、反色、图标和单色版本都以该方向为基准。
 
 这些图主要用于方向确认；默认预览和网页引用使用 WebP 压缩版本，PNG 原图只作为后续再处理的源文件。
 

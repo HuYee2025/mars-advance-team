@@ -6,6 +6,32 @@
 
 这是新对话进入项目时的快速交接入口。若同一对话发生约 3 次自动压缩，先检查本文件和相关主管文档是否完整；完整后建议开启新对话继续。
 
+## 2026-07-20 RaycastVehicle 车辆研究
+
+## 2026-07-20 驾驶原型与 Cybertruck 资产筛选
+
+- 车辆近距离互动现在显示 `Q 驾驶车辆（免费）` 和 `E 搭便车（10 金币）`；驾驶接管车辆，搭便车保持乘客模式；两种状态都隐藏 Alex 模型，下车恢复。
+- 已新增开发预览：`http://127.0.0.1:5173/?cybertruck-drive-preview`。
+- 进入基地后自动坐进电动巡检车；`W/S` 前后、`A/D` 转向、`Shift` 加速、`Space` 刹车、`Q` 下车。
+- 驾驶采用火星球面切平面移动，车辆会避开现有圆形碰撞体；普通车辆仍保持原来的自动巡逻路线。
+- 高精模型暂不直接购买/接入，候选与授权风险记录在 `docs/research/cybertruck-glb-candidates.md`。首选是 ArtStation 2025 GLB，但当前页面提示部分地区不可用；真正接入前必须检查车轮节点与商业授权。
+- 已完成 `npm run build`；Playwright 预览验证通过。浏览器日志中的 `502 /api/visitors` 与 `ws://127.0.0.1:8787/ws` 是本地访客/多人服务未启动，不是驾驶代码报错。
+
+- `docs/research/raycast-vehicle-feasibility.md` 已记录 `icurtis1/raycast-vehicle` 的高精 GLB 加载与 RaycastVehicle 驾驶结构。
+- 结论：可借鉴“低模物理代理 + 异步高精视觉 GLB + 追逐镜头”的结构；不能把 Cannon 的平面世界重力原样放到球形火星。
+- 推荐下一步是先用现有 Cybertruck 制作球面本地驾驶原型，手感通过后再接高精 GLB。
+
+## 2026-07-20 HUD 信号延迟读数恢复
+
+- 左侧人员 HUD 保留“信号延迟 / Signal Lag”的火星任务文案，底层显示本机真实渲染 `FPS`。
+- 读数由已有的约 `0.5s` 帧耗采样换算，不再读取多人 WebSocket RTT；单人离线也会显示数值。
+
+## 2026-07-12 宇航员头盔反光面罩
+
+- 亚历克斯头部正面改为一整片椭圆形、深金色镜面 EVA 防护面罩；没有眼睛、没有透明人脸窗口。
+- `src/player.ts` 的可动画程序化模型与 `scripts/generate-core-glb.mjs` 的正式三级 LOD 源保持同步；重新生成后的 `public/models/core/alex.glb` 已纳入修改。
+- 设计依据和长期约束已登记在 `docs/decision-log.md`。
+
 ## 2026-07-11 最后交接：AT-AT 与蜘蛛死亡状态
 
 ### 当前完成

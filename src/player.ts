@@ -68,7 +68,10 @@ export function createMarsEngineer(): PlayerRig {
   const graphite = makeMaterial(0x202124, 0.62, 0.28);
   const orange = makeMaterial(0xd66a2e, 0.68, 0.08);
   const cyan = makeMaterial(0x66d9ff, 0.28, 0.36, 0x238db1);
-  const visorMaterial = makeMaterial(0x101920, 0.2, 0.72, 0x1b465c);
+  // 参考 NASA EVA 头盔的外置太阳面罩：这是一整块不透明的反光防护层，
+  // 不显示人脸或独立“眼睛”。微弱自发光只保证暗面也能读出金色反射面。
+  const visorMaterial = makeMaterial(0x8a6725, 0.16, 0.88, 0x1a1204);
+  const visorRimMaterial = makeMaterial(0x2a2113, 0.36, 0.78);
 
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.38, 7, 12), suit);
   torso.position.y = 1.08;
@@ -104,21 +107,18 @@ export function createMarsEngineer(): PlayerRig {
   helmet.castShadow = true;
   visual.add(helmet);
 
-  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 10), visorMaterial);
-  visor.position.set(0, 1.94, -0.21);
-  visor.scale.set(0.92, 0.68, 0.58);
+  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.38, 18, 12), visorMaterial);
+  visor.name = "Gold reflective EVA visor";
+  visor.position.set(0, 1.94, -0.245);
+  visor.scale.set(1, 0.76, 0.48);
   visor.castShadow = true;
   visual.add(visor);
 
-  const visorRim = new THREE.Mesh(new THREE.TorusGeometry(0.295, 0.028, 8, 24), graphite);
-  visorRim.position.set(0, 1.94, -0.365);
-  visorRim.scale.y = 0.72;
+  const visorRim = new THREE.Mesh(new THREE.TorusGeometry(0.348, 0.034, 8, 28), visorRimMaterial);
+  visorRim.position.set(0, 1.94, -0.405);
+  visorRim.scale.y = 0.76;
   visorRim.castShadow = true;
   visual.add(visorRim);
-
-  const visorGlow = box(0.13, 0.025, 0.035, cyan);
-  visorGlow.position.set(0.13, 2.05, -0.405);
-  visual.add(visorGlow);
 
   const backpack = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.38, 6, 10), graphite);
   backpack.position.set(0, 1.08, 0.36);

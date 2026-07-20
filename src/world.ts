@@ -3730,6 +3730,25 @@ export function updateRovers(rovers: THREE.Group[], elapsed: number, colliders: 
       pauseUntil?: number;
     };
     if (kind === "bot" && (rover.userData.pauseUntil ?? -Infinity) > elapsed) return;
+    if (rover.userData.playerDriven === true) {
+      const normal = rover.userData.playerDrivenNormal as THREE.Vector3 | undefined;
+      const forward = rover.userData.playerDrivenForward as THREE.Vector3 | undefined;
+      const drivenSpeed = typeof rover.userData.playerDrivenSpeed === "number" ? rover.userData.playerDrivenSpeed : 0;
+      if (normal && forward && normal.lengthSq() > 0.5 && forward.lengthSq() > 0.5) {
+        const surfaceNormal = normal.clone().normalize();
+        const surfaceForward = forward.clone().projectOnPlane(surfaceNormal).normalize();
+        placeObjectOnPlanetNormal(rover, surfaceNormal, 0.08, yawFromForward(surfaceNormal, surfaceForward));
+        setDynamicObjectPlanetCoordinate(rover, surfaceNormal);
+        updateRoverWheelSpin(rover, elapsed, drivenSpeed);
+        updateRoverSurfaceEffects(
+          rover,
+          elapsed,
+          typeof rover.userData.playerDrivenDelta === "number" ? rover.userData.playerDrivenDelta : 0.016,
+          drivenSpeed,
+        );
+      }
+      return;
+    }
     const previousRouteElapsed = typeof rover.userData.routeElapsed === "number" ? rover.userData.routeElapsed : elapsed;
     const delta = THREE.MathUtils.clamp(elapsed - previousRouteElapsed, 0, 0.05);
     rover.userData.routeElapsed = elapsed;
