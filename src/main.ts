@@ -6140,7 +6140,7 @@ function updateCamera(delta: number) {
         camera.position.lerp(desired, 1 - Math.pow(0.00004, delta));
         camera.up.copy(normal);
         camera.lookAt(target);
-        playerRig.visual.visible = true;
+        playerRig.visual.visible = !ridingRover;
         orbitYawOffset *= Math.pow(0.03, delta);
         return;
       }
@@ -6162,7 +6162,7 @@ function updateCamera(delta: number) {
   camera.position.lerp(desired, 1 - Math.pow(0.00005, delta));
   camera.up.copy(normal);
   camera.lookAt(closeT > 0.85 ? target.clone().addScaledVector(cameraForward, 20) : target);
-  playerRig.visual.visible = cameraDistance > 1.15;
+  playerRig.visual.visible = !ridingRover && cameraDistance > 1.15;
   orbitYawOffset *= Math.pow(0.03, delta);
 }
 
@@ -7679,6 +7679,7 @@ function updateRoverRide(rover: THREE.Group, delta = 0) {
   playerAltitudeOffset = 0;
   verticalVelocity = 0;
   grounded = true;
+  playerRig.visual.visible = false;
   return 0;
 }
 

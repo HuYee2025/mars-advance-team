@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 — 2026-07-20
+
+- Hide Alex's character model during both driving and hitching; restore it immediately after getting off.
+- Verification: `npm run build`, `npm test`, `npm run i18n:audit`, and Playwright rover preview.
+
 ## 0.2.1 — 2026-07-20
 
 - Split rover interaction into `Q Drive vehicle (free)` and `E Hitch a ride (10 coins)`.
